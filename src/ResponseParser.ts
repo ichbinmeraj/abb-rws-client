@@ -108,10 +108,10 @@ const VALID_CONTROLLER_STATES: ReadonlySet<string> = new Set([
 
 /**
  * Parse a /rw/panel/ctrlstate XML response into a ControllerState.
- * XML: <li class="rap-ctrlstate"><span class="ctrlstate">motoron</span></li>
+ * XML: <li class="pnl-ctrlstate"><span class="ctrlstate">motoron</span></li>
  */
 export function parseControllerState(xml: string): ControllerState {
-  const raw = requireSpan(xml, 'rap-ctrlstate', 'ctrlstate', 'parseControllerState');
+  const raw = requireSpan(xml, 'pnl-ctrlstate', 'ctrlstate', 'parseControllerState');
   if (!VALID_CONTROLLER_STATES.has(raw)) {
     throw new RwsError(`PARSE_ERROR: unknown controller state "${raw}"`, 'PARSE_ERROR');
   }
@@ -122,10 +122,10 @@ const VALID_OPERATION_MODES: ReadonlySet<string> = new Set(['AUTO', 'MANR', 'MAN
 
 /**
  * Parse a /rw/panel/opmode XML response into an OperationMode.
- * XML: <li class="rap-opmode"><span class="opmode">AUTO</span></li>
+ * XML: <li class="pnl-opmode"><span class="opmode">AUTO</span></li>
  */
 export function parseOperationMode(xml: string): OperationMode {
-  const raw = requireSpan(xml, 'rap-opmode', 'opmode', 'parseOperationMode');
+  const raw = requireSpan(xml, 'pnl-opmode', 'opmode', 'parseOperationMode');
   // RWS may return lower-case variants; normalise to upper
   const upper = raw.toUpperCase();
   if (!VALID_OPERATION_MODES.has(upper)) {
@@ -143,17 +143,22 @@ export function parseOperationMode(xml: string): OperationMode {
  */
 export function parseExecutionState(xml: string): ExecutionState {
   let raw =
+    extractSpanValue(xml, 'rap-execution', 'ctrlexecstate') ??
     extractSpanValue(xml, 'rap-execution', 'excstate') ??
+    extractSpanValue(xml, 'rap-execution-state', 'ctrlexecstate') ??
     extractSpanValue(xml, 'rap-execution-state', 'excstate') ??
+    extractSpanValueFlat(xml, 'ctrlexecstate') ??
     extractSpanValueFlat(xml, 'excstate');
 
   if (!raw) {
     throw new RwsError(
-      'PARSE_ERROR: missing excstate in execution response',
+      'PARSE_ERROR: missing ctrlexecstate/excstate in execution response',
       'PARSE_ERROR',
     );
   }
   raw = raw.toLowerCase();
+  // 'stop' is the value the IRC5 returns; normalise to 'stopped'
+  if (raw === 'stop') raw = 'stopped';
   if (raw !== 'running' && raw !== 'stopped') {
     throw new RwsError(`PARSE_ERROR: unknown execution state "${raw}"`, 'PARSE_ERROR');
   }
@@ -170,10 +175,10 @@ export function parseJointTarget(xml: string): JointTarget {
   const axes = ['rax_1', 'rax_2', 'rax_3', 'rax_4', 'rax_5', 'rax_6'] as const;
 
   // Find the containing <li> block first
-  const liPattern = /<li[^>]*class="[^"]*\brap-jointtarget\b[^"]*"[^>]*>(.*?)<\/li>/is;
+  const liPattern = /<li[^>]*class="[^"]*\bms-jointtarget\b[^"]*"[^>]*>(.*?)<\/li>/is;
   const liMatch = xml.match(liPattern);
   if (!liMatch) {
-    throw new RwsError('PARSE_ERROR: missing <li class="rap-jointtarget">', 'PARSE_ERROR');
+    throw new RwsError('PARSE_ERROR: missing <li class="ms-jointtarget">', 'PARSE_ERROR');
   }
   const block = liMatch[1];
 
@@ -199,10 +204,10 @@ export function parseJointTarget(xml: string): JointTarget {
  *      </li>
  */
 export function parseRobTarget(xml: string): RobTarget {
-  const liPattern = /<li[^>]*class="[^"]*\brap-robtarget\b[^"]*"[^>]*>(.*?)<\/li>/is;
+  const liPattern = /<li[^>]*class="[^"]*\bms-robtargets\b[^"]*"[^>]*>(.*?)<\/li>/is;
   const liMatch = xml.match(liPattern);
   if (!liMatch) {
-    throw new RwsError('PARSE_ERROR: missing <li class="rap-robtarget">', 'PARSE_ERROR');
+    throw new RwsError('PARSE_ERROR: missing <li class="ms-robtargets">', 'PARSE_ERROR');
   }
   const block = liMatch[1];
 
@@ -300,7 +305,9 @@ export function parseRapidTasks(xml: string): RapidTask[] {
     const name = getSpan('name');
     if (!name) throw new RwsError('PARSE_ERROR: RAPID task missing name', 'PARSE_ERROR');
 
-    const excstateRaw = getSpan('excstate').toLowerCase();
+    let excstateRaw = getSpan('excstate').toLowerCase();
+    // IRC5 returns 'stop' instead of 'stopped'
+    if (excstateRaw === 'stop') excstateRaw = 'stopped';
     if (excstateRaw !== 'running' && excstateRaw !== 'stopped') {
       throw new RwsError(
         `PARSE_ERROR: unknown excstate "${excstateRaw}" in task "${name}"`,
@@ -308,12 +315,16 @@ export function parseRapidTasks(xml: string): RapidTask[] {
       );
     }
 
+    // 'active' may be 'On'/'Off' or 'true'/'false' depending on firmware version
+    const activeRaw = getSpan('active').toLowerCase();
+    const active = activeRaw === 'true' || activeRaw === 'on';
+
     return {
       name,
       type: getSpan('type'),
       taskstate: getSpan('taskstate'),
       excstate: excstateRaw as ExecutionState,
-      active: getSpan('active').toLowerCase() === 'true',
+      active,
       motiontask: getSpan('motiontask').toLowerCase() === 'true',
     };
   });

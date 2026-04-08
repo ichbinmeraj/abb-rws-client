@@ -64,7 +64,7 @@ export function resetRapid(): { path: string; body: string } {
  * @param mechunit - Default 'ROB_1' (the primary robot mechanical unit)
  */
 export function jointTarget(mechunit = 'ROB_1'): string {
-  return `/rw/mechunit/${encodeURIComponent(mechunit)}/joint-target`;
+  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/jointtarget`;
 }
 
 /**
@@ -74,7 +74,7 @@ export function jointTarget(mechunit = 'ROB_1'): string {
  * @param wobj     - Active work object frame; default 'wobj0'
  */
 export function robTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): string {
-  return `/rw/mechunit/${encodeURIComponent(mechunit)}/robtarget?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`;
+  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/robtarget?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`;
 }
 
 // ─── Modules ─────────────────────────────────────────────────────────────────

@@ -81,32 +81,32 @@ describe('ResourceMapper', () => {
 
   describe('jointTarget', () => {
     it('uses default mechunit ROB_1', () => {
-      expect(jointTarget()).toBe('/rw/mechunit/ROB_1/joint-target');
+      expect(jointTarget()).toBe('/rw/motionsystem/mechunits/ROB_1/jointtarget');
     });
 
     it('accepts a custom mechunit', () => {
-      expect(jointTarget('ROB_2')).toBe('/rw/mechunit/ROB_2/joint-target');
+      expect(jointTarget('ROB_2')).toBe('/rw/motionsystem/mechunits/ROB_2/jointtarget');
     });
 
     it('URL-encodes mechunit names with special characters', () => {
-      expect(jointTarget('ROB 1')).toBe('/rw/mechunit/ROB%201/joint-target');
+      expect(jointTarget('ROB 1')).toBe('/rw/motionsystem/mechunits/ROB%201/jointtarget');
     });
   });
 
   describe('robTarget', () => {
     it('uses defaults (ROB_1, tool0, wobj0)', () => {
-      expect(robTarget()).toBe('/rw/mechunit/ROB_1/robtarget?tool=tool0&wobj=wobj0');
+      expect(robTarget()).toBe('/rw/motionsystem/mechunits/ROB_1/robtarget?tool=tool0&wobj=wobj0');
     });
 
     it('accepts custom mechunit, tool, and wobj', () => {
       expect(robTarget('ROB_2', 'myTool', 'myWobj')).toBe(
-        '/rw/mechunit/ROB_2/robtarget?tool=myTool&wobj=myWobj',
+        '/rw/motionsystem/mechunits/ROB_2/robtarget?tool=myTool&wobj=myWobj',
       );
     });
 
     it('URL-encodes tool and wobj names', () => {
       expect(robTarget('ROB_1', 'my tool', 'my wobj')).toBe(
-        '/rw/mechunit/ROB_1/robtarget?tool=my%20tool&wobj=my%20wobj',
+        '/rw/motionsystem/mechunits/ROB_1/robtarget?tool=my%20tool&wobj=my%20wobj',
       );
     });
   });
