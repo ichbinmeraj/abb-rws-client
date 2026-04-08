@@ -15,12 +15,13 @@ import { RwsError } from '../src/types.js';
 // ─── Realistic RWS 1.0 XML fixtures ──────────────────────────────────────────
 // These reflect the actual XHTML structure returned by ABB IRC5 / RobotStudio.
 
-const CONTROLLER_STATE_MOTORON = `<?xml version="1.0" encoding="UTF-8"?>
+// Fixtures use the actual class names returned by IRC5 / RobotWare 6 controllers.
+const CONTROLLER_STATE_MOTORON = `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body>
 <div class="state">
 <ul>
-<li class="rap-ctrlstate">
+<li class="pnl-ctrlstate" title="ctrlstate">
   <span class="ctrlstate">motoron</span>
 </li>
 </ul>
@@ -28,39 +29,41 @@ const CONTROLLER_STATE_MOTORON = `<?xml version="1.0" encoding="UTF-8"?>
 </body>
 </html>`;
 
-const CONTROLLER_STATE_MOTOROFF = `<?xml version="1.0" encoding="UTF-8"?>
+const CONTROLLER_STATE_MOTOROFF = `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><div class="state"><ul>
-<li class="rap-ctrlstate"><span class="ctrlstate">motoroff</span></li>
+<li class="pnl-ctrlstate" title="ctrlstate"><span class="ctrlstate">motoroff</span></li>
 </ul></div></body></html>`;
 
-const CONTROLLER_STATE_GUARDSTOP = `<li class="rap-ctrlstate"><span class="ctrlstate">guardstop</span></li>`;
-const CONTROLLER_STATE_EMERGSTOP = `<li class="rap-ctrlstate"><span class="ctrlstate">emergencystop</span></li>`;
-const CONTROLLER_STATE_EMERGRESET = `<li class="rap-ctrlstate"><span class="ctrlstate">emergencystopreset</span></li>`;
-const CONTROLLER_STATE_SYSFAIL = `<li class="rap-ctrlstate"><span class="ctrlstate">sysfail</span></li>`;
-const CONTROLLER_STATE_INIT = `<li class="rap-ctrlstate"><span class="ctrlstate">init</span></li>`;
+const CONTROLLER_STATE_GUARDSTOP = `<li class="pnl-ctrlstate"><span class="ctrlstate">guardstop</span></li>`;
+const CONTROLLER_STATE_EMERGSTOP = `<li class="pnl-ctrlstate"><span class="ctrlstate">emergencystop</span></li>`;
+const CONTROLLER_STATE_EMERGRESET = `<li class="pnl-ctrlstate"><span class="ctrlstate">emergencystopreset</span></li>`;
+const CONTROLLER_STATE_SYSFAIL = `<li class="pnl-ctrlstate"><span class="ctrlstate">sysfail</span></li>`;
+const CONTROLLER_STATE_INIT = `<li class="pnl-ctrlstate"><span class="ctrlstate">init</span></li>`;
 
-const OPERATION_MODE_AUTO = `<?xml version="1.0" encoding="UTF-8"?>
+const OPERATION_MODE_AUTO = `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><div class="state"><ul>
-<li class="rap-opmode"><span class="opmode">AUTO</span></li>
+<li class="pnl-opmode" title="opmode"><span class="opmode">AUTO</span></li>
 </ul></div></body></html>`;
 
-const OPERATION_MODE_MANR = `<li class="rap-opmode"><span class="opmode">MANR</span></li>`;
-const OPERATION_MODE_MANF = `<li class="rap-opmode"><span class="opmode">MANF</span></li>`;
+const OPERATION_MODE_MANR = `<li class="pnl-opmode"><span class="opmode">MANR</span></li>`;
+const OPERATION_MODE_MANF = `<li class="pnl-opmode"><span class="opmode">MANF</span></li>`;
 
+// IRC5 returns <span class="ctrlexecstate"> (not "excstate") and value "stop" (not "stopped").
 const EXECUTION_STATE_RUNNING = `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><div class="state"><ul>
-<li class="rap-execution"><span class="excstate">running</span></li>
+<li class="rap-execution" title="execution"><span class="ctrlexecstate">running</span></li>
 </ul></div></body></html>`;
 
-const EXECUTION_STATE_STOPPED = `<li class="rap-execution"><span class="excstate">stopped</span></li>`;
+const EXECUTION_STATE_STOPPED = `<li class="rap-execution" title="execution"><span class="ctrlexecstate">stop</span></li>`;
 
+// IRC5 joint target: li class "ms-jointtarget", path /rw/motionsystem/mechunits/{u}/jointtarget
 const JOINT_TARGET_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><div class="state"><ul>
-<li class="rap-jointtarget">
+<li class="ms-jointtarget" title="ROB_1">
   <span class="rax_1">10.00</span>
   <span class="rax_2">-20.50</span>
   <span class="rax_3">30.25</span>
@@ -70,10 +73,11 @@ const JOINT_TARGET_XML = `<?xml version="1.0" encoding="UTF-8"?>
 </li>
 </ul></div></body></html>`;
 
+// IRC5 robtarget: li class "ms-robtargets", path /rw/motionsystem/mechunits/{u}/robtarget
 const ROB_TARGET_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><div class="state"><ul>
-<li class="rap-robtarget">
+<li class="ms-robtargets" title="ROB_1">
   <span class="x">512.34</span>
   <span class="y">-123.45</span>
   <span class="z">800.00</span>
@@ -114,23 +118,24 @@ const SIGNAL_LIST_XML = `<?xml version="1.0" encoding="UTF-8"?>
 </li>
 </ul></div></body></html>`;
 
+// IRC5 uses "stop" for excstate and "On"/"Off" for active.
 const RAPID_TASKS_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><div class="state"><ul>
-<li class="rap-task-li">
+<li class="rap-task-li" title="T_ROB1">
   <span class="name">T_ROB1</span>
-  <span class="type">NORMAL</span>
-  <span class="taskstate">STARTED</span>
+  <span class="type">norm</span>
+  <span class="taskstate">init</span>
   <span class="excstate">running</span>
-  <span class="active">TRUE</span>
+  <span class="active">On</span>
   <span class="motiontask">TRUE</span>
 </li>
-<li class="rap-task-li">
+<li class="rap-task-li" title="T_ROB2">
   <span class="name">T_ROB2</span>
-  <span class="type">NORMAL</span>
-  <span class="taskstate">STOPPED</span>
-  <span class="excstate">stopped</span>
-  <span class="active">TRUE</span>
+  <span class="type">norm</span>
+  <span class="taskstate">init</span>
+  <span class="excstate">stop</span>
+  <span class="active">Off</span>
   <span class="motiontask">FALSE</span>
 </li>
 </ul></div></body></html>`;
@@ -161,7 +166,7 @@ describe('parseControllerState', () => {
   });
 
   it('throws RwsError PARSE_ERROR for unknown state values', () => {
-    const xml = '<li class="rap-ctrlstate"><span class="ctrlstate">unknown_state</span></li>';
+    const xml = '<li class="pnl-ctrlstate"><span class="ctrlstate">unknown_state</span></li>';
     expect(() => parseControllerState(xml)).toThrowError(
       expect.objectContaining({ code: 'PARSE_ERROR' }),
     );
@@ -186,12 +191,12 @@ describe('parseOperationMode', () => {
   });
 
   it('normalises lowercase to uppercase', () => {
-    const xml = '<li class="rap-opmode"><span class="opmode">auto</span></li>';
+    const xml = '<li class="pnl-opmode"><span class="opmode">auto</span></li>';
     expect(parseOperationMode(xml)).toBe('AUTO');
   });
 
   it('throws PARSE_ERROR for unknown mode', () => {
-    const xml = '<li class="rap-opmode"><span class="opmode">SUPER_AUTO</span></li>';
+    const xml = '<li class="pnl-opmode"><span class="opmode">SUPER_AUTO</span></li>';
     expect(() => parseOperationMode(xml)).toThrowError(
       expect.objectContaining({ code: 'PARSE_ERROR' }),
     );
@@ -208,8 +213,13 @@ describe('parseExecutionState', () => {
   });
 
   it('normalises uppercase', () => {
-    const xml = '<li class="rap-execution"><span class="excstate">RUNNING</span></li>';
+    const xml = '<li class="rap-execution"><span class="ctrlexecstate">RUNNING</span></li>';
     expect(parseExecutionState(xml)).toBe('running');
+  });
+
+  it('normalises "stop" to "stopped"', () => {
+    const xml = '<li class="rap-execution"><span class="ctrlexecstate">stop</span></li>';
+    expect(parseExecutionState(xml)).toBe('stopped');
   });
 
   it('throws PARSE_ERROR when excstate span is missing', () => {
@@ -248,7 +258,7 @@ describe('parseJointTarget', () => {
   });
 
   it('throws PARSE_ERROR when a specific axis span is missing', () => {
-    const noRax6 = `<li class="rap-jointtarget">
+    const noRax6 = `<li class="ms-jointtarget">
       <span class="rax_1">0</span><span class="rax_2">0</span>
       <span class="rax_3">0</span><span class="rax_4">0</span>
       <span class="rax_5">0</span>
@@ -348,18 +358,18 @@ describe('parseRapidTasks', () => {
     const tasks = parseRapidTasks(RAPID_TASKS_XML);
     const t = tasks[0];
     expect(t.name).toBe('T_ROB1');
-    expect(t.type).toBe('NORMAL');
-    expect(t.taskstate).toBe('STARTED');
+    expect(t.type).toBe('norm');
     expect(t.excstate).toBe('running');
     expect(t.active).toBe(true);
     expect(t.motiontask).toBe(true);
   });
 
-  it('parses second task T_ROB2 with stopped excstate', () => {
+  it('parses second task T_ROB2 with stopped excstate (normalised from "stop")', () => {
     const tasks = parseRapidTasks(RAPID_TASKS_XML);
     const t = tasks[1];
     expect(t.name).toBe('T_ROB2');
     expect(t.excstate).toBe('stopped');
+    expect(t.active).toBe(false);
     expect(t.motiontask).toBe(false);
   });
 
