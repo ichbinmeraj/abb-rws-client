@@ -7,6 +7,14 @@ A typed TypeScript/Node.js HTTP and WebSocket client for **ABB IRC5 robot contro
 
 ---
 
+## VS Code Extension
+
+Prefer a GUI? The companion VS Code extension gives you live status, joint positions, RAPID control, and module management directly from the sidebar — no code required.
+
+**[ABB Robot (RWS) — VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws-vscode)**
+
+---
+
 ## Features
 
 - HTTP Digest Authentication (RFC 2617) — no external auth libraries
@@ -108,6 +116,7 @@ try {
 | `password` | `string` | `'robotics'` | RWS password |
 | `requestIntervalMs` | `number` | `55` | Minimum ms between requests (enforces < 20 req/sec) |
 | `timeout` | `number` | `5000` | Request timeout in ms |
+| `sessionCookie` | `string` | — | Saved cookie string to reuse an existing session slot (avoids the 70-session controller limit) |
 
 ---
 
@@ -117,6 +126,7 @@ try {
 |---|---|---|
 | `connect()` | `Promise<void>` | Establish session and authenticate |
 | `disconnect()` | `Promise<void>` | Close subscriptions and clear session |
+| `getSessionCookie()` | `string \| null` | Current session cookie — save and pass as `sessionCookie` on next start to reuse the slot |
 
 ---
 
@@ -156,7 +166,9 @@ try {
 |---|---|---|
 | `uploadModule(remotePath, content)` | `Promise<void>` | Upload RAPID `.mod` source to controller filesystem |
 | `loadModule(taskName, modulePath)` | `Promise<void>` | Load an uploaded module into a RAPID task |
+| `unloadModule(taskName, moduleName)` | `Promise<void>` | Unload a module from a task (RAPID must be stopped) |
 | `listModules(taskName)` | `Promise<string[]>` | Names of all loaded modules in a task |
+| `readFile(remotePath)` | `Promise<string>` | Download a file from the controller filesystem as a string |
 
 ---
 
@@ -231,6 +243,27 @@ try {
     }
   }
 }
+```
+
+---
+
+## Session Persistence
+
+The IRC5 controller allows a maximum of **70 concurrent RWS sessions**. To avoid exhausting this limit across process restarts, persist the session cookie:
+
+```ts
+import fs from 'fs';
+
+// After connecting — save the cookie
+const cookie = client.getSessionCookie();
+if (cookie) fs.writeFileSync('.rws-session', cookie, 'utf8');
+
+// On next start — reuse it
+let sessionCookie: string | undefined;
+try { sessionCookie = fs.readFileSync('.rws-session', 'utf8'); } catch {}
+
+const client = new RwsClient({ host, username, password, sessionCookie });
+await client.connect(); // reuses the existing slot, no new session created
 ```
 
 ---

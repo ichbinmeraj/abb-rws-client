@@ -149,7 +149,7 @@ describe('ResourceMapper', () => {
 
   describe('listModules', () => {
     it('returns correct path', () => {
-      expect(listModules('T_ROB1')).toBe('/rw/rapid/tasks/T_ROB1/modules');
+      expect(listModules('T_ROB1')).toBe('/rw/rapid/modules?task=T_ROB1');
     });
   });
 
@@ -170,15 +170,21 @@ describe('ResourceMapper', () => {
   });
 
   describe('signal', () => {
-    it('returns path with network/device/name and ;state suffix', () => {
+    it('returns path with network/device/name', () => {
       expect(signal('Local', 'DRV_1', 'DI_1')).toBe(
-        '/rw/iosystem/signals/Local/DRV_1/DI_1;state',
+        '/rw/iosystem/signals/Local/DRV_1/DI_1',
       );
     });
 
     it('URL-encodes each path segment', () => {
       expect(signal('My Net', 'My Dev', 'My Sig')).toBe(
-        '/rw/iosystem/signals/My%20Net/My%20Dev/My%20Sig;state',
+        '/rw/iosystem/signals/My%20Net/My%20Dev/My%20Sig',
+      );
+    });
+
+    it('uses flat path when network and device are empty', () => {
+      expect(signal('', '', 'doBwdOnPath')).toBe(
+        '/rw/iosystem/signals/doBwdOnPath',
       );
     });
   });
