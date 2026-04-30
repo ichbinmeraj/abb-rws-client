@@ -34,6 +34,8 @@ export interface HttpSessionOptions {
   password: string;
   requestIntervalMs: number;
   timeoutMs: number;
+  /** Pre-load a saved -http-session- cookie to reuse an existing controller session slot */
+  sessionCookie?: string;
 }
 
 // ─── HttpSession ─────────────────────────────────────────────────────────────
@@ -72,6 +74,17 @@ export class HttpSession {
     this.password = options.password;
     this.requestIntervalMs = options.requestIntervalMs;
     this.timeoutMs = options.timeoutMs;
+    // Pre-load saved cookies so reconnects reuse the same session slot.
+    // Accepts the full Cookie header string, e.g. "-http-session-=...; ABBCX=..."
+    if (options.sessionCookie) {
+      for (const part of options.sessionCookie.split(';')) {
+        const eq = part.indexOf('=');
+        if (eq === -1) continue;
+        const name = part.slice(0, eq).trim();
+        const value = part.slice(eq + 1).trim();
+        if (name) this.cookies.set(name, value);
+      }
+    }
   }
 
   // ─── Public HTTP methods ────────────────────────────────────────────────────
@@ -97,12 +110,23 @@ export class HttpSession {
     return this.buildCookieHeader();
   }
 
-  /** Clear all session state (called on disconnect) */
+  /** Returns the full cookie header string (all cookies) for persistence across reloads */
+  getSessionCookie(): string | null {
+    const header = this.buildCookieHeader();
+    return header || null;
+  }
+
+  /**
+   * Called on disconnect. Intentionally preserves all session state (cookie,
+   * digest challenge, nonce) so the next connect() reuses the same controller
+   * session slot without triggering a new 401 handshake.
+   *
+   * The controller limits concurrent sessions (70 max on IRC5). Creating a new
+   * session on every reconnect fills the pool and causes persistent 503 errors.
+   * If the nonce has gone stale the controller returns 401 and we re-auth inline.
+   */
   clearSession(): void {
-    this.cookies.clear();
-    this.digestChallenge = null;
-    this.nonceCount = 0;
-    this.lastActivityTime = 0;
+    // No-op: preserve cookie + digest state across disconnect/reconnect cycles.
   }
 
   // ─── Request queue ──────────────────────────────────────────────────────────
@@ -139,9 +163,10 @@ export class HttpSession {
     path: string,
     body?: string | Uint8Array,
   ): Promise<HttpResponse> {
-    // Auto re-authenticate if the session may have expired
+    // Auto re-authenticate if the session may have expired.
+    // Only clear digest auth state — keep the session cookie so the controller
+    // reuses the same session slot instead of creating a new one.
     if (this.isSessionExpired()) {
-      this.cookies.clear();
       this.digestChallenge = null;
       this.nonceCount = 0;
     }
