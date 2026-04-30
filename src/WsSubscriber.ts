@@ -7,11 +7,30 @@
  *   3. Parse incoming XML event messages → emit typed SubscriptionEvent objects
  *   4. Auto-reconnect on unexpected close: max 3 retries, exponential backoff 1s/2s/4s
  *
- * Uses Node 18+ built-in WebSocket (undici). Requires --experimental-websocket flag on
- * Node 18; available by default in Node 21+.
+ * Uses native globalThis.WebSocket when available (Node 22+, browsers).
+ * Falls back to the 'ws' npm package for Node 18/21 where native WebSocket is experimental.
  */
 
 import { RwsError } from './types.js';
+import { createRequire } from 'module';
+
+/**
+ * Resolve a WebSocket constructor: prefer native globalThis.WebSocket,
+ * fall back to the 'ws' package if available.
+ */
+function resolveWebSocket(): typeof WebSocket {
+  if (globalThis.WebSocket) return globalThis.WebSocket;
+  try {
+    const require = createRequire(import.meta.url);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return require('ws') as any;
+  } catch {
+    throw new RwsError(
+      'WebSocket is not available. Install the "ws" package or use Node 22+.',
+      'NETWORK_ERROR',
+    );
+  }
+}
 import type { HttpSession } from './HttpSession.js';
 import type { SubscriptionResource, SubscriptionEvent } from './types.js';
 import { subscriptions } from './ResourceMapper.js';
@@ -27,25 +46,29 @@ const MAX_RETRIES = 3;
  * Paths are NOT percent-encoded — semicolons must be literal in the subscription body.
  */
 function resourceToPath(resource: SubscriptionResource): string {
-  if (resource === 'execution') return '/rw/rapid/execution;state';
-  if (resource === 'controllerstate') return '/rw/panel/ctrlstate;state';
-  if (resource === 'operationmode') return '/rw/panel/opmode;state';
+  if (resource === 'execution')     return '/rw/rapid/execution;ctrlexecstate';
+  if (resource === 'controllerstate') return '/rw/panel/ctrlstate;ctrlstate';
+  if (resource === 'operationmode') return '/rw/panel/opmode;opmode';
+  if (resource === 'speedratio')    return '/rw/panel/speedratio;speedratio';
+  if (resource === 'coldetstate')   return '/rw/panel/coldetstate;coldetstate';
+  if (resource === 'uiinstr')       return '/rw/rapid/uiinstr;uievent';
   if (resource.type === 'signal') {
-    // Signal path requires network/device/name but SubscriptionResource only gives the
-    // signal name. Use a direct path that the user is expected to pass as the full path.
-    // Convention: name can be 'network/device/signalname' or just 'signalname' for
-    // simple virtual/local signals.
-    const parts = resource.name.split('/');
-    if (parts.length === 3) {
-      return `/rw/iosystem/signals/${resource.name};state`;
-    }
-    // Fallback: treat as a virtual signal on 'Virtual1/DRV1' — not universally correct,
-    // but the best we can do without network/device context in this resource type.
+    // Convention: name can be 'network/device/signalname' (3 parts) for a physical signal,
+    // or just 'signalname' for virtual/flat signals.
     return `/rw/iosystem/signals/${resource.name};state`;
   }
   if (resource.type === 'persvar') {
-    // RAPID persistent variable subscription path
+    // RAPID persistent variable subscription path (full path: RAPID/task/module/symbol)
     return `/rw/rapid/symbol/data/${resource.name};value`;
+  }
+  if (resource.type === 'taskchange') {
+    return `/rw/rapid/tasks/${encodeURIComponent(resource.task)};taskchange`;
+  }
+  if (resource.type === 'execycle') {
+    return '/rw/rapid/execution;rapidexeccycle';
+  }
+  if (resource.type === 'elog') {
+    return `/rw/elog/${resource.domain}`;
   }
   // TypeScript exhaustiveness check
   const _: never = resource;
@@ -109,6 +132,7 @@ function parseWsMessage(data: string): SubscriptionEvent[] {
 interface ActiveSubscription {
   id: string;
   wsUrl: string;
+  deleteUrl: string;  // HTTP URL used to DELETE the subscription on close
   ws: WebSocket | null;
   handler: (event: SubscriptionEvent) => void;
   retryCount: number;
@@ -138,14 +162,6 @@ export class WsSubscriber {
     resources: SubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
   ): Promise<() => Promise<void>> {
-    if (!globalThis.WebSocket) {
-      throw new RwsError(
-        'WebSocket is not available in this Node.js version. ' +
-          'Requires Node 21+ or Node 18 with --experimental-websocket flag.',
-        'NETWORK_ERROR',
-      );
-    }
-
     // Step 1: POST /subscription to register resources
     const body = buildSubscriptionBody(resources);
     const response = await this.session.post(subscriptions(), body);
@@ -165,19 +181,25 @@ export class WsSubscriber {
 
     const subscriptionId = parseSubscriptionId(locationHeader);
 
-    // Step 2: Convert Location URL to WebSocket URL
-    // Location may be http://host/subscription/1 → ws://host/subscription/1
-    // or just a path like /subscription/1 → ws://host:port/subscription/1
+    // Step 2: Derive WebSocket URL and HTTP delete URL from Location header.
+    // IRC5 may return ws://host/poll/{id} or http://host/subscription/{id} or a path.
     let wsUrl: string;
-    if (locationHeader.startsWith('http://') || locationHeader.startsWith('https://')) {
+    let deleteUrl: string;
+    if (locationHeader.startsWith('ws://') || locationHeader.startsWith('wss://')) {
+      wsUrl = locationHeader;
+      deleteUrl = locationHeader.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
+    } else if (locationHeader.startsWith('http://') || locationHeader.startsWith('https://')) {
       wsUrl = locationHeader.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+      deleteUrl = locationHeader;
     } else {
       wsUrl = `ws://${this.host}:${this.port}${locationHeader}`;
+      deleteUrl = `http://${this.host}:${this.port}${locationHeader}`;
     }
 
     const sub: ActiveSubscription = {
       id: subscriptionId,
       wsUrl,
+      deleteUrl,
       ws: null,
       handler,
       retryCount: 0,
@@ -196,7 +218,7 @@ export class WsSubscriber {
       }
       this.subscriptions.delete(subscriptionId);
       // Best-effort DELETE — ignore errors (controller may have already cleaned up)
-      await this.session.delete(`${subscriptions()}/${subscriptionId}`).catch(() => undefined);
+      await this.session.delete(sub.deleteUrl).catch(() => undefined);
     };
   }
 
@@ -210,7 +232,7 @@ export class WsSubscriber {
         sub.ws = null;
       }
       promises.push(
-        this.session.delete(`${subscriptions()}/${sub.id}`).then(() => undefined).catch(() => undefined),
+        this.session.delete(sub.deleteUrl).then(() => undefined).catch(() => undefined),
       );
     }
     this.subscriptions.clear();
@@ -221,12 +243,7 @@ export class WsSubscriber {
 
   private openWebSocket(sub: ActiveSubscription): void {
     const cookieHeader = this.session.getCookieHeader();
-
-    // Node 18 undici WebSocket supports custom headers via the third constructor argument.
-    // The 'headers' option is undici-specific and not part of the WHATWG WebSocket spec.
-    // We use a type cast here because the WHATWG WebSocket constructor type does not
-    // include this undici extension.
-    const WS = globalThis.WebSocket as new (
+    const WS = resolveWebSocket() as new (
       url: string,
       protocols: string[],
       options: { headers: Record<string, string> },

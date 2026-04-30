@@ -1,6 +1,6 @@
 {
   "name": "abb-rws-client",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,7 +25,7 @@
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vitest": "^1.6.1"
   },
   "dependencies": {
     "abb-rws-client": "file:abb-rws-client-0.1.4.tgz",
