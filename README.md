@@ -1,15 +1,17 @@
 # abb-rws-client
 
-A typed TypeScript/Node.js HTTP and WebSocket client for **ABB IRC5 robot controllers** using [Robot Web Services (RWS) 1.0](https://developercenter.robotstudio.com/api/rwsApi/).
+A typed TypeScript/Node.js client for **ABB Robot Web Services** — both protocols ABB ships:
 
-> **Compatibility:** RWS 1.0 / RobotWare 6.x only.  
-> Not compatible with OmniCore, RobotWare 7.x, or RWS 2.0.
+- **RWS 1.0** — IRC5 / RobotWare 6.x → `RwsClient`
+- **RWS 2.0** — OmniCore / RobotWare 7.x → `RwsClient2`
+
+> **Compatibility:** dual-protocol since v0.7.0. Single-line auto-detection via `createClient()` if you don't know which one your controller speaks.
 
 ---
 
 ## VS Code Extension
 
-Prefer a GUI? The companion VS Code extension gives you live status, motion data, RAPID control, I/O signals, event log, and file management directly from the sidebar — no code required.
+Prefer a GUI? The companion VS Code extension gives you live status, motion data, RAPID control, I/O signals, event log, file management, and CFG database editing directly from the sidebar — no code required. Works against both IRC5 and OmniCore.
 
 **[ABB Robot (RWS) — VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)**
 
@@ -17,14 +19,17 @@ Prefer a GUI? The companion VS Code extension gives you live status, motion data
 
 ## Features
 
-- HTTP Digest Authentication (RFC 2617) — no external auth libraries
-- Session cookie management (`ABBCX`, `-http-session-`) with automatic reuse
-- Request rate limiting (< 20 req/sec, configurable)
-- Automatic re-authentication after session expiry
-- WebSocket subscriptions for real-time events
-- Auto-reconnect on WebSocket disconnect (3 retries, exponential backoff)
+- **Dual-protocol** — RWS 1.0 (Digest, JSON) and RWS 2.0 (Basic, XHTML;v=2.0)
+- **Auto-detection** — `createClient(host)` probes the auth challenge and returns the right client
+- **Multi-robot** — `MultiRobotManager` for orchestrating several controllers in one process
+- **Connection lifecycle** — `RobotManager` handles port discovery, polling, WebSocket subscriptions with polling fallback, reconnect-on-failure
+- **Typed adapter pattern** — `IRWSAdapter` lets you write code that works across both protocols
+- **WebSocket subscriptions** for real-time events (panel state, RAPID exec, signals, persvar, elog, jointtarget, …)
+- Session cookie management (IRC5: avoids the controller's 70-session pool fill; OmniCore: avoids 503 lockout from session-pool exhaustion)
+- Automatic `/logout` on disconnect to release server-side mastership and free the session slot
+- Request rate limiting (< 20 req/sec)
 - Fully typed public API — every method throws `RwsError` with a typed `code`
-- Zero runtime dependencies — Node.js built-ins only
+- Single dependency: `ws` (only one we don't reimplement)
 
 ---
 
@@ -34,18 +39,63 @@ Prefer a GUI? The companion VS Code extension gives you live status, motion data
 npm install abb-rws-client
 ```
 
-**Requirements:** Node.js 18+ (WebSocket subscriptions require Node 21+ or Node 18 with `--experimental-websocket`).
+**Requirements:** Node.js 18+.
 
 ---
 
-## Quick Start
+## Quick Start (auto-detect)
+
+The simplest path: `createClient` probes the controller and returns the right protocol's client.
+
+```ts
+import { createClient, RwsClient2 } from 'abb-rws-client';
+
+const client = await createClient({
+  host: '192.168.125.1',
+  // username/password default to 'Admin' / 'robotics' (built-in admin account, full UAS grants)
+});
+
+console.log(`Connected via ${client instanceof RwsClient2 ? 'RWS 2.0' : 'RWS 1.0'}`);
+
+const state = await client.getControllerState();   // 'motoron' | 'motoroff' | …
+const mode  = await client.getOperationMode();     // 'AUTO' | 'MANR' | 'MANF'
+const joints = await client.getJointPositions();   // { rax_1, …, rax_6 }
+
+await client.disconnect();
+```
+
+If you only target one protocol, skip the helper and instantiate the client directly. See [`examples/`](./examples/) for runnable scripts.
+
+---
+
+## Choosing a client
+
+| Controller | Protocol | Class | Auth | Default port |
+|---|---|---|---|---|
+| **IRC5** (RobotWare 6.x) | RWS 1.0 | `RwsClient` | HTTP Digest | 80 (real), 80 / 11811 (VC) |
+| **OmniCore** (RobotWare 7.x) | RWS 2.0 | `RwsClient2` | HTTP Basic | 443 (real), 5466 (VC HTTPS) |
+
+Both classes expose **the same method names** for ~140 endpoints (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, etc.). The protocol differences (URL shapes, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally — your code looks the same.
+
+If you need a single typed reference that holds either:
+
+```ts
+import { createAdapter, type IRWSAdapter } from 'abb-rws-client';
+
+const adapter: IRWSAdapter = await createAdapter({ host: '192.168.125.1' });
+// adapter is RWS1Adapter or RWS2Adapter — both implement IRWSAdapter
+```
+
+---
+
+## RWS 1.0 explicit usage
 
 ```ts
 import { RwsClient, RwsError } from 'abb-rws-client';
 
 const client = new RwsClient({
   host: '192.168.125.1',
-  username: 'Default User',
+  username: 'Admin',
   password: 'robotics',
 });
 
@@ -85,6 +135,138 @@ await client.disconnect();
 
 ---
 
+## RWS 2.0 explicit usage
+
+```ts
+import { RwsClient2 } from 'abb-rws-client';
+
+// RWS 2.0 takes a base URL (scheme + host + port).
+//   Real OmniCore:  https://<host>:443
+//   OmniCore VC:    https://127.0.0.1:5466
+const client = new RwsClient2(
+  'https://127.0.0.1:5466',
+  'Admin',
+  'robotics',
+);
+
+await client.connect();
+
+// Same method names as RWS 1.0 — only the underlying protocol differs.
+console.log('state:', await client.getControllerState());
+console.log('joints:', await client.getJointPositions());
+
+// RAPID variable read — RWS 2.0 symbol API uses suffix-style URLs internally
+// (`/rw/rapid/symbol/{symburl}/data`); the method shape is the same.
+const tool0 = await client.getRapidVariable('T_ROB1', 'BASE', 'tool0');
+
+// WebSocket subscriptions over `robapi2_subscription` subprotocol.
+const unsubscribe = await client.subscribe(
+  ['controllerstate', 'execution'],
+  (event) => console.log(event.resource, '=', event.value),
+);
+
+await unsubscribe();
+await client.disconnect();
+```
+
+### Notable RWS 2.0 quirks (handled automatically)
+
+These are documented because they bite anyone who tries to write an RWS 2.0 client from scratch:
+
+- **HTTP Basic auth**, not Digest (RWS 1.0).
+- **XHTML responses only** — `Accept: application/json` returns 406. Library uses `Accept: application/xhtml+xml;v=2.0`.
+- **Path-based actions** — `/rw/rapid/execution/stop`, not `?action=stop`.
+- **Mastership domains collapsed** — both `'rapid'` and `'cfg'` map to `'edit'`. The adapter maps internally so either name works.
+- **File service home** is `'HOME'`, not `'$HOME'`.
+- **Symbol API path is suffix-style** — `/rw/rapid/symbol/{symburl}/data` (RWS 1.0 puts `/data` at the front).
+- **Module unload** is `POST /rw/rapid/tasks/{task}/unloadmod` with body, NOT `DELETE` on the module URL (returns 405).
+- **Self-signed TLS** on virtual controllers — library uses `rejectUnauthorized: false` for HTTPS.
+- **WebSocket subscription URL** comes from the `Location` header (real hardware) or the XHTML body (VC). Subprotocol: `robapi2_subscription`.
+
+---
+
+## Multi-robot orchestration
+
+For applications that talk to several controllers, use `MultiRobotManager`:
+
+```ts
+import { MultiRobotManager } from 'abb-rws-client';
+
+const multi = MultiRobotManager.fromConfigs([
+  { id: 'cell-A', name: 'Cell A IRB120',  host: '192.168.125.1', port: 80,   useHttps: false, username: 'Admin', password: 'robotics' },
+  { id: 'cell-B', name: 'Cell B IRB1200', host: '192.168.125.2', port: 443,  useHttps: true,  username: 'Admin', password: 'robotics' },
+]);
+
+multi.onError((msg, actions) => {
+  console.error(`Robot error: ${msg}`);
+  return Promise.resolve(undefined); // headless: just log
+});
+
+multi.onDidChange(() => {
+  console.log(`active=${multi.activeId} state=${multi.state.ctrlstate}`);
+});
+
+for (const { id } of multi.entries) {
+  await multi.connectRobot(id);
+}
+// One robot is "active" at a time (handy for UIs); state for all is polled.
+multi.setActive('cell-B');
+```
+
+`MultiRobotManager` wraps individual `RobotManager` instances. Each `RobotManager` handles its own:
+- Auto port discovery (probes 5466 / 9403 / 443 / 80 / 11811 in that order, plus a wide-scan fallback when none of those answer — RobotStudio assigns random VC ports above 30000)
+- Protocol auto-detection (`WWW-Authenticate: Digest` → RWS 1.0; `Basic` → RWS 2.0)
+- Hybrid polling cadence: **5 s when WebSocket subscriptions are active** (positions only — state-change resources stream over WS); **1 s when subscriptions failed** (full state coverage via polling)
+- WebSocket subscriptions with automatic polling fallback (RWS 2.0 VC notably rejects the `robapi2_subscription` subprotocol — fallback kicks in)
+- Reconnect-on-failure (3-strike, surfaces via `onError` listener)
+- Clean `GET /logout` on disconnect — releases server-side mastership and frees the session slot
+
+You can also create a `RobotManager` directly if you only have one robot.
+
+---
+
+## `RobotManager` — higher-level surface
+
+`RobotManager` wraps either client with operational helpers that handle mastership, polling, and protocol differences for you. In addition to delegating every protocol method to the underlying client, it exposes:
+
+- **`getRmmpPrivilege()`**, **`requestRmmp(level)`** — Remote Mastership Privilege management. Required on OmniCore in AUTO mode for any modify op.
+- **`getMastershipStatus(domain?)`** — read who currently holds rapid/cfg/motion mastership (uid + application name).
+- **`setOperationMode('AUTO' | 'MANR' | 'MANF')`** — VC-only switch with auto-routing through MANR for AUTO ↔ MANF (the controller rejects direct transitions). Acquires `edit` mastership for the higher-privilege direction.
+- **`setSpeedRatio(0..100)`** — wraps `edit` mastership; uses the live-verified `?action=setspeedratio&speed-ratio=N` form on RWS 2.0 (the bare endpoint returns 400).
+- **`createBackup(name)`**, **`restoreBackup(name)`**, **`getBackupStatus()`**, **`listBackups()`** — `/ctrl/backup/...`
+- **`callServiceRoutine(task, name, args?)`** — invoke a service routine remotely (calibration, brake check, etc.).
+- **`calcJointsFromCartesian(...)`** — inverse kinematics. **`calcCartesianFromJoints(...)`** — forward kinematics.
+- **`setActiveTool(mechunit, name)`**, **`setActiveWobj(mechunit, name)`** — switch active persistent tooldata / wobjdata.
+- **CFG write** — `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`. Each acquires `edit` mastership for the duration.
+- **DIPC** — `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients.
+- **`listFileVolumes()`** — every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
+- **`getModuleSource(task, name)`** — pull a module's RAPID text in one call.
+- **`compressPath(source, dest)`** — controller-side compression.
+- **`validateRapidValue(task, value, datatype)`** — pre-flight a literal before writing.
+
+Every method returns `Promise<...>` and throws `RwsError` on failure.
+
+---
+
+## Logging
+
+The lib ships a no-op logger by default. Hosts (CLIs, services, the VS Code extension) install their own:
+
+```ts
+import { setLogger } from 'abb-rws-client';
+
+setLogger({
+  info:  (msg) => console.log(`[info]  ${msg}`),
+  warn:  (msg) => console.warn(`[warn]  ${msg}`),
+  error: (msg, err) => console.error(`[error] ${msg}`, err),
+  show:  () => { /* bring log surface to front; no-op for CLIs */ },
+});
+```
+
+Internal lifecycle events (connect/disconnect, polling cycles, subscription state, error recovery) flow through this.
+
+---
+
 ## API Reference
 
 ### Constructor
@@ -97,7 +279,7 @@ new RwsClient(options: RwsClientOptions)
 |--------|------|---------|-------------|
 | `host` | `string` | — | Controller IP or hostname |
 | `port` | `number` | `80` | HTTP port |
-| `username` | `string` | `'Default User'` | RWS username |
+| `username` | `string` | `'Admin'` | RWS username |
 | `password` | `string` | `'robotics'` | RWS password |
 | `requestIntervalMs` | `number` | `55` | Min ms between requests (enforces < 20 req/sec) |
 | `timeout` | `number` | `5000` | Request timeout in ms |
@@ -301,7 +483,7 @@ try {
 
 ## Session Persistence
 
-The IRC5 controller allows a maximum of **70 concurrent RWS sessions**. Persist the session cookie across restarts to always reuse the same slot:
+IRC5 controllers allow a maximum of **70 concurrent RWS sessions**; OmniCore controllers also have a finite session pool (the exact number isn't published, but heavy probing without `/logout` returns HTTP 503 once it fills). Persist the session cookie across restarts to always reuse the same slot — the lib calls `/logout` on `disconnect()` to free the slot cleanly, but a saved cookie is the most robust path:
 
 ```ts
 import fs from 'fs';
@@ -322,14 +504,16 @@ await client.connect(); // reuses the existing session slot
 
 ## Rate Limits
 
-| Constraint | Value |
-|------------|-------|
-| Max request rate | 20 req/sec |
-| Client enforced interval | 55 ms between requests |
-| Max concurrent sessions | 70 |
-| Session inactivity timeout | 5 minutes |
-| Max session lifetime | 25 minutes |
-| Max file upload | 800 MB |
+| Constraint | Value | Source |
+|------------|-------|--------|
+| Max request rate | 20 req/sec | Both protocols (controller-enforced) |
+| Client-enforced interval | 55 ms between requests | This package, default |
+| Max concurrent sessions | 70 (IRC5) / finite (OmniCore) | Controller-enforced |
+| Session inactivity timeout | 5 minutes (IRC5) | Controller-enforced |
+| Max session lifetime | 25 minutes (IRC5) | Controller-enforced |
+| Max file upload | 800 MB (IRC5) | Controller-enforced; OmniCore is similar |
+
+OmniCore-specific limits aren't fully documented by ABB; what the lib observes empirically matches the IRC5 numbers within an order of magnitude.
 
 ---
 
@@ -337,10 +521,13 @@ await client.connect(); // reuses the existing session slot
 
 | | RobotWare 6.x (RWS 1.0) | RobotWare 7.x (RWS 2.0) |
 |--|--|--|
-| This package | ✅ Supported | ❌ Not compatible |
-| IRC5 controller | ✅ | n/a |
-| OmniCore controller | n/a | ❌ |
-| RobotStudio virtual | ✅ (127.0.0.1) | ❌ |
+| This package | ✅ `RwsClient` | ✅ `RwsClient2` |
+| IRC5 controller (real) | ✅ | n/a |
+| OmniCore controller (real) | n/a | ✅ |
+| RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) |
+| Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` |
+
+**Live-tested matrix** as of v0.7.1: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 116 unit tests + 339 live protocol-coverage tests pass against both.
 
 ---
 

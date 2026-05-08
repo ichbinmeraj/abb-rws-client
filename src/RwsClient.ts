@@ -132,7 +132,7 @@ export class RwsClient {
   constructor(options: RwsClientOptions) {
     const sessionOptions: HttpSessionOptions = {
       baseUrl: `http://${options.host}:${options.port ?? 80}`,
-      username: options.username ?? 'Default User',
+      username: options.username ?? 'Admin',
       password: options.password ?? 'robotics',
       requestIntervalMs: options.requestIntervalMs ?? 55,
       timeoutMs: options.timeout ?? 5000,
@@ -145,6 +145,33 @@ export class RwsClient {
   /** Returns the current -http-session- cookie so callers can persist and reuse it */
   getSessionCookie(): string | null {
     return this.session.getSessionCookie();
+  }
+
+  /**
+   * Generic HTTP request helper exposing the underlying authenticated session.
+   *
+   * Lets adapters call any RWS endpoint without requiring this library to wrap
+   * each one in a typed method. Useful for endpoints that aren't (yet) exposed
+   * as named methods — the caller handles parsing the response body.
+   *
+   * Reuses the session's digest auth, cookie, queue, retry, and timeout logic.
+   *
+   * @param method   'GET' | 'POST' | 'PUT' | 'DELETE'
+   * @param path     URL path, e.g. `/rw/cfg/MOC/ROBOT/instances?json=1`
+   * @param body     Optional request body (form-encoded string for POST/PUT)
+   * @returns        `{ status: number, body: string }` — raw response
+   */
+  async request(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    body?: string,
+  ): Promise<{ status: number; body: string }> {
+    let res;
+    if (method === 'GET')         { res = await this.session.get(path); }
+    else if (method === 'POST')   { res = await this.session.post(path, body ?? ''); }
+    else if (method === 'PUT')    { res = await this.session.put(path, body ?? ''); }
+    else                          { res = await this.session.delete(path); }
+    return { status: res.status, body: res.body };
   }
 
   // ─── Connection ─────────────────────────────────────────────────────────────
@@ -174,9 +201,13 @@ export class RwsClient {
   async disconnect(): Promise<void> {
     try {
       await this.subscriber.closeAll();
-    } finally {
-      this.session.clearSession();
-    }
+    } catch { /* ignore */ }
+    // Server-side cleanup: GET /logout releases mastership, subscriptions, and frees
+    // the session slot in the controller's pool. Without this, orphan mastership can
+    // block subsequent clients for several minutes (until the controller times out
+    // the session by inactivity). Best-effort — ignore errors.
+    try { await this.session.get('/logout'); } catch { /* ignore */ }
+    this.session.clearSession();
   }
 
   // ─── Controller state ───────────────────────────────────────────────────────
@@ -290,6 +321,24 @@ export class RwsClient {
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`unlockOperationMode failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
+  /**
+   * Switch the controller's operation mode. **Virtual controllers only** — on
+   * real IRC5 hardware the physical key switch on the FlexPendant is the
+   * source of truth and the controller will reject this with 403.
+   *
+   * RWS 1.0 endpoint: POST /rw/panel/opmode with body `opmode=auto|man|manfs`
+   * (note the lowercase pre-OmniCore values).
+   */
+  async setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
+    const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manfs';
+    try {
+      await this.session.post('/rw/panel/opmode', `opmode=${wire}`);
+    } catch (e) {
+      if (e instanceof RwsError) { throw e; }
+      throw new RwsError(`setOperationMode failed: ${String(e)}`, 'UNKNOWN');
     }
   }
 
@@ -698,21 +747,27 @@ export class RwsClient {
   }
 
   /**
-   * Upload a RAPID module file to the controller filesystem.
-   * The file content is uploaded as UTF-8 bytes via PUT /fileservice/{remotePath}.
+   * Upload a file to the controller filesystem.
+   * The content is uploaded as UTF-8 bytes via PUT /fileservice/{remotePath}.
+   * Works for any file type — RAPID modules, .cfg files, plain text, etc.
    *
    * @param remotePath - Controller path, e.g. '$HOME/MyMod.mod'
-   * @param content    - RAPID module source as a string
+   * @param content    - File content as a string
    */
-  async uploadModule(remotePath: string, content: string): Promise<void> {
+  async uploadFile(remotePath: string, content: string): Promise<void> {
     try {
       const path = pathUploadFile(remotePath);
       const bytes = new TextEncoder().encode(content);
       await this.session.put(path, bytes);
     } catch (e) {
       if (e instanceof RwsError) throw e;
-      throw new RwsError(`uploadModule failed: ${String(e)}`, 'UNKNOWN');
+      throw new RwsError(`uploadFile failed: ${String(e)}`, 'UNKNOWN');
     }
+  }
+
+  /** @deprecated use uploadFile() — same behavior, neutral name. Kept for backward compat. */
+  uploadModule(remotePath: string, content: string): Promise<void> {
+    return this.uploadFile(remotePath, content);
   }
 
   /**
@@ -810,10 +865,12 @@ export class RwsClient {
    */
   async createDirectory(parentPath: string, dirName: string): Promise<void> {
     try {
-      const { path } = { path: fileServicePath(parentPath) };
+      const path = fileServicePath(parentPath);
+      // RWS 1.0 fileservice expects params in the body, not the query string.
+      // Putting fs-action in the URL returns 400 "Invalid/No Query Parameter".
       await this.session.post(
-        `${path}?fs-action=create&fs-newname=${encodeURIComponent(dirName)}`,
-        '',
+        path,
+        `fs-action=create&fs-newname=${encodeURIComponent(dirName)}`,
       );
     } catch (e) {
       if (e instanceof RwsError) throw e;

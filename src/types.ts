@@ -250,7 +250,7 @@ export interface RwsClientOptions {
   host: string;
   /** HTTP port; default 80 */
   port?: number;
-  /** Default 'Default User' */
+  /** Default 'Admin' */
   username?: string;
   /** Default 'robotics' */
   password?: string;
@@ -290,6 +290,7 @@ export type RwsErrorCode =
   | 'CONTROLLER_BUSY'
   | 'NETWORK_ERROR'
   | 'PARSE_ERROR'
+  | 'PROTOCOL_DETECT_FAILED'
   | 'UNKNOWN';
 
 /**

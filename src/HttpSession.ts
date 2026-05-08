@@ -14,6 +14,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { RwsError } from './types.js';
+import { Logger } from './Logger.js';
 import type { DigestChallenge, HttpResponse } from './types.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -163,6 +164,12 @@ export class HttpSession {
     path: string,
     body?: string | Uint8Array,
   ): Promise<HttpResponse> {
+    const startedAt = Date.now();
+    const bodyPreview = body
+      ? (typeof body === 'string' ? body : Buffer.from(body).toString('utf8')).slice(0, 200)
+      : undefined;
+    Logger.trace?.('http.req', `RWS1 ${method} ${path}`, { protocol: 'rws1', method, path, bodyPreview });
+
     // Auto re-authenticate if the session may have expired.
     // Only clear digest auth state — keep the session cookie so the controller
     // reuses the same session slot instead of creating a new one.
@@ -177,6 +184,7 @@ export class HttpSession {
     if (response.status === 401) {
       const wwwAuth = response.headers.get('www-authenticate');
       if (!wwwAuth) {
+        Logger.trace?.('http.err', `RWS1 ${method} ${path} → 401 (no auth header)`, { protocol: 'rws1', method, path });
         throw new RwsError('401 without WWW-Authenticate header', 'AUTH_FAILED', 401);
       }
       this.digestChallenge = this.parseDigestChallenge(wwwAuth);
@@ -185,7 +193,7 @@ export class HttpSession {
       response = await this.rawFetch(method, path, body);
 
       if (response.status === 401) {
-        // Second 401 — credentials are wrong
+        Logger.trace?.('http.err', `RWS1 ${method} ${path} → 401 (auth failed)`, { protocol: 'rws1', method, path });
         throw new RwsError('Authentication failed — check username and password', 'AUTH_FAILED', 401);
       }
     }
@@ -195,12 +203,18 @@ export class HttpSession {
       await sleep(200);
       response = await this.rawFetch(method, path, body);
       if (response.status === 503) {
+        Logger.trace?.('http.err', `RWS1 ${method} ${path} → 503 busy`, { protocol: 'rws1', method, path });
         throw new RwsError('Controller busy (503) — retry later', 'CONTROLLER_BUSY', 503);
       }
     }
 
     if (!this.isOk(response.status)) {
       const bodyText = await response.text().catch(() => '');
+      Logger.trace?.('http.err', `RWS1 ${method} ${path} → ${response.status}`, {
+        protocol: 'rws1', method, path, status: response.status,
+        durationMs: Date.now() - startedAt,
+        bodyPreview: bodyText.slice(0, 300),
+      });
       throw new RwsError(
         `HTTP ${response.status} from ${method} ${path}`,
         this.mapHttpStatus(response.status),
@@ -208,6 +222,10 @@ export class HttpSession {
         bodyText,
       );
     }
+    Logger.trace?.('http.res', `RWS1 ${method} ${path} → ${response.status}`, {
+      protocol: 'rws1', method, path, status: response.status,
+      durationMs: Date.now() - startedAt,
+    });
 
     // Store cookies from response
     this.storeCookies(response.headers);

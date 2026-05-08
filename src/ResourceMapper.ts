@@ -407,14 +407,22 @@ export function createDirectory(parentPath: string): { path: string } {
 
 /**
  * Path to copy a file on the controller filesystem.
- * POST to this path with body 'fs-action=copy&fs-newname={destPath}'.
+ * POST to this path with body 'fs-action=copy&fs-newname={filename}'.
+ *
+ * RWS 1.0 fileservice copy operates *within the source's directory only*:
+ * fs-newname must be a bare filename, not a path. Passing a full path
+ * returns 400 "Invalid". To copy across directories, copy first then move
+ * (or upload to the new path directly).
+ *
  * @param sourcePath - Source file path, e.g. '$HOME/Source.mod'
- * @param destPath   - Destination path, e.g. '$HOME/Backup/Source.mod'
+ * @param destPath   - Destination path. The basename is extracted and used
+ *                     as fs-newname; any directory component is ignored.
  */
 export function copyFile(sourcePath: string, destPath: string): { path: string; body: string } {
+  const destBasename = destPath.replace(/^.*[\\/]/, '');
   return {
     path: fileServicePath(sourcePath),
-    body: `fs-action=copy&fs-newname=${encodeURIComponent(destPath)}`,
+    body: `fs-action=copy&fs-newname=${encodeURIComponent(destBasename)}`,
   };
 }
 
