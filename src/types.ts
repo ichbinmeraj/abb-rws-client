@@ -1,6 +1,6 @@
-// abb-rws-client — type definitions
-// Targets RWS 1.0 (RobotWare 6.x) only. Not compatible with RWS 2.0 / RobotWare 7.x / OmniCore.
-// v0.5.0 — added: UI instructions, RAPID symbol search, controller clock, execution cycle in state, task activate/deactivate, elog seqnum, subscription coldetstate/execycle/elog/uiinstr, opmode lock, controller restart
+// abb-rws-client — shared type definitions
+// Used by BOTH protocol clients: RwsClient (RWS 1.0 / IRC5 / RW6) and
+// RwsClient2 (RWS 2.0 / OmniCore / RW7). See src/index.ts for the public surface.
 
 export type ControllerState =
   | 'init'

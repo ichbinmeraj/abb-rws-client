@@ -1,6 +1,5 @@
-// NOTE: The prompt specified .eslintrc.json but ESLint 9 uses flat config (eslint.config.js).
-// .eslintrc.json is not supported in ESLint 9 without ESLINT_USE_FLAT_CONFIG=false.
-// Following ESLint 9 flat config format here.
+// ESLint 9 flat config (.eslintrc.json is not supported in ESLint 9
+// without ESLINT_USE_FLAT_CONFIG=false).
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 

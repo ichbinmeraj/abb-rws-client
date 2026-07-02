@@ -6,19 +6,18 @@
 // FlexPendant; the operator taps Allow once and you have write access.
 //
 // This is what RobotStudio Online does — that's why it "just works".
+//
+// Run: RWS_HOST=127.0.0.1 RWS_PORT=5466 node examples/05-remote-control-rmmp.mjs
 
-import { RobotManager, RWS2Adapter, RwsClient2 } from 'abb-rws-client';
+import { RobotManager } from 'abb-rws-client';
 
-const client = new RwsClient2({
-  host: process.env.RWS_HOST || '127.0.0.1',
-  port: Number(process.env.RWS_PORT) || 5466,
-  username: process.env.RWS_USER || 'Admin',
-  password: process.env.RWS_PASS || 'robotics',
-});
-await client.connect();
+const host = process.env.RWS_HOST || '127.0.0.1';
+const port = process.env.RWS_PORT ? Number(process.env.RWS_PORT) : undefined;
 
-const robot = new RobotManager({ adapter: new RWS2Adapter(client) });
-await robot.start();
+// RobotManager auto-detects the protocol (RWS 1.0 vs 2.0) and, when port is
+// omitted, probes the common VC/controller ports.
+const robot = new RobotManager();
+await robot.connect(host, process.env.RWS_USER || 'Admin', process.env.RWS_PASS || 'robotics', port);
 
 // 1) Check current RMMP state
 let priv = await robot.getRmmpPrivilege();
@@ -48,5 +47,4 @@ if (priv === 'modify' || priv === 'exclusive') {
   console.log(`✗ Operator did not grant RMMP. Cannot do modify ops.`);
 }
 
-await robot.stop();
-await client.disconnect();
+await robot.disconnect();
