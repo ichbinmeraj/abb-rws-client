@@ -4,6 +4,33 @@ All notable changes to `abb-rws-client` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] — 2026-07-03
+
+### Fixed
+
+- **TLS bypass now applied per-request, not only on the HTTP agent** — fixes
+  connections to real controllers from inside VS Code
+  ([abb-rws-vscode#2](https://github.com/ichbinmeraj/abb-rws-vscode/issues/2)).
+  VS Code's extension host patches Node's `http`/`https` modules and replaces
+  custom agents for non-localhost targets, which silently dropped the
+  agent-level `rejectUnauthorized: false` and re-enabled certificate
+  verification — every real OmniCore (self-signed cert) then failed with
+  `self signed certificate`. Localhost VCs were never affected because the
+  extension host doesn't intercept localhost traffic. The setting is now also
+  set on each request's options in `RwsClient2.req()`, the subscription POST,
+  `RobotManager` port probing, and `detect.probeProtocol()`.
+- **Examples 05 & 06 rewritten against the real API** — they previously used an
+  options-object `RwsClient2` constructor and `RobotManager` methods that never
+  existed. Both now use `new RobotManager()` + `connect(host, user, pass, port?)`.
+- **`repository`/`homepage`** now point at the actual GitHub org (`ichbinmeraj`);
+  the previous links 404'd from the npm package page.
+- Stale `types.ts` header no longer claims the package is RWS 1.0-only.
+
+### Added
+
+- **`prepack` guard** — `npm pack`/`npm publish` now runs the build and the full
+  116-test suite first, so a stale or broken artifact cannot be packed.
+
 ## [0.7.2] — 2026-05-08
 
 ### Documentation

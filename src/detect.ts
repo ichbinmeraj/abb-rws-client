@@ -45,13 +45,16 @@ export async function probeProtocol(
 ): Promise<Protocol | null> {
   return new Promise(resolve => {
     const agent = useHttps ? new https.Agent({ rejectUnauthorized: false }) : undefined;
-    const options: http.RequestOptions & { agent?: https.Agent } = {
+    const options: http.RequestOptions & { agent?: https.Agent; rejectUnauthorized?: boolean } = {
       method: 'GET',
       hostname: host,
       port,
       path: '/rw/system',
       headers: { Accept: 'application/xhtml+xml;v=2.0' },
       agent,
+      // Per-request as well as on the agent: agent-swapping hosts (VS Code extension
+      // host on non-localhost targets) otherwise re-enable TLS verification (issue #2).
+      ...(useHttps ? { rejectUnauthorized: false } : {}),
     };
     const transport = useHttps ? https : http;
     const req = (transport as typeof https).request(options as https.RequestOptions, res => {

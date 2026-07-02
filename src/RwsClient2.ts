@@ -78,7 +78,7 @@ export class RwsClient2 {
     // RWS 2.0 requires Content-Type on all POST/PUT/DELETE requests, even with no body
     // (mastership and a few other endpoints return HTTP 406 without it).
     const writingMethod = method === 'POST' || method === 'PUT' || method === 'DELETE';
-    const options: http.RequestOptions & { agent?: https.Agent | http.Agent } = {
+    const options: http.RequestOptions & { agent?: https.Agent | http.Agent; rejectUnauthorized?: boolean } = {
       method,
       hostname: url.hostname,
       port: url.port ? +url.port : (this.isHttps ? 443 : 80),
@@ -93,6 +93,13 @@ export class RwsClient2 {
         } : {}),
       },
       agent: this.isHttps ? this.httpsAgent : this.httpAgent,
+      // Must ALSO be set per-request, not only on the agent: hosts that replace the
+      // agent (VS Code's extension host patches http/https and swaps custom agents for
+      // non-localhost targets) would otherwise re-enable TLS verification and fail on
+      // the self-signed certs ABB controllers ship. Live-reported on a real OmniCore RC
+      // (abb-rws-vscode issue #2, 2026-05-18); localhost VCs never hit this because the
+      // extension host doesn't intercept localhost traffic.
+      ...(this.isHttps ? { rejectUnauthorized: false } : {}),
     };
 
     const startedAt = Date.now();
@@ -1395,7 +1402,7 @@ export class RwsClient2 {
     }>((resolve, reject) => {
       const url = new URL('/subscription', this.baseUrl);
       const encoded = Buffer.from(bodyStr);
-      const options: http.RequestOptions & { agent?: https.Agent } = {
+      const options: http.RequestOptions & { agent?: https.Agent; rejectUnauthorized?: boolean } = {
         method: 'POST',
         hostname: url.hostname,
         port: url.port ? +url.port : (this.isHttps ? 443 : 80),
@@ -1406,7 +1413,8 @@ export class RwsClient2 {
           'Content-Type': 'application/x-www-form-urlencoded;v=2.0',
           'Content-Length': String(encoded.length),
         },
-        ...(this.isHttps ? { agent: this.httpsAgent } : {}),
+        // Per-request as well as on the agent — see req() for why (issue #2).
+        ...(this.isHttps ? { agent: this.httpsAgent, rejectUnauthorized: false } : {}),
       };
       const transport = this.isHttps ? https : http;
       const req = (transport as typeof https).request(options as https.RequestOptions, res => {

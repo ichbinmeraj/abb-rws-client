@@ -112,11 +112,14 @@ export class RobotManager {
   ): Promise<ProbeResult | null> {
     return new Promise(resolve => {
       const agent = useHttps ? new https.Agent({ rejectUnauthorized: false }) : undefined;
-      const options: http.RequestOptions & { agent?: https.Agent } = {
+      const options: http.RequestOptions & { agent?: https.Agent; rejectUnauthorized?: boolean } = {
         method: 'GET', hostname: host, port,
         path: '/rw/system',
         headers: { Accept: 'application/xhtml+xml;v=2.0' },
-        ...(useHttps ? { agent } : {}),
+        // rejectUnauthorized must also be per-request: hosts that swap the agent
+        // (VS Code extension host, non-localhost targets) drop agent-level TLS
+        // settings — real controllers have self-signed certs (issue #2).
+        ...(useHttps ? { agent, rejectUnauthorized: false } : {}),
       };
       const tid = setTimeout(() => { req.destroy(); resolve(null); }, timeoutMs);
       const req = ((useHttps ? https : http) as unknown as typeof https).request(
