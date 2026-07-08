@@ -385,10 +385,18 @@ export function clearAllElogs(): { path: string; body: string } {
 /**
  * Path for GET (download file or list directory) and PUT (upload file).
  * Use '$HOME/' prefix to target the controller home directory.
+ *
+ * Each segment is percent-encoded so names with spaces, '#', '%', etc. survive
+ * URL parsing. The '$' of IRC5 volume roots ($HOME, $TEMP, …) stays literal —
+ * the controller rejects '%24'.
  */
 export function fileServicePath(remotePath: string): string {
   const normalised = remotePath.replace(/^\//, '');
-  return `/fileservice/${normalised}`;
+  const encoded = normalised
+    .split('/')
+    .map(seg => seg.startsWith('$') ? `$${encodeURIComponent(seg.slice(1))}` : encodeURIComponent(seg))
+    .join('/');
+  return `/fileservice/${encoded}`;
 }
 
 /** DELETE path to remove a file from the controller filesystem. */

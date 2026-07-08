@@ -4,6 +4,78 @@ All notable changes to `abb-rws-client` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-07-09
+
+### Fixed
+
+- **RWS 2.0 real-time subscriptions actually work now.** The WebSocket handshake
+  offered `robapi2_subscription` — the RWS **1.0** subprotocol name — and
+  RobotWare 7 rejects it with HTTP 400, so every OmniCore connection silently
+  fell back to polling since the feature shipped. The client now offers the
+  official `rws_subscription` (RWS 2.0 manual 3HAC073675-001). Live-verified on
+  RW 7.21: handshake 101, real event frames delivered.
+- **RWS 2.0 WebSocket drops no longer kill live updates for the session** — the
+  25 s ping interval is cleared on close, the client re-registers the
+  subscription with bounded exponential backoff, and when it finally gives up
+  it tells the owner (see `onLost` below) so `RobotManager` can restore fast
+  polling instead of idling at the slow cadence forever.
+- **`getModuleSource` works for modules with no backing file** (loaded from
+  `.pgf`, RobotStudio, or the FlexPendant — [abb-rws-vscode#3](https://github.com/ichbinmeraj/abb-rws-vscode/issues/3)):
+  both protocols now fall back to saving the module to the controller's TEMP
+  volume, reading it, and deleting it. On RWS 1.0 the save round-trip is the
+  primary path so a stale `$HOME` copy can never shadow program memory.
+  Wire recipes live-verified on RW 6.16 + RW 7.21 (no mastership needed).
+- **CFG writes were broken on both protocols**: `setCfgInstance` POSTed a
+  non-existent RWS 2.0 path (missing `/instances/`) and sent plain values where
+  RobotWare 7 requires the bracket representation (`Attr=[value,1]`);
+  `createCfgInstance` used an endpoint that does not exist (`…/{i}/create`) —
+  the real flow is `instances/create-default` + set. RWS 1.0 had no CFG write
+  support at all; the adapter now implements set/create/remove with the
+  plain-value forms. Full create → set → readback → delete cycles live-verified
+  on both controllers.
+- **`probeProtocol` no longer misdetects arbitrary web servers as RWS 2.0** —
+  classification now requires a Digest (RWS 1.0) or Basic (RWS 2.0) challenge;
+  Bearer challenges and plain 200 responses are rejected.
+- **`createAdapter` gained the Default-User fallback** `createClient` already
+  had — and the fallback predicate now keys on the typed `AUTH_FAILED` error
+  code (the old message regex never matched RWS 1.0 login failures).
+- **`connect()`/`disconnect()` races**: disconnecting during an in-flight
+  connect no longer resurrects timers or subscriptions; a second `connect()`
+  with different host/credentials supersedes the in-flight attempt instead of
+  being silently coalesced; a poll that loses the race with `disconnect()` can
+  no longer write stale task state back into a cleared manager.
+- **`writeSignal` with unknown network/device** now throws a descriptive
+  `RwsError` instead of firing a malformed `/signals///…` request.
+- **Fileservice paths are percent-encoded per segment on both protocols** —
+  file names containing space, `#`, or `%` no longer break (or truncate at the
+  `#`) list/read/upload/delete/copy operations. `$HOME`/`$TEMP` prefixes stay
+  literal.
+- **`RWS1Adapter.listMechunits` returns the controller's real mechunit list**
+  instead of a hardcoded `['ROB_1']`.
+- **Session-cookie store writes are atomic** (temp file + rename), so
+  concurrent connects can't drop each other's entries.
+- **Digest `qop=auth-int`** is now rejected with a clear error instead of
+  silently hashing as `auth` and failing authentication downstream.
+- **Class-name minification safety**: protocol detection for config
+  persistence uses `instanceof`, not `constructor.name`.
+
+### Added
+
+- **`RobotManagerOptions`** — `new RobotManager({ refreshIntervalMs, strictTls })`
+  and `MultiRobotManager.fromConfigs(configs, options)`:
+  - `refreshIntervalMs` (default 1000, min 200) controls the polling cadence;
+    the subscription-active slow poll scales at 5×.
+  - `strictTls` (default false) turns real TLS certificate verification on for
+    controllers with proper certificates. Off by default because controllers
+    ship self-signed certs.
+- **`RwsClient2` constructor options** `{ timeout, rejectUnauthorized }` — the
+  per-request timeout is finally configurable (was hardcoded 10 s), and callers
+  can opt into certificate verification.
+- **`onLost` subscription callback** on the adapter `subscribe` surface —
+  invoked once when the event stream is terminally lost so callers can degrade
+  gracefully.
+- **CI workflow** (Node 18/20/22 matrix: build, tests, lint) and `SECURITY.md`.
+
 ## [0.7.3] — 2026-07-03
 
 ### Fixed

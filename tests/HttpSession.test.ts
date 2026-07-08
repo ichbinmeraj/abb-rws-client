@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { HttpSession } from '../src/HttpSession.js';
 import { RwsError } from '../src/types.js';
 
 // ─── Mock helpers ────────────────────────────────────────────────────────────
+
+function md5(s: string): string {
+  return createHash('md5').update(s).digest('hex');
+}
 
 function makeHeaders(init: Record<string, string> = {}): Headers {
   return new Headers(init);
@@ -22,6 +27,15 @@ const WWW_AUTH_HEADER =
 const WWW_AUTH_NO_QOP =
   'Digest realm="robot", nonce="simplnonce", algorithm=MD5';
 
+const WWW_AUTH_AUTH_INT_ONLY =
+  'Digest realm="robot", nonce="int-only-nonce", qop="auth-int", algorithm=MD5';
+
+const WWW_AUTH_BOTH_QOPS =
+  'Digest realm="robot", nonce="both-qops-nonce", qop="auth,auth-int", algorithm=MD5';
+
+const WWW_AUTH_PLAIN =
+  'Digest realm="robot", nonce="plain-auth-nonce", qop="auth", algorithm=MD5';
+
 function makeSession(overrides: Partial<ConstructorParameters<typeof HttpSession>[0]> = {}): HttpSession {
   return new HttpSession({
     baseUrl: 'http://192.168.1.1',
@@ -31,6 +45,16 @@ function makeSession(overrides: Partial<ConstructorParameters<typeof HttpSession
     timeoutMs: 1000,
     ...overrides,
   });
+}
+
+/** Recompute the expected qop=auth response hash from the Authorization header fields */
+function expectedAuthResponse(auth: string, method: string, uri: string): string {
+  const nonce = auth.match(/nonce="([^"]+)"/)![1];
+  const nc = auth.match(/\bnc=([0-9a-f]{8})\b/)![1];
+  const cnonce = auth.match(/cnonce="([0-9a-f]+)"/)![1];
+  const ha1 = md5(`Default User:robot:robotics`);
+  const ha2 = md5(`${method}:${uri}`);
+  return md5(`${ha1}:${nonce}:${nc}:${cnonce}:auth:${ha2}`);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -149,6 +173,77 @@ describe('HttpSession — digest authentication', () => {
     // Second request should use nc=00000002
     const secondRequestAuth: string = fetchMock.mock.calls[2][1].headers['Authorization'];
     expect(secondRequestAuth).toMatch(/\bnc=00000002\b/);
+  });
+});
+
+describe('HttpSession — digest qop negotiation', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let session: HttpSession;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    session = makeSession();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('throws AUTH_FAILED naming auth-int when the challenge offers only qop=auth-int', async () => {
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_AUTH_INT_ONLY }))
+      .mockResolvedValue(makeResponse(200, 'should not get here'));
+
+    const err = await session.get('/rw/panel/ctrlstate').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RwsError);
+    expect((err as RwsError).code).toBe('AUTH_FAILED');
+    expect((err as RwsError).message).toContain('auth-int');
+  });
+
+  it('does not send an Authorization header computed for auth against an auth-int-only challenge', async () => {
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_AUTH_INT_ONLY }))
+      .mockResolvedValue(makeResponse(200, ''));
+
+    await session.get('/path').catch(() => undefined);
+
+    // Only the initial unauthenticated request should have gone out — no retry
+    // carrying a bogus qop=auth response for a challenge that never offered auth.
+    for (const call of fetchMock.mock.calls) {
+      const headers: Record<string, string> = call[1].headers;
+      expect(headers['Authorization']).toBeUndefined();
+    }
+  });
+
+  it('picks qop=auth when the challenge offers both auth and auth-int', async () => {
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_BOTH_QOPS }))
+      .mockResolvedValueOnce(makeResponse(200, 'ok'));
+
+    const result = await session.get('/rw/panel/ctrlstate');
+    expect(result.body).toBe('ok');
+
+    const auth: string = fetchMock.mock.calls[1][1].headers['Authorization'];
+    expect(auth).toContain('qop=auth');
+    expect(auth).not.toContain('qop=auth-int');
+    // The response hash must actually be computed in qop=auth mode — not RFC 2069
+    const responseHash = auth.match(/response="([0-9a-f]{32})"/)![1];
+    expect(responseHash).toBe(expectedAuthResponse(auth, 'GET', '/rw/panel/ctrlstate'));
+  });
+
+  it('still handles a plain qop=auth challenge correctly', async () => {
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_PLAIN }))
+      .mockResolvedValueOnce(makeResponse(200, 'ok'));
+
+    const result = await session.get('/rw/rapid/execution');
+    expect(result.body).toBe('ok');
+
+    const auth: string = fetchMock.mock.calls[1][1].headers['Authorization'];
+    expect(auth).toContain('qop=auth');
+    const responseHash = auth.match(/response="([0-9a-f]{32})"/)![1];
+    expect(responseHash).toBe(expectedAuthResponse(auth, 'GET', '/rw/rapid/execution'));
   });
 });
 

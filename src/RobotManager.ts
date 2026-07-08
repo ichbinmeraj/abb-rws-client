@@ -29,6 +29,23 @@ export type ErrorListener = (msg: string, actions: string[]) => Promise<string |
 
 const SESSION_FILE = path.join(os.homedir(), '.abb-rws-session');
 
+export interface RobotManagerOptions {
+  /**
+   * Fast-poll cadence in ms, used when WebSocket subscriptions are unavailable.
+   * Default 1000, clamped to ≥200 (below that the controller's ~20 req/s limit
+   * starts rejecting the poll burst). When subscriptions are active, polling
+   * drops to 5× this value (positions only).
+   */
+  refreshIntervalMs?: number;
+  /**
+   * Verify TLS certificates on HTTPS controllers. Default false — virtual and
+   * real controllers alike ship self-signed certs, so verification stays off
+   * unless the deployment has a CA-signed cert on the controller. Applies to
+   * port probing and to the RWS 2.0 client this manager constructs.
+   */
+  strictTls?: boolean;
+}
+
 export interface RobotState {
   connected: boolean;
   host: string;
@@ -58,6 +75,28 @@ export interface ProbeResult {
   authType: 'digest' | 'basic';
 }
 
+/** In-flight connect attempt — args plus the connectEpoch the attempt runs under. */
+interface ConnectAttempt {
+  host: string;
+  username: string;
+  password: string;
+  port?: number;
+  useHttps?: boolean;
+  /**
+   * connectEpoch value this attempt is running under. disconnect() bumps the
+   * epoch, marking the attempt cancelled — connect() must stop coalescing onto
+   * it, or callers get a resolved promise while the manager ends disconnected.
+   */
+  epoch: number;
+  /**
+   * Set by a user-initiated disconnect(). The epoch alone can't carry this:
+   * doConnect legitimately re-reads the epoch after its own internal teardowns
+   * (supersede, already-connected), which would launder a user cancellation
+   * back into validity.
+   */
+  cancelled?: boolean;
+}
+
 export interface DiscoveredController extends ProbeResult {
   host: string;
 }
@@ -82,8 +121,20 @@ export class RobotManager {
   private subscriptionActive = false;
   /** In-flight connect promise — used to dedupe rapid-clicks so we never run two connects in parallel. */
   private connectingPromise: Promise<void> | null = null;
+  /** Args of the in-flight connect, so a repeat call can tell "same target" from "new target". */
+  private connectingArgs: ConnectAttempt | null = null;
   /** Monotonic counter so old polling timers can detect they've been superseded and self-cancel. */
   private pollGeneration = 0;
+  /** Bumped by disconnect() so an in-flight doConnect() can detect it was cancelled and unwind. */
+  private connectEpoch = 0;
+
+  private readonly refreshIntervalMs: number;
+  private readonly strictTls: boolean;
+
+  constructor(opts: RobotManagerOptions = {}) {
+    this.refreshIntervalMs = Math.max(200, opts.refreshIntervalMs ?? 1000);
+    this.strictTls = opts.strictTls === true;
+  }
 
   get state(): RobotState { return this._state; }
   /** The port currently in use (or last attempted). Useful for persisting auto-recovered port changes. */
@@ -91,8 +142,9 @@ export class RobotManager {
   /** The HTTPS flag matching `currentPort`. */
   get currentUseHttps(): boolean | undefined {
     if (!this.adapter || !this.adapterConfig) { return undefined; }
-    // RWS2Adapter is HTTPS, RWS1Adapter is HTTP
-    return this.adapter.constructor.name === 'RWS2Adapter';
+    // RWS2Adapter is HTTPS, RWS1Adapter is HTTP. instanceof, not constructor.name —
+    // minified bundles rename classes, which made this persist the wrong protocol.
+    return this.adapter instanceof RWS2Adapter;
   }
   onDidChange(fn: ChangeHandler) { this.handlers.push(fn); }
   private notify() { this.handlers.forEach(h => h()); }
@@ -108,10 +160,11 @@ export class RobotManager {
   // ─── Auto-detection ─────────────────────────────────────────────────────────
 
   private static probePort(
-    host: string, port: number, useHttps: boolean, timeoutMs = 3000
+    host: string, port: number, useHttps: boolean, timeoutMs = 3000, strictTls = false
   ): Promise<ProbeResult | null> {
     return new Promise(resolve => {
-      const agent = useHttps ? new https.Agent({ rejectUnauthorized: false }) : undefined;
+      const insecure = useHttps && !strictTls;
+      const agent = insecure ? new https.Agent({ rejectUnauthorized: false }) : undefined;
       const options: http.RequestOptions & { agent?: https.Agent; rejectUnauthorized?: boolean } = {
         method: 'GET', hostname: host, port,
         path: '/rw/system',
@@ -119,7 +172,8 @@ export class RobotManager {
         // rejectUnauthorized must also be per-request: hosts that swap the agent
         // (VS Code extension host, non-localhost targets) drop agent-level TLS
         // settings — real controllers have self-signed certs (issue #2).
-        ...(useHttps ? { agent, rejectUnauthorized: false } : {}),
+        // Under strictTls neither is set, so certs verify normally.
+        ...(insecure ? { agent, rejectUnauthorized: false } : {}),
       };
       const tid = setTimeout(() => { req.destroy(); resolve(null); }, timeoutMs);
       const req = ((useHttps ? https : http) as unknown as typeof https).request(
@@ -149,9 +203,9 @@ export class RobotManager {
   ] as const;
 
   /** Returns ALL responding controllers on a single host. */
-  static async detectAllControllers(host: string): Promise<ProbeResult[]> {
+  static async detectAllControllers(host: string, strictTls = false): Promise<ProbeResult[]> {
     const results = await Promise.all(
-      RobotManager.PROBE_PORTS.map(c => RobotManager.probePort(host, c.port, c.useHttps))
+      RobotManager.PROBE_PORTS.map(c => RobotManager.probePort(host, c.port, c.useHttps, 3000, strictTls))
     );
     return results.filter((r): r is ProbeResult => r !== null);
   }
@@ -165,7 +219,7 @@ export class RobotManager {
    * TCP scan of the local-VC port range — this catches RobotStudio VCs whose
    * ports are randomly assigned each startup.
    */
-  static async discoverControllers(extraHosts: string[] = []): Promise<DiscoveredController[]> {
+  static async discoverControllers(extraHosts: string[] = [], strictTls = false): Promise<DiscoveredController[]> {
     const hosts = [
       '127.0.0.1',      // Local virtual controllers (RobotStudio)
       '192.168.125.1',  // ABB standard service port — both IRC5 and OmniCore real robots
@@ -174,7 +228,7 @@ export class RobotManager {
 
     const probes = hosts.flatMap(host =>
       RobotManager.PROBE_PORTS.map(c =>
-        RobotManager.probePort(host, c.port, c.useHttps, 1500)
+        RobotManager.probePort(host, c.port, c.useHttps, 1500, strictTls)
           .then((r): DiscoveredController | null =>
             r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null
           )
@@ -189,7 +243,7 @@ export class RobotManager {
     const localHits = found.filter(c => c.host === '127.0.0.1' || c.host === 'localhost');
     if (localHits.length === 0) {
       Logger.info(`no controllers on standard ports of 127.0.0.1 — running wide scan…`);
-      const wide = await RobotManager.wideHostScan('127.0.0.1');
+      const wide = await RobotManager.wideHostScan('127.0.0.1', strictTls);
       Logger.info(`wide scan found ${wide.length} ABB controller(s) on 127.0.0.1`);
       found.push(...wide);
     }
@@ -198,8 +252,8 @@ export class RobotManager {
   }
 
   /** Returns only the first responding controller (used internally during connect). */
-  static async detectController(host: string): Promise<ProbeResult | null> {
-    const all = await RobotManager.detectAllControllers(host);
+  static async detectController(host: string, strictTls = false): Promise<ProbeResult | null> {
+    const all = await RobotManager.detectAllControllers(host, strictTls);
     return all[0] ?? null;
   }
 
@@ -209,10 +263,10 @@ export class RobotManager {
    * Returns null only if neither responds — protects against guessing wrong
    * (e.g. RobotStudio-assigned port 5466 is HTTPS but doesn't fit any heuristic).
    */
-  static async probeSpecificPort(host: string, port: number): Promise<ProbeResult | null> {
+  static async probeSpecificPort(host: string, port: number, strictTls = false): Promise<ProbeResult | null> {
     return (
-      (await RobotManager.probePort(host, port, true,  2000)) ??
-      (await RobotManager.probePort(host, port, false, 2000))
+      (await RobotManager.probePort(host, port, true,  2000, strictTls)) ??
+      (await RobotManager.probePort(host, port, false, 2000, strictTls))
     );
   }
 
@@ -239,7 +293,7 @@ export class RobotManager {
    * Heavy operation — only call when standard-port detection finds nothing.
    * Prefer host=127.0.0.1; scanning a remote host this aggressively is rude.
    */
-  static async wideHostScan(host: string): Promise<DiscoveredController[]> {
+  static async wideHostScan(host: string, strictTls = false): Promise<DiscoveredController[]> {
     // RobotStudio assigns RWS ports across a wide range. Observed values include
     // 5466, 9403, 11811, 15120, 16146, 28447 — covering 4000–30000 catches them all.
     const startPort = 1024;
@@ -264,7 +318,7 @@ export class RobotManager {
     // HTTP-probe TCP-open ports — filter to actual ABB controllers
     const probes = await Promise.all(
       tcpOpen.map(port =>
-        RobotManager.probeSpecificPort(host, port)
+        RobotManager.probeSpecificPort(host, port, strictTls)
           .then((r): DiscoveredController | null =>
             r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null
           )
@@ -281,21 +335,56 @@ export class RobotManager {
    *                 Required when two controllers share the same host IP.
    * @param useHttps If provided alongside port, sets the protocol explicitly.
    *
-   * Rapid duplicate calls are coalesced — concurrent callers receive the same
-   * in-flight promise. Without this, fast double-clicks would spawn parallel
-   * adapters/timers and overwhelm the controller's session pool.
+   * Rapid duplicate calls with the SAME target are coalesced — concurrent
+   * callers receive the same in-flight promise. Without this, fast double-clicks
+   * would spawn parallel adapters/timers and overwhelm the controller's session
+   * pool. A call with a DIFFERENT target instead cancels the in-flight attempt
+   * and connects fresh — otherwise the caller ends up connected, but not to
+   * what it asked for. Same for a SAME-target call after a disconnect() has
+   * cancelled the in-flight attempt: coalescing onto it would hand the caller
+   * a promise that resolves with the manager still disconnected.
    */
   connect(host: string, username: string, password: string, port?: number, useHttps?: boolean): Promise<void> {
     if (this.connectingPromise) {
-      Logger.info(`connect → ${host}${port !== undefined ? ':' + port : ''} ignored (connect already in flight)`);
-      return this.connectingPromise;
+      const pending = this.connectingArgs;
+      const sameArgs = !!pending
+        && pending.host === host && pending.username === username
+        && pending.password === password && pending.port === port
+        && pending.useHttps === useHttps;
+      const stillCurrent = !!pending && pending.epoch === this.connectEpoch && !pending.cancelled;
+      if (sameArgs && stillCurrent) {
+        Logger.info(`connect → ${host}${port !== undefined ? ':' + port : ''} ignored (same connect already in flight)`);
+        return this.connectingPromise;
+      }
+      Logger.info(`connect → ${host}${port !== undefined ? ':' + port : ''} supersedes ${sameArgs ? 'cancelled' : 'in-flight'} connect to ${pending?.host ?? '?'}`);
+      return this.startConnect(host, username, password, port, useHttps, this.connectingPromise);
     }
-    this.connectingPromise = this.doConnect(host, username, password, port, useHttps)
-      .finally(() => { this.connectingPromise = null; });
-    return this.connectingPromise;
+    return this.startConnect(host, username, password, port, useHttps);
   }
 
-  private async doConnect(host: string, username: string, password: string, port?: number, useHttps?: boolean): Promise<void> {
+  private startConnect(host: string, username: string, password: string, port?: number, useHttps?: boolean, supersedes?: Promise<void>): Promise<void> {
+    const attempt: ConnectAttempt = { host, username, password, port, useHttps, epoch: this.connectEpoch };
+    this.connectingArgs = attempt;
+    const p = (async () => {
+      if (supersedes) {
+        await this.disconnectInternal();   // bumps connectEpoch → the in-flight doConnect unwinds
+        attempt.epoch = this.connectEpoch; // our own cancel of the old attempt doesn't invalidate this one
+        await supersedes.catch(() => {});  // let it finish unwinding before we start fresh
+      }
+      await this.doConnect(host, username, password, port, useHttps, attempt);
+    })().finally(() => {
+      // Only clear if we're still the current attempt — a superseding connect
+      // may have replaced these fields while we were settling.
+      if (this.connectingPromise === p) {
+        this.connectingPromise = null;
+        this.connectingArgs = null;
+      }
+    });
+    this.connectingPromise = p;
+    return p;
+  }
+
+  private async doConnect(host: string, username: string, password: string, port?: number, useHttps?: boolean, attempt?: ConnectAttempt): Promise<void> {
     // If we're already connected to the same controller, this is a no-op.
     // Without this, every accidental click of the Connect button burns a session
     // through the disconnect → /logout → /rw/system reconnect cycle.
@@ -303,19 +392,35 @@ export class RobotManager {
     if (this._state.connected && cfg
         && cfg.host === host
         && (port === undefined || cfg.port === port)
-        && cfg.username === username) {
+        && cfg.username === username
+        && cfg.password === password) {
       Logger.info(`connect → ${host}${port !== undefined ? ':' + port : ''} skipped (already connected)`);
       return;
     }
 
-    if (this._state.connected) { await this.disconnect(); }
+    if (this._state.connected) { await this.disconnectInternal(); }
+
+    // Any disconnect() after this point (user click, removeRobot) bumps the
+    // epoch; we re-check after every await so an aborted connect can't
+    // resurrect timers or subscriptions. The attempt record mirrors the value
+    // so connect() knows whether coalescing onto this attempt is still valid.
+    // User cancellations additionally set attempt.cancelled, which survives
+    // this re-read — otherwise a disconnect() racing our own teardown above
+    // would be erased here and the connection resurrected.
+    const epoch = this.connectEpoch;
+    if (attempt) { attempt.epoch = epoch; }
+    const aborted = (): boolean => attempt?.cancelled === true || epoch !== this.connectEpoch;
+    if (attempt?.cancelled) {
+      Logger.info(`connect → ${host} aborted (disconnected before probing)`);
+      return;
+    }
 
     Logger.info(`connect → ${host}${port !== undefined ? ':' + port : ' (auto-detect)'} as "${username}"`);
 
     let probe: ProbeResult;
     if (port !== undefined) {
       // Port is pinned in config — verify it's actually reachable with the right protocol.
-      const verified = await RobotManager.probeSpecificPort(host, port);
+      const verified = await RobotManager.probeSpecificPort(host, port, this.strictTls);
       if (verified) {
         probe = verified;
         Logger.info(`port ${port} verified: ${verified.useHttps ? 'HTTPS' : 'HTTP'}/${verified.authType}`);
@@ -325,12 +430,12 @@ export class RobotManager {
         const expectedAuth = (useHttps ?? (port === 443 || port === 9403)) ? 'basic' : 'digest';
 
         // Phase 1: quick scan of the standard ports
-        let candidates = await RobotManager.detectAllControllers(host);
+        let candidates = await RobotManager.detectAllControllers(host, this.strictTls);
 
         // Phase 2: if nothing on standard ports and we're scanning localhost, do a wide scan
         if (candidates.length === 0 && (host === '127.0.0.1' || host === 'localhost')) {
           Logger.info(`standard ports empty — running wide scan 1024–30000 (this takes ~3 s)…`);
-          const wide = await RobotManager.wideHostScan(host);
+          const wide = await RobotManager.wideHostScan(host, this.strictTls);
           candidates = wide.map(c => ({ port: c.port, useHttps: c.useHttps, authType: c.authType }));
           Logger.info(`wide scan found ${candidates.length} ABB controller(s) on ${host}`);
         }
@@ -349,7 +454,7 @@ export class RobotManager {
     } else {
       // Auto-detect: probe all common ports
       Logger.info(`auto-detecting controller at ${host} (ports 80, 443, 28447, 9403)`);
-      const found = await RobotManager.detectController(host);
+      const found = await RobotManager.detectController(host, this.strictTls);
       if (!found) {
         const err = `No ABB RWS controller found at ${host}.\nChecked ports: 80, 443, 28447, 9403.\nEnsure the controller is reachable and RWS is enabled.`;
         Logger.error(`auto-detect failed for ${host}`);
@@ -357,6 +462,11 @@ export class RobotManager {
       }
       probe = found;
       Logger.info(`auto-detected: port ${probe.port} ${probe.useHttps ? 'HTTPS' : 'HTTP'}/${probe.authType}`);
+    }
+
+    if (aborted()) {
+      Logger.info(`connect → ${host} aborted (disconnected while probing)`);
+      return;
     }
 
     const cookieKey = `${host}:${probe.port}`;
@@ -368,7 +478,7 @@ export class RobotManager {
     if (!this.adapter || !sameConfig) {
       if (probe.authType === 'basic') {
         const scheme = probe.useHttps ? 'https' : 'http';
-        this.adapter = new RWS2Adapter(`${scheme}://${host}:${probe.port}`, username, password);
+        this.adapter = new RWS2Adapter(`${scheme}://${host}:${probe.port}`, username, password, { rejectUnauthorized: this.strictTls });
       } else {
         // Session cookie keyed by host:port so two controllers on same IP don't clobber each other
         const cookie = this.loadSessionCookie(cookieKey) ?? undefined;
@@ -384,6 +494,11 @@ export class RobotManager {
       Logger.error(`adapter.connect() failed for ${host}:${probe.port}`, e);
       throw e;
     }
+    if (aborted()) {
+      Logger.info(`connect → ${host} aborted (disconnected mid-connect) — closing session`);
+      await this.adapter.disconnect().catch(() => {});
+      return;
+    }
     const cookie = this.adapter.getSessionCookie();
     if (cookie) { this.saveSessionCookie(cookieKey, cookie); }
 
@@ -393,9 +508,16 @@ export class RobotManager {
     this.notify();
 
     // Start WebSocket subscriptions for instant state-change events.
-    // If subscriptions succeed, polling runs at 5 s (positions only).
-    // If they fail, polling runs at 1 s (full state coverage as before).
+    // If subscriptions succeed, polling runs at 5× refreshIntervalMs (positions only).
+    // If they fail, polling runs at refreshIntervalMs (full state coverage as before).
     await this.startSubscriptions();
+    if (aborted()) {
+      Logger.info(`connect → ${host} aborted (disconnected during subscription setup)`);
+      if (this.unsubscribeFn) { await this.unsubscribeFn().catch(() => {}); this.unsubscribeFn = null; }
+      this.subscriptionActive = false;
+      await this.adapter.disconnect().catch(() => {});
+      return;
+    }
 
     // Every connect() invalidates older polling cycles so any timer that
     // wasn't cleared (race between disconnect/reconnect) self-cancels.
@@ -403,7 +525,8 @@ export class RobotManager {
     this.consecutiveFails = 0;
 
     await this.fetchAll(myGeneration);
-    const pollMs = this.subscriptionActive ? 5000 : 1000;
+    if (aborted()) { return; }
+    const pollMs = this.subscriptionActive ? 5 * this.refreshIntervalMs : this.refreshIntervalMs;
     // Single-flight guard: if a fetchAll is still running when the timer
     // fires, skip this tick. Prevents the request pile-up that caused
     // 10-second timeouts on /cartesian and /tasks during heavy motion
@@ -417,8 +540,20 @@ export class RobotManager {
   }
 
   async disconnect(): Promise<void> {
+    // A user disconnect permanently cancels any in-flight connect attempt.
+    // The flag (not just the epoch) is what makes it stick: doConnect re-reads
+    // the epoch after its own internal teardowns, which would otherwise erase
+    // this cancellation and resurrect the connection.
+    if (this.connectingArgs) { this.connectingArgs.cancelled = true; }
+    return this.disconnectInternal();
+  }
+
+  /** Teardown used by doConnect/startConnect for their own reconnect cycles — must not cancel the attempt that invoked it. */
+  private async disconnectInternal(): Promise<void> {
     // Bump generation FIRST so any in-flight fetchAll calls bail before they
-    // can trigger another disconnect cascade.
+    // can trigger another disconnect cascade. The epoch likewise cancels any
+    // in-flight doConnect() so it can't re-install timers/subscriptions.
+    this.connectEpoch++;
     this.pollGeneration++;
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     // Release any held motion mastership BEFORE closing the adapter
@@ -615,10 +750,10 @@ export class RobotManager {
     });
   }
 
-  /** Active task name. We currently target T_ROB1; future: track multi-task. */
+  /** Active task name — the task flagged active, else the first task, else T_ROB1. */
   private activeTaskName(): string {
     const active = this._state.tasks.find(t => t.active);
-    return active?.name ?? 'T_ROB1';
+    return active?.name ?? this._state.tasks[0]?.name ?? 'T_ROB1';
   }
 
   async stopRapid(): Promise<void> {
@@ -1297,6 +1432,7 @@ export class RobotManager {
           { type: 'elog', domain: 0 },
         ],
         event => this.handleSubscriptionEvent(event),
+        () => this.handleSubscriptionLost(),
       );
       this.subscriptionActive = true;
     } catch (e) {
@@ -1308,6 +1444,24 @@ export class RobotManager {
         }`
       );
     }
+  }
+
+  /**
+   * Adapter reports the event stream as terminally lost (WS reconnect attempts
+   * exhausted). Drop back to the fast polling cadence so state stays fresh —
+   * without this the manager keeps the 5× slow poll and the UI goes stale.
+   */
+  private handleSubscriptionLost(): void {
+    if (!this.subscriptionActive) { return; }
+    this.subscriptionActive = false;
+    Logger.warn('live event stream lost — resuming fast polling');
+    if (!this._state.connected || !this.timer) { return; }
+    clearInterval(this.timer);
+    const myGeneration = this.pollGeneration;
+    this.timer = setInterval(() => {
+      if (this.fetchInFlight) { return; }
+      this.fetchAll(myGeneration);
+    }, this.refreshIntervalMs);
   }
 
   private handleSubscriptionEvent(event: SubscriptionEvent): void {
@@ -1365,7 +1519,20 @@ export class RobotManager {
       let data: Record<string, string> = {};
       try { data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')); } catch { /* new file */ }
       data[host] = cookie;
-      fs.writeFileSync(SESSION_FILE, JSON.stringify(data), 'utf8');
+      // The file is shared across every RobotManager (and every host process),
+      // so replace it atomically: write a temp file in the same directory,
+      // then rename over the real one. A plain write lets a concurrent
+      // manager read a half-written file and drop entries.
+      const tmp = `${SESSION_FILE}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(data), 'utf8');
+      try {
+        fs.renameSync(tmp, SESSION_FILE);
+      } catch {
+        // A concurrent writer beat us to the rename (Windows briefly locks the
+        // destination) — drop our temp file and let the other writer win; the
+        // cookie is re-saved on the next connect anyway.
+        try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+      }
     } catch { /* non-fatal */ }
   }
 
@@ -1378,24 +1545,34 @@ export class RobotManager {
   private fetchInFlight = false;
 
   private async fetchAll(generation?: number): Promise<void> {
-    // Bail if this fetch belongs to an old generation (we've reconnected or disconnected since).
-    if (generation !== undefined && generation !== this.pollGeneration) { return; }
+    // Bail if this fetch belongs to an old generation (we've reconnected or
+    // disconnected since). Re-checked after every await below — a disconnect
+    // mid-poll clears _state, and a late-resolving request must not resurrect
+    // the stale snapshot into it.
+    const stale = (): boolean => generation !== undefined && generation !== this.pollGeneration;
+    if (stale()) { return; }
     if (!this.adapter) { return; }
     if (this.fetchInFlight) { return; }
     this.fetchInFlight = true;
     try {
-      const taskName = 'T_ROB1';
-      const [execInfo, ctrlstate, opmode, speedRatio, tasks, modules, joints, cartesianFull] =
+      const [execInfo, ctrlstate, opmode, speedRatio, tasks, joints, cartesianFull] =
         await Promise.all([
           this.adapter.getRapidExecutionInfo(),
           this.adapter.getControllerState(),
           this.adapter.getOperationMode(),
           this.adapter.getSpeedRatio(),
           this.adapter.getRapidTasks(),
-          this.adapter.listModules(taskName),
           this.adapter.getJointPositions(),
           this.adapter.getCartesianFull(),
         ]);
+      if (stale()) { return; }
+
+      // Module list needs a task name — resolve it from the tasks we just
+      // fetched, not a hardcoded T_ROB1 (multi-task systems and OmniCore
+      // single-arm variants name their tasks differently).
+      this._state.tasks = tasks;
+      const modules = await this.adapter.listModules(this.activeTaskName());
+      if (stale()) { return; }
 
       const cartesian = { x: cartesianFull.x, y: cartesianFull.y, z: cartesianFull.z, q1: cartesianFull.q1, q2: cartesianFull.q2, q3: cartesianFull.q3, q4: cartesianFull.q4 };
       Object.assign(this._state, {
@@ -1403,7 +1580,9 @@ export class RobotManager {
         speedRatio, tasks, modules, joints, cartesian, cartesianFull,
       });
 
-      this._state.coldetstate = await this.adapter.getCollisionDetectionState().catch(() => null);
+      const coldetstate = await this.adapter.getCollisionDetectionState().catch(() => null);
+      if (stale()) { return; }
+      this._state.coldetstate = coldetstate;
 
       this.fetchCount++;
       // Identity / systemInfo / eventLog / mechunits — only refresh occasionally,
@@ -1422,6 +1601,7 @@ export class RobotManager {
           this.adapter.getEventLog(0, 'en').catch(e => { Logger.warn(`getEventLog failed: ${e instanceof Error ? e.message : String(e)}`); return [] as ElogMessage[]; }),
           this.adapter.listMechunits().catch(e => { Logger.warn(`listMechunits failed: ${e instanceof Error ? e.message : String(e)}`); return ['ROB_1']; }),
         ]);
+        if (stale()) { return; }
         if (identity)   { this._state.identity   = identity; }
         if (systemInfo) { this._state.systemInfo  = systemInfo; }
         this._state.eventLog  = eventLog;
@@ -1435,6 +1615,7 @@ export class RobotManager {
         try {
           while (true) {
             const page = await this.adapter.listAllSignals(start, PAGE);
+            if (stale()) { return; }
             all.push(...page);
             if (page.length < PAGE) { break; }
             start += PAGE;
@@ -1443,11 +1624,12 @@ export class RobotManager {
         } catch { /* non-fatal */ }
       }
 
+      if (stale()) { return; }
       this.consecutiveFails = 0;
       this.notify();
     } catch (e) {
       // Stale poll (disconnect or reconnect happened mid-flight) — don't count this failure.
-      if (generation !== undefined && generation !== this.pollGeneration) { return; }
+      if (stale()) { return; }
 
       this.consecutiveFails++;
       // First failure is usually transient (controller queued behind motion).
@@ -1460,8 +1642,10 @@ export class RobotManager {
         Logger.error(`disconnecting after 3 failed polls`, e);
         Logger.show();
         // Capture config BEFORE disconnect (which clears it) so the Reconnect button works.
+        // Internal variant: this tears down the DEAD connection — it must not
+        // cancel a fresh connect attempt the user may have started meanwhile.
         const cfg = this.adapterConfig;
-        await this.disconnect();
+        await this.disconnectInternal();
         // Hand off to the host's error listener (VS Code extension, CLI, etc.).
         // If no listener is installed, the failure is silent beyond the log lines above.
         if (this.errorListener) {

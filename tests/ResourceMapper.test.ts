@@ -16,6 +16,7 @@ import {
   signal,
   setSignal,
   subscriptions,
+  fileServicePath,
 } from '../src/ResourceMapper.js';
 
 describe('ResourceMapper', () => {
@@ -200,6 +201,19 @@ describe('ResourceMapper', () => {
   describe('subscriptions', () => {
     it('returns /subscription', () => {
       expect(subscriptions()).toBe('/subscription');
+    });
+  });
+
+  describe('fileServicePath', () => {
+    it('percent-encodes special characters per segment', () => {
+      expect(fileServicePath('$HOME/My Mod #1.mod')).toBe('/fileservice/$HOME/My%20Mod%20%231.mod');
+      expect(fileServicePath('$TEMP/50%done.mod')).toBe('/fileservice/$TEMP/50%25done.mod');
+      expect(fileServicePath('$HOME/sub dir/f.mod')).toBe('/fileservice/$HOME/sub%20dir/f.mod');
+    });
+
+    it('keeps $-prefixed volume roots literal', () => {
+      expect(fileServicePath('$HOME/plain.mod')).toBe('/fileservice/$HOME/plain.mod');
+      expect(fileServicePath('$HOME/plain.mod')).not.toContain('%24');
     });
   });
 });

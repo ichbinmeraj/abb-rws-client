@@ -2,6 +2,7 @@ import * as https from 'https';
 import * as http from 'http';
 import { XhtmlParser } from './XhtmlParser.js';
 import { Logger } from './Logger.js';
+import { RwsError, type RwsErrorCode } from './types.js';
 import type {
   ControllerState, OperationMode, ExecutionState, ExecutionCycle,
   ExecutionInfo, CollisionDetectionState, RapidTask, JointTarget,
@@ -25,7 +26,9 @@ import type {
  * - XHTML responses only (Accept: application/xhtml+xml;v=2.0)
  * - Mastership domains: 'edit' replaces both 'cfg' and 'rapid'
  * - FileService home: 'HOME' not '$HOME'
- * - Self-signed TLS on virtual controllers → rejectUnauthorized: false
+ * - Self-signed TLS on all shipping controllers → verification is OFF by default;
+ *   pass `{ rejectUnauthorized: true }` to keep it on (e.g. controllers with a
+ *   properly installed certificate).
  */
 export class RwsClient2 {
   private lastReqTime = 0;
@@ -34,6 +37,10 @@ export class RwsClient2 {
   private readonly httpsAgent: https.Agent;
   private readonly httpAgent: http.Agent;
   private readonly isHttps: boolean;
+  /** Per-request timeout in ms (constructor `opts.timeout`, default 10000). */
+  private readonly timeoutMs: number;
+  /** When true, TLS certificate verification stays ON everywhere (requests, subscription POST, WebSocket). */
+  private readonly rejectUnauthorized: boolean;
 
   /** Session cookie set by the controller on first auth — REQUIRED to avoid creating
    *  a new session per request (controller's session pool fills in seconds otherwise). */
@@ -46,11 +53,17 @@ export class RwsClient2 {
     private readonly baseUrl: string,
     username: string,
     password: string,
+    opts: { timeout?: number; rejectUnauthorized?: boolean } = {},
   ) {
     this.authHeader = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
     this.isHttps = baseUrl.startsWith('https');
+    this.timeoutMs = opts.timeout ?? 10000;
+    this.rejectUnauthorized = opts.rejectUnauthorized ?? false;
     // keepAlive reuses the TCP connection so we don't churn sessions on every poll.
-    this.httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
+    this.httpsAgent = new https.Agent({
+      keepAlive: true,
+      ...(this.rejectUnauthorized ? {} : { rejectUnauthorized: false }),
+    });
     this.httpAgent  = new http.Agent({ keepAlive: true });
   }
 
@@ -99,7 +112,7 @@ export class RwsClient2 {
       // the self-signed certs ABB controllers ship. Live-reported on a real OmniCore RC
       // (abb-rws-vscode issue #2, 2026-05-18); localhost VCs never hit this because the
       // extension host doesn't intercept localhost traffic.
-      ...(this.isHttps ? { rejectUnauthorized: false } : {}),
+      ...(this.isHttps && !this.rejectUnauthorized ? { rejectUnauthorized: false } : {}),
     };
 
     const startedAt = Date.now();
@@ -135,9 +148,14 @@ export class RwsClient2 {
           if (status >= 400) {
             const err = new XhtmlParser(raw).getError();
             Logger.trace?.('http.err', `RWS2 ${method} ${path} → ${status}`, { protocol: 'rws2', method, path, status, durationMs, errCode: err?.code, errMsg: err?.msg, bodyPreview: raw.slice(0, 300) });
-            reject(new Error(
+            const code: RwsErrorCode =
+              status === 401 ? 'AUTH_FAILED' :
+              status === 503 ? 'CONTROLLER_BUSY' :
+              status === 429 ? 'RATE_LIMITED' : 'UNKNOWN';
+            reject(new RwsError(
               `RWS2 ${method} ${path}: HTTP ${status}` +
-              (err ? ` — ${err.msg}` : '')
+              (err ? ` — ${err.msg}` : ''),
+              code, status, err?.msg
             ));
             return;
           }
@@ -147,12 +165,12 @@ export class RwsClient2 {
       });
       req.on('error', (e) => {
         Logger.trace?.('http.err', `RWS2 ${method} ${path} → network error`, { protocol: 'rws2', method, path, error: String(e), durationMs: Date.now() - startedAt });
-        reject(e);
+        reject(new RwsError(e instanceof Error ? e.message : String(e), 'NETWORK_ERROR'));
       });
-      req.setTimeout(10000, () => {
+      req.setTimeout(this.timeoutMs, () => {
         req.destroy();
         Logger.trace?.('http.err', `RWS2 ${method} ${path} → timeout`, { protocol: 'rws2', method, path, durationMs: Date.now() - startedAt });
-        reject(new Error(`RWS2 timeout: ${path}`));
+        reject(new RwsError(`RWS2 timeout: ${path}`, 'NETWORK_ERROR'));
       });
       if (bodyStr) { req.write(bodyStr); }
       req.end();
@@ -628,7 +646,14 @@ export class RwsClient2 {
     let n = network, d = device;
     if (!n || !d) {
       const c = this.sigCoords.get(name);
-      n = c?.n ?? ''; d = c?.d ?? '';
+      if (!c) {
+        // Without coordinates the URL would degenerate to /signals///{name}/set-value.
+        return Promise.reject(new RwsError(
+          `writeSignal: network/device unknown for signal "${name}" — pass them explicitly or call listAllSignals() first`,
+          'UNKNOWN',
+        ));
+      }
+      n = c.n; d = c.d;
     }
     return this.req('POST', `/rw/iosystem/signals/${n}/${d}/${name}/set-value`, { lvalue: value }).then(() => {});
   }
@@ -659,7 +684,12 @@ export class RwsClient2 {
 
   // ─── File system ──────────────────────────────────────────────────────────────
 
-  private rws2Path(path: string): string { return path.replace(/\$HOME/g, 'HOME'); }
+  private rws2Path(path: string): string {
+    // Percent-encode per segment so names with spaces, '#', '%', etc. survive
+    // URL parsing ('#' would otherwise be treated as a fragment and truncate the path).
+    return path.replace(/\$HOME/g, 'HOME')
+      .split('/').map(encodeURIComponent).join('/');
+  }
 
   async listDirectory(path: string): Promise<FileEntry[]> {
     const p = new XhtmlParser(await this.req('GET', `/fileservice/${this.rws2Path(path)}`));
@@ -769,17 +799,51 @@ export class RwsClient2 {
     return result;
   }
 
+  /**
+   * Update attributes on an existing configuration instance. Requires 'edit'
+   * mastership (callers hold it; RobotManager wraps these with mastership).
+   *
+   * Live-verified 2026-07-09 on OmniCore VC RW7.21 via probe-cfg-rws2.mjs:
+   *   ✓ POST /rw/cfg/{domain}/{type}/instances/{instance}
+   *     body: each attribute in BRACKET representation `Attr=[value,1]` joined
+   *     by '&', values literal (not percent-encoded), Content-Type
+   *     application/x-www-form-urlencoded;v=2.0 → 204. Partial attribute sets
+   *     are accepted; unknown attribute names → 400 "Error set attribute".
+   *   ✗ POST /rw/cfg/{domain}/{type}/{instance} (no /instances/) → 404
+   */
   async setCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
-    await this.req('POST', `/rw/cfg/${domain}/${type}/${encodeURIComponent(instance)}`, attrs);
+    const body = Object.entries(attrs).map(([k, v]) => `${k}=[${v},1]`).join('&');
+    await this.req(
+      'POST',
+      `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}`,
+      undefined,
+      body,
+      'application/x-www-form-urlencoded;v=2.0',
+    );
   }
 
+  /**
+   * Create a new configuration instance, then apply `attrs`. Requires 'edit'
+   * mastership. Live-verified 2026-07-09 on OmniCore VC RW7.21:
+   *   ✓ POST /rw/cfg/{domain}/{type}/instances/create-default  body name={instance} → 201,
+   *     followed by the setCfgInstance shape above for the attribute values.
+   *   ✗ POST /rw/cfg/{domain}/{type}/{instance}/create → 404 (endpoint doesn't exist)
+   */
   async createCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
-    // POST on the type root with name=... creates a new instance
-    await this.req('POST', `/rw/cfg/${domain}/${type}/${encodeURIComponent(instance)}/create`, attrs);
+    await this.req('POST', `/rw/cfg/${domain}/${type}/instances/create-default`,
+      undefined, `name=${instance}`, 'application/x-www-form-urlencoded;v=2.0');
+    if (Object.keys(attrs).length > 0) {
+      await this.setCfgInstance(domain, type, instance, attrs);
+    }
   }
 
+  /**
+   * Delete a configuration instance. Requires 'edit' mastership.
+   * Live-verified 2026-07-09 on OmniCore VC RW7.21:
+   *   ✓ DELETE /rw/cfg/{domain}/{type}/instances/{instance} → 204 (readback → 404)
+   */
   async removeCfgInstance(domain: string, type: string, instance: string): Promise<void> {
-    await this.req('DELETE', `/rw/cfg/${domain}/${type}/${encodeURIComponent(instance)}`);
+    await this.req('DELETE', `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}`);
   }
 
   async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'replace'): Promise<void> {
@@ -1297,14 +1361,56 @@ export class RwsClient2 {
   // ─── Module detailed endpoints ──────────────────────────────────────────────
 
   async getModuleSource(task: string, moduleName: string): Promise<string> {
-    // Modules can live in $HOME, DATA, etc. — first fetch metadata to find path
-    const info = await this.getModuleInfo(task, moduleName);
-    const filepath = info['path'] ?? info['file-path'] ?? `$HOME/${moduleName}.mod`;
-    return this.readFile(filepath);
+    // Program memory is the source of truth — the save round-trip reads it
+    // directly, so it is the PRIMARY path. A direct file read can return a
+    // stale on-disk copy (module edited in memory, or a leftover HOME file
+    // shadowing a module that was actually loaded from .pgf / RobotStudio),
+    // and module metadata exposes no reliable backing path to trust: the
+    // per-module GET only carries a bare `filename` span (live-verified
+    // 2026-07-09 on OmniCore VC RW7.21 — no path/file-path field exists).
+    try {
+      return await this.readModuleViaSave(task, moduleName);
+    } catch {
+      // Save endpoint failed (permissions, disk, transient) — fall back to the
+      // backing file named by metadata, or the conventional HOME location.
+      const info = await this.getModuleInfo(task, moduleName).catch(() => ({} as Record<string, string>));
+      const filepath = info['path'] ?? info['file-path']
+        ?? (info['filename'] ? `HOME/${info['filename']}` : `$HOME/${moduleName}.mod`);
+      return this.readFile(filepath);
+    }
+  }
+
+  /**
+   * Read a module's source by round-tripping it through the TEMP volume.
+   * Live-verified 2026-07-08 on OmniCore VC RW7.21:
+   *   POST /rw/rapid/tasks/{task}/modules/{module}/save  body name=<tmp>&path=TEMP:
+   *   → 204, no mastership required. The controller ALWAYS appends '.modx' to
+   *   the given name (even for SysMod modules — never '.sysx'), so the name is
+   *   passed without extension. TEMP: avoids any risk of clobbering HOME files.
+   */
+  private async readModuleViaSave(task: string, moduleName: string): Promise<string> {
+    const tmp = `${moduleName}_${Date.now().toString(36)}${Math.floor(Math.random() * 0xffff).toString(36)}`;
+    await this.req(
+      'POST',
+      `/rw/rapid/tasks/${task}/modules/${encodeURIComponent(moduleName)}/save`,
+      undefined,
+      `name=${tmp}&path=TEMP:`,
+    );
+    try {
+      return await this.readFile(`TEMP/${tmp}.modx`);
+    } finally {
+      await this.deleteFile(`TEMP/${tmp}.modx`).catch(() => {});
+    }
   }
 
   async getModuleInfo(task: string, moduleName: string): Promise<Record<string, string>> {
+    // Live-verified 2026-07-09 on OmniCore VC RW7.21: the per-module GET returns
+    // <li class="rap-module" title="{task}/{module}"> with spans modname,
+    // filename (bare name like 'BASE.sysx' — NO path) and attribute.
+    // (rap-module-info-li is the class used by the module LIST endpoint.)
     const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/modules/${encodeURIComponent(moduleName)}`));
+    const d = p.getState('rap-module');
+    if (Object.keys(d).length > 0) { return d; }
     return p.getState('rap-module-info-li') || p.getState('rap-module-info');
   }
 
@@ -1379,9 +1485,101 @@ export class RwsClient2 {
     return path; // fallback: keep full path
   }
 
+  /** First reconnect delay after a dropped subscription WebSocket (doubles per attempt). */
+  private static readonly WS_RECONNECT_BASE_MS = 500;
+  /** Give up re-subscribing after this many consecutive failed attempts. */
+  private static readonly WS_RECONNECT_MAX_ATTEMPTS = 6;
+  /** How long to wait for the WebSocket upgrade to complete before treating the attempt as failed. */
+  private static readonly WS_OPEN_TIMEOUT_MS = 8000;
+
+  /**
+   * POST /subscription — accept HTTP 201 (Created).
+   * Captures the Location header (authoritative WS URL) and the group resource
+   * path (`/subscription/{id}` — the URL a DELETE must target to free the group).
+   *
+   * Rides the client's main HTTP session: live-verified 2026-07-09 on OmniCore
+   * VC RW7.21 (probe-sub-session.mjs) — POST /subscription with the existing
+   * session Cookie returns 201 with NO Set-Cookie (no new session minted) and
+   * the WebSocket authenticates with that same cookie. Without the Cookie the
+   * controller mints one session per subscribe, and reconnect loops would burn
+   * through the 5-sessions-per-IP budget.
+   */
+  private createSubscription(bodyStr: string): Promise<{
+    wsUrl: string; deleteUrl: string; cookieStr: string;
+  }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL('/subscription', this.baseUrl);
+      const encoded = Buffer.from(bodyStr);
+      const options: http.RequestOptions & { agent?: https.Agent; rejectUnauthorized?: boolean } = {
+        method: 'POST',
+        hostname: url.hostname,
+        port: url.port ? +url.port : (this.isHttps ? 443 : 80),
+        path: '/subscription',
+        headers: {
+          Authorization:  this.authHeader,
+          Accept:         'application/xhtml+xml;v=2.0',
+          'Content-Type': 'application/x-www-form-urlencoded;v=2.0',
+          'Content-Length': String(encoded.length),
+          ...(this.sessionCookie ? { Cookie: this.sessionCookie } : {}),
+        },
+        // Per-request as well as on the agent — see req() for why (issue #2).
+        ...(this.isHttps
+          ? { agent: this.httpsAgent, ...(this.rejectUnauthorized ? {} : { rejectUnauthorized: false }) }
+          : {}),
+      };
+      const transport = this.isHttps ? https : http;
+      const req = (transport as typeof https).request(options as https.RequestOptions, res => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          if (res.statusCode !== 201) {
+            reject(new Error(`RWS2 subscribe POST returned ${res.statusCode}`));
+            return;
+          }
+          const body = Buffer.concat(chunks).toString('utf8');
+          // Location header contains the WebSocket URL (wss://host/poll/{id})
+          const location = (res.headers['location'] ?? '') as string;
+          let wsUrl: string;
+          if (location.startsWith('wss://') || location.startsWith('ws://')) {
+            wsUrl = location;
+          } else {
+            // Fallback: parse from XHTML body
+            wsUrl = body.match(/href="(wss?:\/\/[^"]+)"/)?.[1] ?? '';
+          }
+          // Group resource for cleanup. Live-verified 2026-07-09 on OmniCore VC
+          // RW7.21: DELETE /subscription/{id} → 200 and the group disappears;
+          // DELETE on the /poll/{id} URL → 404 (it is NOT a deletable resource).
+          // The 201 body carries <a href="subscription/{id}" rel="group"/>.
+          const groupId =
+            body.match(/href="[^"]*subscription\/([^"/]+)"[^>]*rel="group"/)?.[1]
+            ?? body.match(/rel="group"[^>]*href="[^"]*subscription\/([^"/]+)"/)?.[1]
+            ?? wsUrl.match(/\/poll\/([^/?#]+)/)?.[1]
+            ?? '';
+          const deleteUrl = groupId ? `/subscription/${groupId}` : '';
+
+          // Capture the session cookie if this POST minted one (first-ever request
+          // on this client) — same capture rule as req(). The WebSocket authenticates
+          // with Cookie, NOT Authorization.
+          const setCookies = (res.headers['set-cookie'] ?? []) as string[];
+          if (setCookies.length > 0 && !this.sessionCookie) {
+            this.sessionCookie = setCookies.map((c: string) => c.split(';')[0]).join('; ');
+          }
+          const cookieStr = this.sessionCookie ?? '';
+
+          if (!wsUrl) { reject(new Error('RWS2 subscribe: no WebSocket URL')); return; }
+          resolve({ wsUrl, deleteUrl, cookieStr });
+        });
+      });
+      req.on('error', reject);
+      req.write(encoded);
+      req.end();
+    });
+  }
+
   async subscribe(
     resources: SubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
+    onLost?: () => void,
   ): Promise<() => Promise<void>> {
     // 1. Build subscription body
     const paths = resources.map(r => RwsClient2.rws2ResourcePath(r)).filter(Boolean) as string[];
@@ -1395,145 +1593,190 @@ export class RwsClient2 {
     });
     const bodyStr = parts.join('&');
 
-    // 2. POST /subscription — accept HTTP 201 (Created)
-    //    Capture the Location header (authoritative WS URL) and Set-Cookie (required for WS auth)
-    const { wsUrl, deleteUrl, cookieStr } = await new Promise<{
-      wsUrl: string; deleteUrl: string; cookieStr: string;
-    }>((resolve, reject) => {
-      const url = new URL('/subscription', this.baseUrl);
-      const encoded = Buffer.from(bodyStr);
-      const options: http.RequestOptions & { agent?: https.Agent; rejectUnauthorized?: boolean } = {
-        method: 'POST',
-        hostname: url.hostname,
-        port: url.port ? +url.port : (this.isHttps ? 443 : 80),
-        path: '/subscription',
-        headers: {
-          Authorization:  this.authHeader,
-          Accept:         'application/xhtml+xml;v=2.0',
-          'Content-Type': 'application/x-www-form-urlencoded;v=2.0',
-          'Content-Length': String(encoded.length),
-        },
-        // Per-request as well as on the agent — see req() for why (issue #2).
-        ...(this.isHttps ? { agent: this.httpsAgent, rejectUnauthorized: false } : {}),
-      };
-      const transport = this.isHttps ? https : http;
-      const req = (transport as typeof https).request(options as https.RequestOptions, res => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          if (res.statusCode !== 201) {
-            reject(new Error(`RWS2 subscribe POST returned ${res.statusCode}`));
-            return;
-          }
-          // Location header contains the WebSocket URL (wss://host/poll/{id})
-          const location = (res.headers['location'] ?? '') as string;
-          let wsUrl: string;
-          let deleteUrl: string;
-          if (location.startsWith('wss://') || location.startsWith('ws://')) {
-            wsUrl     = location;
-            deleteUrl = location.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
-          } else {
-            // Fallback: parse from XHTML body
-            const body    = Buffer.concat(chunks).toString('utf8');
-            const wsMatch = body.match(/href="(wss?:\/\/[^"]+)"/);
-            wsUrl     = wsMatch?.[1] ?? '';
-            deleteUrl = wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
-          }
-          // Capture session cookies — WebSocket needs Cookie header, NOT Authorization
-          const setCookies = (res.headers['set-cookie'] ?? []) as string[];
-          const cookieStr  = setCookies.map((c: string) => c.split(';')[0]).join('; ');
-
-          if (!wsUrl) { reject(new Error('RWS2 subscribe: no WebSocket URL')); return; }
-          resolve({ wsUrl, deleteUrl, cookieStr });
-        });
-      });
-      req.on('error', reject);
-      req.write(encoded);
-      req.end();
-    });
-
-    // 3. Open WebSocket and wait for confirmation it actually connected.
-    //    Auth: Cookie from subscription response (NOT Authorization header).
-    //    Subprotocol: "robapi2_subscription" (ABB standard; may not be supported on all VCs).
-    //    We dynamically import 'ws' so callers who never subscribe don't pay for it.
-    //    (ESM-safe; the package is `"type": "module"`, so `require` is undefined.)
+    // We dynamically import 'ws' so callers who never subscribe don't pay for it.
+    // (ESM-safe; the package is `"type": "module"`, so `require` is undefined.)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const wsMod = await import('ws') as { default: { new(url: string, protocols: string[], opts: object): any } };
     const WsImpl = wsMod.default;
-    const ws = new WsImpl(wsUrl, ['robapi2_subscription'], {
-      rejectUnauthorized: false,
-      headers: { Cookie: cookieStr },
-    });
 
-    // Wait up to 8 s for the WebSocket to open.  If the controller rejects the upgrade
-    // (e.g. RWS 2.0 virtual controller), we clean up and throw so the caller falls back to polling.
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        ws.terminate();
-        reject(new Error('WebSocket connection timed out after 8 s'));
-      }, 8000);
-
-      ws.on('open', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-
-      // unexpected-response fires when the HTTP upgrade is rejected (e.g. 400)
+    // Connection state shared between the reconnect logic and unsubscribe.
+    const conn = {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ws.on('unexpected-response', (_req: unknown, res: any) => {
-        clearTimeout(timer);
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          const body = (Buffer.concat(chunks).toString().trim() || '').slice(0, 120);
-          ws.terminate();
-          this.reqDelete(deleteUrl).catch(() => {});
-          reject(new Error(`RWS2 WebSocket upgrade rejected (HTTP ${res.statusCode}): ${body}`));
-        });
-      });
+      ws: null as any,
+      deleteUrl: '',
+      pingTimer: null as ReturnType<typeof setInterval> | null,
+      reconnectTimer: null as ReturnType<typeof setTimeout> | null,
+      closed: false,
+      attempts: 0,
+      lostNotified: false,
+    };
 
-      ws.on('error', (err: Error) => {
-        clearTimeout(timer);
-        this.reqDelete(deleteUrl).catch(() => {});
-        reject(err);
-      });
-    });
+    // Best-effort removal of a subscription group (DELETE /subscription/{id}).
+    // Groups live as long as the session that owns them, and the session is the
+    // client's main one — orphaned groups would pile up on every reconnect.
+    const dropGroup = (path: string): Promise<void> =>
+      path ? this.req('DELETE', path).then(() => {}, () => {}) : Promise.resolve();
 
-    // 4. Ping every 25 s (controller closes if no activity within 30 s)
-    const pingTimer = setInterval(() => {
-      if ((ws as { readyState: number }).readyState === 1 /* OPEN */) { ws.send('PING'); }
-    }, 25000);
-
-    // 5. Parse incoming events (same approach as abb-rws-client WsSubscriber)
-    ws.on('message', (data: Buffer | string) => {
-      const raw = data.toString();
-      if (raw === 'PONG') { return; }
-
-      const liPat = /<li[^>]*>([\s\S]*?)<\/li>/gi;
-      let m: RegExpExecArray | null;
-      while ((m = liPat.exec(raw)) !== null) {
-        const block = m[1];
-        const hrefM = block.match(/<a[^>]*href="([^"]+)"/i);
-        const spanM = block.match(/<span[^>]*>([\s\S]*?)<\/span>/i);
-        if (!hrefM || !spanM) { continue; }
-        handler({
-          resource:  RwsClient2.resourcePathToName(hrefM[1]),
-          value:     spanM[1].trim(),
-          timestamp: new Date(),
-        });
+    // The subscription rides the main HTTP session (see createSubscription), so a
+    // dropped WebSocket does NOT invalidate the group — but its poll URL is spent.
+    // Every (re)connect drops the previous group, then POSTs a fresh /subscription
+    // on the same session; no extra sessions are ever minted.
+    const open = async (): Promise<void> => {
+      if (conn.deleteUrl) {
+        await dropGroup(conn.deleteUrl);
+        conn.deleteUrl = '';
       }
-    });
+      const { wsUrl, deleteUrl, cookieStr } = await this.createSubscription(bodyStr);
+      conn.deleteUrl = deleteUrl;
 
-    // Non-fatal error after open (connection dropped mid-session)
-    ws.on('error', (err: Error) => {
-      console.warn('[RWS2] WebSocket error:', err.message);
-    });
+      // 2. Open WebSocket and wait for confirmation it actually connected.
+      //    Auth: Cookie from subscription response (NOT Authorization header).
+      //    Subprotocol: "rws_subscription" — the RWS 2.0 name. Live-verified 2026-07-08
+      //    on OmniCore VC RW7.21: "robapi2_subscription" (the RWS 1.0 name) is rejected
+      //    with HTTP 400; "rws_subscription" upgrades with 101.
+      const ws = new WsImpl(wsUrl, ['rws_subscription'], {
+        ...(this.rejectUnauthorized ? {} : { rejectUnauthorized: false }),
+        headers: { Cookie: cookieStr },
+      });
 
-    // 6. Return unsubscribe — close WS and DELETE the subscription
+      // Wait for the WebSocket to open.  If the controller rejects the upgrade,
+      // we clean up and throw so the caller falls back to polling.
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) { return; }
+          settled = true;
+          ws.terminate();
+          dropGroup(deleteUrl);
+          reject(new Error(`WebSocket connection timed out after ${RwsClient2.WS_OPEN_TIMEOUT_MS} ms`));
+        }, RwsClient2.WS_OPEN_TIMEOUT_MS);
+
+        ws.on('open', () => {
+          if (settled) { return; }
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        });
+
+        // unexpected-response fires when the HTTP upgrade is rejected (e.g. 400)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ws.on('unexpected-response', (_req: unknown, res: any) => {
+          clearTimeout(timer);
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => {
+            if (settled) { return; }
+            settled = true;
+            const body = (Buffer.concat(chunks).toString().trim() || '').slice(0, 120);
+            ws.terminate();
+            dropGroup(deleteUrl);
+            reject(new Error(`RWS2 WebSocket upgrade rejected (HTTP ${res.statusCode}): ${body}`));
+          });
+        });
+
+        ws.on('error', (err: Error) => {
+          if (settled) { return; }
+          settled = true;
+          clearTimeout(timer);
+          dropGroup(deleteUrl);
+          reject(err);
+        });
+      });
+
+      // Unsubscribed while the handshake was in flight — discard the connection.
+      if (conn.closed) {
+        ws.close();
+        dropGroup(deleteUrl);
+        return;
+      }
+      conn.ws = ws;
+
+      // 3. Ping every 25 s (controller closes if no activity within 30 s)
+      conn.pingTimer = setInterval(() => {
+        if ((ws as { readyState: number }).readyState === 1 /* OPEN */) { ws.send('PING'); }
+      }, 25000);
+
+      // 4. Parse incoming events (same approach as abb-rws-client WsSubscriber)
+      ws.on('message', (data: Buffer | string) => {
+        const raw = data.toString();
+        if (raw === 'PONG') { return; }
+
+        const liPat = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+        let m: RegExpExecArray | null;
+        while ((m = liPat.exec(raw)) !== null) {
+          const block = m[1];
+          const hrefM = block.match(/<a[^>]*href="([^"]+)"/i);
+          const spanM = block.match(/<span[^>]*>([\s\S]*?)<\/span>/i);
+          if (!hrefM || !spanM) { continue; }
+          handler({
+            resource:  RwsClient2.resourcePathToName(hrefM[1]),
+            value:     spanM[1].trim(),
+            timestamp: new Date(),
+          });
+        }
+      });
+
+      // Non-fatal error after open — the matching 'close' event drives cleanup/reconnect.
+      ws.on('error', (err: Error) => {
+        console.warn('[RWS2] WebSocket error:', err.message);
+      });
+
+      ws.on('close', () => {
+        if (conn.pingTimer) { clearInterval(conn.pingTimer); conn.pingTimer = null; }
+        if (!conn.closed) { scheduleReconnect(); }
+      });
+    };
+
+    const scheduleReconnect = (): void => {
+      // unsubscribe() clears the pending timer, but an open() already in
+      // flight lands here through its .catch — without this guard it would
+      // keep retrying (and eventually fire onLost) after the consumer left.
+      if (conn.closed) { return; }
+      if (conn.attempts >= RwsClient2.WS_RECONNECT_MAX_ATTEMPTS) {
+        const msg = `RWS2 subscription lost — giving up after ${conn.attempts} reconnect attempts`;
+        Logger.error(msg);
+        console.error(`[RWS2] ${msg}`);
+        void dropGroup(conn.deleteUrl);
+        conn.deleteUrl = '';
+        if (!conn.lostNotified) {
+          conn.lostNotified = true;
+          try { onLost?.(); } catch { /* consumer callback — never let it break us */ }
+        }
+        return;
+      }
+      const delay = RwsClient2.WS_RECONNECT_BASE_MS * 2 ** conn.attempts;
+      conn.attempts++;
+      Logger.trace?.('subscription', `RWS2 WebSocket dropped — reconnect attempt ${conn.attempts} in ${delay} ms`);
+      conn.reconnectTimer = setTimeout(() => {
+        open()
+          .then(() => {
+            if (conn.closed) {
+              // unsubscribe() won the race against this reconnect — tear the
+              // fresh socket/group down instead of leaving a zombie stream.
+              conn.ws?.close();
+              const url = conn.deleteUrl;
+              conn.deleteUrl = '';
+              void dropGroup(url);
+              return;
+            }
+            conn.attempts = 0;
+          })
+          .catch(e => {
+            Logger.warn(`RWS2 subscription reconnect failed: ${e instanceof Error ? e.message : String(e)}`);
+            scheduleReconnect();
+          });
+      }, delay);
+    };
+
+    await open();
+
+    // 5. Return unsubscribe — close WS and DELETE the subscription group
     return async () => {
-      clearInterval(pingTimer);
-      ws.close();
-      await this.reqDelete(deleteUrl).catch(() => {});
+      conn.closed = true;
+      if (conn.reconnectTimer) { clearTimeout(conn.reconnectTimer); }
+      if (conn.pingTimer) { clearInterval(conn.pingTimer); conn.pingTimer = null; }
+      conn.ws?.close();
+      await dropGroup(conn.deleteUrl);
     };
   }
 
@@ -1795,28 +2038,4 @@ export class RwsClient2 {
     };
   }
 
-  /**
-   * Send a DELETE request to an absolute URL (used to clean up subscriptions).
-   * The URL is absolute (https://host:port/poll/{id}) so we can't use req() directly.
-   */
-  private reqDelete(absoluteUrl: string): Promise<void> {
-    return new Promise((resolve) => {
-      const url     = new URL(absoluteUrl);
-      const isHttps = url.protocol === 'https:';
-      const options: http.RequestOptions & { agent?: https.Agent } = {
-        method:   'DELETE',
-        hostname: url.hostname,
-        port:     url.port ? +url.port : (isHttps ? 443 : 80),
-        path:     url.pathname,
-        headers:  { Authorization: this.authHeader },
-        ...(isHttps ? { agent: this.httpsAgent } : {}),
-      };
-      const req = ((isHttps ? https : http) as typeof https).request(
-        options as https.RequestOptions,
-        res => { res.resume(); resolve(); }
-      );
-      req.on('error', () => resolve()); // best-effort
-      req.end();
-    });
-  }
 }

@@ -338,6 +338,22 @@ export class HttpSession {
    */
   private buildAuthHeader(method: string, uri: string): string {
     const challenge = this.digestChallenge!;
+
+    // qop may be a comma-separated list, e.g. qop="auth,auth-int". Pick auth when
+    // offered; auth-int (body-hash mode) is not implemented, so an auth-int-only
+    // challenge must fail loudly rather than answer with a plain-auth hash.
+    let useQopAuth = false;
+    if (challenge.qop) {
+      const offered = challenge.qop.split(',').map((q) => q.trim());
+      if (!offered.includes('auth')) {
+        throw new RwsError(
+          `Digest qop "${challenge.qop}" is not supported — only qop=auth`,
+          'AUTH_FAILED',
+        );
+      }
+      useQopAuth = true;
+    }
+
     const nc = (++this.nonceCount).toString(16).padStart(8, '0');
     const cnonce = randomBytes(16).toString('hex');
 
@@ -345,7 +361,7 @@ export class HttpSession {
     const ha2 = md5(`${method}:${uri}`);
 
     let responseHash: string;
-    if (challenge.qop === 'auth' || challenge.qop === 'auth-int') {
+    if (useQopAuth) {
       // RFC 2617 qop mode
       responseHash = md5(`${ha1}:${challenge.nonce}:${nc}:${cnonce}:auth:${ha2}`);
     } else {
@@ -364,7 +380,7 @@ export class HttpSession {
       `response="${responseHash}"`,
     ];
 
-    if (challenge.qop) {
+    if (useQopAuth) {
       parts.push(`qop=auth`);
     }
     if (challenge.opaque) {

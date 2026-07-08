@@ -159,7 +159,9 @@ console.log('joints:', await client.getJointPositions());
 // (`/rw/rapid/symbol/{symburl}/data`); the method shape is the same.
 const tool0 = await client.getRapidVariable('T_ROB1', 'BASE', 'tool0');
 
-// WebSocket subscriptions over `robapi2_subscription` subprotocol.
+// WebSocket subscriptions over the `rws_subscription` subprotocol
+// (RWS 1.0 uses `robapi2_subscription` — the names are NOT interchangeable:
+// RobotWare 7 rejects the 1.0 name with HTTP 400).
 const unsubscribe = await client.subscribe(
   ['controllerstate', 'execution'],
   (event) => console.log(event.resource, '=', event.value),
@@ -180,8 +182,10 @@ These are documented because they bite anyone who tries to write an RWS 2.0 clie
 - **File service home** is `'HOME'`, not `'$HOME'`.
 - **Symbol API path is suffix-style** — `/rw/rapid/symbol/{symburl}/data` (RWS 1.0 puts `/data` at the front).
 - **Module unload** is `POST /rw/rapid/tasks/{task}/unloadmod` with body, NOT `DELETE` on the module URL (returns 405).
-- **Self-signed TLS** on virtual controllers — library uses `rejectUnauthorized: false` for HTTPS.
-- **WebSocket subscription URL** comes from the `Location` header (real hardware) or the XHTML body (VC). Subprotocol: `robapi2_subscription`.
+- **Self-signed TLS** everywhere — controllers ship self-signed certs, so certificate
+  verification is off by default. Pass `strictTls: true` (`RobotManagerOptions`) or
+  `rejectUnauthorized: true` (`RwsClient2` options) if your plant installed real certs.
+- **WebSocket subscription URL** comes from the `Location` header (real hardware) or the XHTML body (VC). Subprotocol: `rws_subscription` (RWS 2.0) / `robapi2_subscription` (RWS 1.0).
 
 ---
 
@@ -195,7 +199,10 @@ import { MultiRobotManager } from 'abb-rws-client';
 const multi = MultiRobotManager.fromConfigs([
   { id: 'cell-A', name: 'Cell A IRB120',  host: '192.168.125.1', port: 80,   useHttps: false, username: 'Admin', password: 'robotics' },
   { id: 'cell-B', name: 'Cell B IRB1200', host: '192.168.125.2', port: 443,  useHttps: true,  username: 'Admin', password: 'robotics' },
-]);
+], {
+  refreshIntervalMs: 1000, // polling cadence (min 200); slow poll scales at 5×
+  strictTls: false,        // true = verify controller TLS certificates
+});
 
 multi.onError((msg, actions) => {
   console.error(`Robot error: ${msg}`);
@@ -216,8 +223,8 @@ multi.setActive('cell-B');
 `MultiRobotManager` wraps individual `RobotManager` instances. Each `RobotManager` handles its own:
 - Auto port discovery (probes 5466 / 9403 / 443 / 80 / 11811 in that order, plus a wide-scan fallback when none of those answer — RobotStudio assigns random VC ports above 30000)
 - Protocol auto-detection (`WWW-Authenticate: Digest` → RWS 1.0; `Basic` → RWS 2.0)
-- Hybrid polling cadence: **5 s when WebSocket subscriptions are active** (positions only — state-change resources stream over WS); **1 s when subscriptions failed** (full state coverage via polling)
-- WebSocket subscriptions with automatic polling fallback (RWS 2.0 VC notably rejects the `robapi2_subscription` subprotocol — fallback kicks in)
+- Hybrid polling cadence: **5× the refresh interval when WebSocket subscriptions are active** (positions only — state-change resources stream over WS); **the plain refresh interval when subscriptions are unavailable** (full state coverage via polling). Default 1 s / 5 s, configurable via `refreshIntervalMs`.
+- WebSocket subscriptions on both protocols, with dropped-socket auto-reconnect and automatic degradation to fast polling if the event stream is terminally lost
 - Reconnect-on-failure (3-strike, surfaces via `onError` listener)
 - Clean `GET /logout` on disconnect — releases server-side mastership and frees the session slot
 
@@ -237,10 +244,10 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **`callServiceRoutine(task, name, args?)`** — invoke a service routine remotely (calibration, brake check, etc.).
 - **`calcJointsFromCartesian(...)`** — inverse kinematics. **`calcCartesianFromJoints(...)`** — forward kinematics.
 - **`setActiveTool(mechunit, name)`**, **`setActiveWobj(mechunit, name)`** — switch active persistent tooldata / wobjdata.
-- **CFG write** — `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`. Each acquires `edit` mastership for the duration.
+- **CFG write** — `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`, on **both** protocols (RWS 2.0 uses `instances/create-default` + the bracket value representation; RWS 1.0 uses the `?action=` forms — handled by the adapters). Each acquires the needed mastership for the duration.
 - **DIPC** — `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients.
 - **`listFileVolumes()`** — every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
-- **`getModuleSource(task, name)`** — pull a module's RAPID text in one call.
+- **`getModuleSource(task, name)`** — pull a module's RAPID text in one call. Works even when the module has no backing file in `HOME` (loaded from `.pgf`/RobotStudio/pendant): the client saves it to the controller's TEMP volume, reads it, and deletes it.
 - **`compressPath(source, dest)`** — controller-side compression.
 - **`validateRapidValue(task, value, datatype)`** — pre-flight a literal before writing.
 

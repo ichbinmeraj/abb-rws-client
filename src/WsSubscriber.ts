@@ -4,40 +4,53 @@
  * Flow:
  *   1. POST /subscription via HttpSession to register resources → get subscription ID
  *   2. Open WebSocket to ws://{host}/subscription/{id} with robapi2_subscription subprotocol
- *   3. Parse incoming XML event messages → emit typed SubscriptionEvent objects
- *   4. Auto-reconnect on unexpected close: max 3 retries, exponential backoff 1s/2s/4s
+ *   3. subscribe() resolves only once the WebSocket is open; if the socket errors or
+ *      closes before opening, subscribe() rejects and best-effort DELETEs the
+ *      registration so the controller-side subscription slot is not leaked
+ *   4. Parse incoming XML event messages → emit typed SubscriptionEvent objects
+ *   5. Auto-reconnect when an established stream drops: max 3 retries, exponential
+ *      backoff 1s/2s/4s
  *
- * Uses native globalThis.WebSocket when available (Node 22+, browsers).
- * Falls back to the 'ws' npm package for Node 18/21 where native WebSocket is experimental.
+ * Always connects through the 'ws' package: the RWS upgrade request must carry the
+ * session Cookie header, and native (undici) WebSocket has no headers option — it
+ * silently ignores the ws-style third constructor argument, so the handshake goes
+ * out unauthenticated. Live-verified 2026-07-08 against IRC5 RW6.16: native WS is
+ * rejected with HTTP 403, 'ws' with the same Cookie opens and delivers events.
  */
 
-import { RwsError } from './types.js';
 import { createRequire } from 'module';
+import type { HttpSession } from './HttpSession.js';
+import type { SubscriptionResource, SubscriptionEvent } from './types.js';
+import { RwsError } from './types.js';
+import { subscriptions } from './ResourceMapper.js';
+import { parseSubscriptionId } from './ResponseParser.js';
+
+const BACKOFF_MS = [1000, 2000, 4000] as const;
+const MAX_RETRIES = 3;
+
+/** WebSocket constructor shape used by WsSubscriber — ws-style options 3rd arg */
+type WebSocketCtor = new (
+  url: string,
+  protocols: string[],
+  options: { headers: Record<string, string> },
+) => WebSocket;
 
 /**
- * Resolve a WebSocket constructor: prefer native globalThis.WebSocket,
- * fall back to the 'ws' package if available.
+ * Resolve the 'ws' package constructor. Never returns native globalThis.WebSocket —
+ * it cannot send the Cookie header the controller requires for WS auth.
  */
-function resolveWebSocket(): typeof WebSocket {
-  if (globalThis.WebSocket) return globalThis.WebSocket;
+function resolveWebSocket(): WebSocketCtor {
   try {
     const require = createRequire(import.meta.url);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return require('ws') as any;
   } catch {
     throw new RwsError(
-      'WebSocket is not available. Install the "ws" package or use Node 22+.',
+      'The "ws" package is required for RWS 1.0 subscriptions but could not be loaded.',
       'NETWORK_ERROR',
     );
   }
 }
-import type { HttpSession } from './HttpSession.js';
-import type { SubscriptionResource, SubscriptionEvent } from './types.js';
-import { subscriptions } from './ResourceMapper.js';
-import { parseSubscriptionId } from './ResponseParser.js';
-
-const BACKOFF_MS = [1000, 2000, 4000] as const;
-const MAX_RETRIES = 3;
 
 // ─── Path builder for subscription resources ─────────────────────────────────
 
@@ -143,16 +156,23 @@ export class WsSubscriber {
   private readonly session: HttpSession;
   private readonly host: string;
   private readonly port: number;
+  private readonly wsCtor: WebSocketCtor | undefined;
   private subscriptions: Map<string, ActiveSubscription> = new Map();
 
-  constructor(session: HttpSession, host: string, port: number) {
+  constructor(session: HttpSession, host: string, port: number, wsCtor?: WebSocketCtor) {
     this.session = session;
     this.host = host;
     this.port = port;
+    this.wsCtor = wsCtor;
   }
 
   /**
    * Subscribe to one or more RWS resources. Returns an unsubscribe function.
+   *
+   * Resolves only once the event WebSocket is open. If the socket fails before
+   * opening (refused connection, failed upgrade), rejects with RwsError after
+   * best-effort deleting the subscription registered by the POST — otherwise the
+   * caller believes it has live events while the controller streams to nobody.
    *
    * @param resources - Array of resources to subscribe to
    * @param handler   - Called for each incoming event
@@ -207,7 +227,19 @@ export class WsSubscriber {
     };
 
     this.subscriptions.set(subscriptionId, sub);
-    this.openWebSocket(sub);
+
+    // Step 3: open the WebSocket and wait for it — a subscription without a live
+    // event stream is worse than no subscription (silent staleness).
+    try {
+      await this.openWebSocket(sub);
+    } catch (err) {
+      sub.closed = true;
+      sub.ws = null;
+      this.subscriptions.delete(subscriptionId);
+      // Free the controller-side slot registered by the POST — best-effort
+      await this.session.delete(sub.deleteUrl).catch(() => undefined);
+      throw err;
+    }
 
     // Return unsubscribe function
     return async () => {
@@ -241,49 +273,78 @@ export class WsSubscriber {
 
   // ─── WebSocket lifecycle ────────────────────────────────────────────────────
 
-  private openWebSocket(sub: ActiveSubscription): void {
-    const cookieHeader = this.session.getCookieHeader();
-    const WS = resolveWebSocket() as new (
-      url: string,
-      protocols: string[],
-      options: { headers: Record<string, string> },
-    ) => WebSocket;
-    const ws = new WS(sub.wsUrl, ['robapi2_subscription'], {
-      headers: { Cookie: cookieHeader },
-    });
+  /**
+   * Open the event WebSocket for a subscription. Resolves once the socket is
+   * open; rejects if it errors or closes before ever opening (refused connection,
+   * rejected upgrade). Reconnect handling for established streams lives in the
+   * close handler, so callers of reconnect attempts must catch rejections.
+   */
+  private openWebSocket(sub: ActiveSubscription): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const cookieHeader = this.session.getCookieHeader();
+      const WS = this.wsCtor ?? resolveWebSocket();
+      const ws = new WS(sub.wsUrl, ['robapi2_subscription'], {
+        headers: { Cookie: cookieHeader },
+      });
 
-    sub.ws = ws;
+      sub.ws = ws;
+      let opened = false;
 
-    ws.onopen = (): void => {
-      sub.retryCount = 0;
-    };
+      const failBeforeOpen = (): void => {
+        reject(new RwsError(
+          `WebSocket for subscription ${sub.id} failed before opening`,
+          'NETWORK_ERROR',
+        ));
+      };
 
-    ws.onmessage = (event: MessageEvent): void => {
-      try {
-        const data = typeof event.data === 'string' ? event.data : String(event.data);
-        const events = parseWsMessage(data);
-        for (const e of events) {
-          sub.handler(e);
+      ws.onopen = (): void => {
+        opened = true;
+        sub.retryCount = 0;
+        resolve();
+      };
+
+      ws.onmessage = (event: MessageEvent): void => {
+        try {
+          const data = typeof event.data === 'string' ? event.data : String(event.data);
+          const events = parseWsMessage(data);
+          for (const e of events) {
+            sub.handler(e);
+          }
+        } catch {
+          // Silently discard unparseable messages — don't crash the subscriber
         }
-      } catch {
-        // Silently discard unparseable messages — don't crash the subscriber
-      }
-    };
+      };
 
-    ws.onerror = (): void => {
-      // onclose fires after onerror; reconnect logic lives there
-    };
+      ws.onerror = (): void => {
+        // Post-open errors are followed by onclose; reconnect logic lives there
+        if (!opened) failBeforeOpen();
+      };
 
-    ws.onclose = (event: Event & { wasClean?: boolean }): void => {
-      if (sub.closed) return; // intentional close — do not reconnect
+      ws.onclose = (event: Event & { wasClean?: boolean }): void => {
+        if (!opened) {
+          // Never established — reject and let the caller decide (subscribe
+          // deletes the registration; reconnect attempts consume a retry)
+          failBeforeOpen();
+          return;
+        }
+        if (sub.closed) return; // intentional close — do not reconnect
 
-      if (!event.wasClean && sub.retryCount < MAX_RETRIES) {
-        const delay = BACKOFF_MS[sub.retryCount] ?? BACKOFF_MS[BACKOFF_MS.length - 1];
-        sub.retryCount++;
-        setTimeout(() => {
-          if (!sub.closed) this.openWebSocket(sub);
-        }, delay);
-      }
-    };
+        if (!event.wasClean) {
+          this.scheduleReconnect(sub);
+        }
+      };
+    });
+  }
+
+  /** Reconnect a lost (previously open) stream with backoff; gives up after MAX_RETRIES. */
+  private scheduleReconnect(sub: ActiveSubscription): void {
+    if (sub.closed || sub.retryCount >= MAX_RETRIES) return;
+    const delay = BACKOFF_MS[sub.retryCount] ?? BACKOFF_MS[BACKOFF_MS.length - 1];
+    sub.retryCount++;
+    setTimeout(() => {
+      if (sub.closed) return;
+      // A reconnect attempt that fails before opening consumes a retry and tries again
+      this.openWebSocket(sub).catch(() => this.scheduleReconnect(sub));
+    }, delay);
   }
 }

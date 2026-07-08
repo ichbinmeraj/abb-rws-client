@@ -77,8 +77,16 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── Motion ──────────────────────────────────────────────────────────────
   getJointPositions(u?: string) { return this.client.getJointPositions(u); }
   getCartesianFull(u?: string)  { return this.client.getCartesianFull(u); }
-  /** RwsClient has no listMechunits — IRC5 always has ROB_1 as the standard mechunit. */
-  async listMechunits(): Promise<string[]> { return ['ROB_1']; }
+  /** List mechanical units from the controller (positioners/track units show up beyond ROB_1). */
+  async listMechunits(): Promise<string[]> {
+    const r = await this.rws1Get('/rw/motionsystem/mechunits');
+    const units = r.states
+      .map(s => ((s as Record<string, string>)['_title'] ?? (s as Record<string, string>)['name']))
+      .filter(Boolean) as string[];
+    // A controller always has at least one mechunit — an empty list means the
+    // response shape drifted; fall back to the standard unit rather than none.
+    return units.length > 0 ? units : ['ROB_1'];
+  }
 
   // ── System info ─────────────────────────────────────────────────────────
   getSystemInfo()       { return this.client.getSystemInfo(); }
@@ -201,7 +209,9 @@ export class RWS1Adapter implements IRWSAdapter {
     };
   }
 
-  subscribe(resources: SubscriptionResource[], handler: (event: SubscriptionEvent) => void) {
+  subscribe(resources: SubscriptionResource[], handler: (event: SubscriptionEvent) => void, _onLost?: () => void) {
+    // _onLost accepted for IRWSAdapter parity; RWS 1.0's WsSubscriber handles
+    // its own reconnects and has no terminal give-up signal to forward yet.
     return this.client.subscribe(resources, handler);
   }
 
@@ -495,6 +505,75 @@ export class RWS1Adapter implements IRWSAdapter {
     return out;
   }
 
+  /**
+   * Update attributes on an existing configuration instance.
+   * Live-verified 2026-07-09 on IRC5 VC RW6.16 via probe-cfg-rws1.mjs:
+   *   ✓ POST /rw/cfg/{domain}/{type}/instances/{instance}?action=set
+   *     body: PLAIN form values `Attr=value&…` (percent-encoded) → 204,
+   *     partial attribute sets accepted.
+   * Acquires cfg-domain mastership around the write. (The VC accepts cfg
+   * writes without it, but real controllers arbitrate cfg access through
+   * mastership — and taking it when free is harmless.)
+   */
+  async setCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
+    await this.client.requestMastership('cfg');
+    try {
+      await this.postCfgSet(domain, type, instance, attrs);
+    } finally {
+      await this.client.releaseMastership('cfg').catch(() => {});
+    }
+  }
+
+  /**
+   * Create a new configuration instance, then apply `attrs`.
+   * Live-verified 2026-07-09 on IRC5 VC RW6.16:
+   *   ✓ POST /rw/cfg/{domain}/{type}/instances?action=create-default
+   *     body name={instance} → 201 (duplicate name → 400), then the
+   *     ?action=set shape above for the attribute values.
+   * Acquires cfg-domain mastership once around the create+set pair.
+   */
+  async createCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
+    await this.client.requestMastership('cfg');
+    try {
+      await this.rws1Post(
+        `/rw/cfg/${domain}/${type}/instances?action=create-default`,
+        `name=${encodeURIComponent(instance)}`,
+      );
+      if (Object.keys(attrs).length > 0) {
+        await this.postCfgSet(domain, type, instance, attrs);
+      }
+    } finally {
+      await this.client.releaseMastership('cfg').catch(() => {});
+    }
+  }
+
+  /**
+   * Delete a configuration instance.
+   * Live-verified 2026-07-09 on IRC5 VC RW6.16:
+   *   ✓ DELETE /rw/cfg/{domain}/{type}/instances/{instance} → 204
+   *     (reading the instance back afterwards → 400 "unknown instance",
+   *     unlike RWS 2.0 which answers 404).
+   */
+  async removeCfgInstance(domain: string, type: string, instance: string): Promise<void> {
+    await this.client.requestMastership('cfg');
+    try {
+      const res = await this.client.request('DELETE', `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?json=1`);
+      if (res.status >= 400) {
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(res.body)._embedded?.status?.msg ?? msg; } catch { /* ok */ }
+        throw new Error(msg);
+      }
+    } finally {
+      await this.client.releaseMastership('cfg').catch(() => {});
+    }
+  }
+
+  /** Shared ?action=set POST — plain `Attr=value` form pairs (RWS 1.0 wire shape). */
+  private async postCfgSet(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
+    const body = Object.entries(attrs).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+    await this.rws1Post(`/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?action=set`, body);
+  }
+
   // ── Backup ─────────────────────────────────────────────────────────────
 
   async listBackups(): Promise<Array<{ name: string; created?: string; size?: number }>> {
@@ -683,6 +762,43 @@ export class RWS1Adapter implements IRWSAdapter {
   async saveModule(task: string, moduleName: string, filepath: string): Promise<void> {
     await this.rws1Post(`/rw/rapid/tasks/${task}?action=savemod`,
       `name=${encodeURIComponent(moduleName)}&filepath=${encodeURIComponent(filepath)}`);
+  }
+
+  async getModuleSource(task: string, moduleName: string): Promise<string> {
+    // Program memory is the source of truth — the save round-trip reads it
+    // directly (mastership-free), so it is the PRIMARY path. Reading
+    // $HOME/{module}.mod first would let a stale disk file shadow unsaved
+    // edits, and modules loaded from .pgf / RobotStudio / the FlexPendant
+    // have no $HOME backing file at all (abb-rws-vscode issue #3).
+    try {
+      return await this.readModuleViaSave(task, moduleName);
+    } catch {
+      // Save endpoint failed (permissions, disk, transient) — fall back to the
+      // conventional $HOME location.
+      return this.client.readFile(`$HOME/${moduleName}.mod`);
+    }
+  }
+
+  /**
+   * Read a module's source by round-tripping it through the $TEMP volume.
+   * Live-verified 2026-07-08 on IRC5 VC RW6.16:
+   *   POST /rw/rapid/modules/{module}?task={task}&action=save  body name=<tmp>&path=$TEMP
+   *   → 204, no mastership required. The controller ALWAYS appends '.mod' to
+   *   the given name (even for SysMod modules — never '.sys'), so the name is
+   *   passed without extension. Note the $-root has no trailing colon/slash,
+   *   unlike RWS 2.0's 'TEMP:'.
+   */
+  private async readModuleViaSave(task: string, moduleName: string): Promise<string> {
+    const tmp = `${moduleName}_${Date.now().toString(36)}${Math.floor(Math.random() * 0xffff).toString(36)}`;
+    await this.rws1Post(
+      `/rw/rapid/modules/${encodeURIComponent(moduleName)}?task=${encodeURIComponent(task)}&action=save`,
+      `name=${tmp}&path=$TEMP`,
+    );
+    try {
+      return await this.client.readFile(`$TEMP/${tmp}.mod`);
+    } finally {
+      await this.client.deleteFile(`$TEMP/${tmp}.mod`).catch(() => {});
+    }
   }
 
   async listModuleRoutines(task: string, moduleName: string): Promise<Array<{ name: string; type: string }>> {

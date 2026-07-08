@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import { RobotManager } from './RobotManager.js';
-import type { RobotState, ErrorListener } from './RobotManager.js';
+import type { RobotState, ErrorListener, RobotManagerOptions } from './RobotManager.js';
 import type { FileEntry } from './types.js';
 
 export interface RobotConfig {
@@ -25,6 +25,9 @@ export class MultiRobotManager {
   private _activeId: string | null = null;
   private handlers: Array<() => void> = [];
   private errorListener: ErrorListener | null = null;
+
+  /** Options forwarded to every RobotManager this instance creates (current and future). */
+  constructor(private readonly managerOptions?: RobotManagerOptions) {}
 
   // ── Accessors ──────────────────────────────────────────────────────────────
 
@@ -77,7 +80,7 @@ export class MultiRobotManager {
   // ── Robot management ───────────────────────────────────────────────────────
 
   addRobot(config: RobotConfig): void {
-    const mgr = new RobotManager();
+    const mgr = new RobotManager(this.managerOptions);
     mgr.onDidChange(() => this.notify());
     if (this.errorListener) { mgr.onError(this.errorListener); }
     this.managers.set(config.id, mgr);
@@ -139,8 +142,8 @@ export class MultiRobotManager {
   // ── Serialization ──────────────────────────────────────────────────────────
 
   /** Create a MultiRobotManager from persisted configs, with backward compatibility for legacy single-robot settings. */
-  static fromConfigs(configs: RobotConfig[]): MultiRobotManager {
-    const m = new MultiRobotManager();
+  static fromConfigs(configs: RobotConfig[], opts?: RobotManagerOptions): MultiRobotManager {
+    const m = new MultiRobotManager(opts);
     configs.forEach(c => m.addRobot(c));
     return m;
   }

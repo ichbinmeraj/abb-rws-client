@@ -406,10 +406,17 @@ export interface IRWSAdapter {
    * Returns an async unsubscribe function — call it on disconnect.
    * Falls back gracefully: if the controller does not support subscriptions,
    * implementations should throw so callers can fall back to polling.
+   *
+   * `onLost` (optional) is invoked at most once, when the event stream is
+   * terminally lost — i.e. the connection dropped and the adapter's reconnect
+   * attempts have all failed. Callers should treat it as "events stopped
+   * flowing; switch to polling or reconnect". Adapters without reconnect
+   * logic may ignore it.
    */
   subscribe(
     resources: SubscriptionResource[],
-    handler: (event: SubscriptionEvent) => void
+    handler: (event: SubscriptionEvent) => void,
+    onLost?: () => void,
   ): Promise<() => Promise<void>>;
 }
 

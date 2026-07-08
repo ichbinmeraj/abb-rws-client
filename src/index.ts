@@ -30,7 +30,7 @@ export type { IRWSAdapter } from './IRWSAdapter.js';
 
 // High-level managers
 export { RobotManager } from './RobotManager.js';
-export type { RobotState, ChangeHandler, ProbeResult, DiscoveredController, ErrorListener } from './RobotManager.js';
+export type { RobotState, ChangeHandler, ProbeResult, DiscoveredController, ErrorListener, RobotManagerOptions } from './RobotManager.js';
 export { MultiRobotManager } from './MultiRobotManager.js';
 export type { RobotConfig } from './MultiRobotManager.js';
 
