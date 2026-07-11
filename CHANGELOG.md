@@ -4,6 +4,44 @@ All notable changes to `abb-rws-client` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-07-09
+
+The library is feature-complete for both controller generations and every wire
+recipe below has been verified against live controllers (RW 6.16 IRC5 +
+RW 7.21 OmniCore). Time to call it 1.0.
+
+### Added
+
+- **mDNS/Bonjour controller discovery** — `RobotManager.discoverControllersMdns()`
+  finds every ABB controller (real or virtual) announcing on the local network:
+  zero-dependency DNS-SD implementation, returns system name, host, RWS port,
+  RobotWare version, system GUID, and a protocol classification. No more port
+  scanning to find RobotStudio's randomly-assigned VC ports.
+- **HAL JSON parsing for RWS 2.0** — GETs negotiate
+  `application/hal+json;v=2.0` (officially supported; live-verified) with an
+  automatic, remembered per-controller fallback to XHTML for older RobotWare 7
+  releases. Byte-identical results across both representations verified live
+  over seven read families.
+- **Simulation panel (virtual controllers, RW7)** — `simEmergencyStop()`,
+  `simResetEmergencyStop()`, `simGeneralStop()`, `simAutoStop()`,
+  `simEnableSwitch(on)`, and `teleportMechunit(mechunit, joints)`. Drive the
+  E-stop/guard-stop chain and reposition the simulated robot from the API —
+  every recipe converged from live controller validation errors, including the
+  undocumented inverted `state=off`-engages polarity.
+- **`RWS1Adapter.saveModule` migrated off a dead endpoint** — the legacy
+  `?action=savemod` form returns a blanket 400 on RW6 regardless of body; the
+  method now uses the live-verified `?action=save` recipe (and percent-encodes
+  the destination path).
+
+### Changed
+
+- Published packages now include `src/` so the shipped source maps resolve;
+  the `exports` map lists `types` first for `nodenext` consumers.
+- 169 new unit tests (368 total): every previously-untested `ResourceMapper`
+  builder and `ResponseParser` parser, the RWS 1.0 digest/cookie/pacing
+  request path, the mDNS wire parser, HAL/XHTML parity, and the simulation
+  panel.
+
 ## [0.8.0] — 2026-07-09
 
 ### Fixed

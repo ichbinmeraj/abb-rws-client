@@ -6,6 +6,7 @@ import type {
   UiInstruction, RestartMode, Signal, IoNetwork, IoDevice,
   SubscriptionEvent,
 } from './types.js';
+import { RwsError } from './types.js';
 import * as https from 'https';
 import * as http from 'http';
 import * as net from 'net';
@@ -16,6 +17,8 @@ import type { IRWSAdapter } from './IRWSAdapter.js';
 import { RWS1Adapter } from './RWS1Adapter.js';
 import { RWS2Adapter } from './RWS2Adapter.js';
 import { Logger } from './Logger.js';
+import { discoverControllersMdns } from './MdnsDiscovery.js';
+import type { MdnsController } from './MdnsDiscovery.js';
 
 /**
  * Listener signature for `onError`. The host (VS Code extension, CLI, etc.) can
@@ -249,6 +252,22 @@ export class RobotManager {
     }
 
     return found;
+  }
+
+  /**
+   * Discover controllers via mDNS/Bonjour — additive alternative to the TCP
+   * probing of `discoverControllers`. Both real controllers and RobotStudio
+   * VCs advertise `RobotWebServices_<systemname>` on `_http._tcp.local`
+   * (VCs via the mDNSResponder service RobotStudio installs), so this finds
+   * VCs on their randomly-assigned ports without a port scan, and carries
+   * RW7 metadata (version, GUID, ports) from the TXT records.
+   *
+   * `probableProtocol` is a heuristic from the advertisement (RW7 attaches
+   * TXT metadata, RW6 does not) — confirm with `probeSpecificPort` before
+   * connecting. See MdnsDiscovery.ts for the live-verified wire details.
+   */
+  static async discoverControllersMdns(opts?: { timeoutMs?: number }): Promise<MdnsController[]> {
+    return discoverControllersMdns(opts);
   }
 
   /** Returns only the first responding controller (used internally during connect). */
@@ -659,6 +678,27 @@ export class RobotManager {
       return;
     }
     await this.adapter!.setOperationMode!(mode);
+  }
+
+  // ─── Simulation panel (virtual controllers, RWS 2.0 only) ──────────────────
+  //
+  // Thin passthroughs to the RWS2 client's sim* methods — the endpoints exist
+  // only on RW7 virtual controllers (404 on real hardware and on RW6).
+
+  private simAdapter(): RWS2Adapter {
+    if (!(this.adapter instanceof RWS2Adapter)) {
+      throw new RwsError('Simulation panel requires an OmniCore (RWS 2.0) virtual controller', 'UNKNOWN');
+    }
+    return this.adapter;
+  }
+
+  async simEmergencyStop(): Promise<void> { return this.simAdapter().simEmergencyStop(); }
+  async simResetEmergencyStop(): Promise<void> { return this.simAdapter().simResetEmergencyStop(); }
+  async simGeneralStop(engage = true): Promise<void> { return this.simAdapter().simGeneralStop(engage); }
+  async simAutoStop(engage = true): Promise<void> { return this.simAdapter().simAutoStop(engage); }
+  async simEnableSwitch(on: boolean): Promise<void> { return this.simAdapter().simEnableSwitch(on); }
+  async teleportMechunit(mechunit: string, joints: number[], extJoints?: number[]): Promise<void> {
+    return this.simAdapter().teleportMechunit(mechunit, joints, extJoints);
   }
 
   // ─── RAPID execution ────────────────────────────────────────────────────────

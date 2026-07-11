@@ -34,6 +34,10 @@ export type { RobotState, ChangeHandler, ProbeResult, DiscoveredController, Erro
 export { MultiRobotManager } from './MultiRobotManager.js';
 export type { RobotConfig } from './MultiRobotManager.js';
 
+// mDNS/Bonjour discovery (also reachable as RobotManager.discoverControllersMdns)
+export { discoverControllersMdns } from './MdnsDiscovery.js';
+export type { MdnsController, MdnsDiscoveryOptions } from './MdnsDiscovery.js';
+
 // Auto-detection helpers
 export { createClient, createAdapter, probeHost, probeProtocol } from './detect.js';
 export type { AnyClient, Protocol, ConnectOptions, ProbeResult as DetectProbeResult } from './detect.js';

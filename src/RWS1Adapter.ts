@@ -759,9 +759,46 @@ export class RWS1Adapter implements IRWSAdapter {
 
   // ── Stage 12: RAPID extras (4 methods) ─────────────────────────────────
 
+  /**
+   * Save a loaded module's program-memory source to controller disk.
+   * Live-verified 2026-07-09 on IRC5 VC RW6.16:
+   *   POST /rw/rapid/tasks/{task}?action=savemod is DEAD — 400 ARG_ERROR
+   *   (-1073445879, rws_resource_rapid_task.cpp[952]) for every body shape
+   *   including the empty body, and the task resource advertises no savemod
+   *   action. The working endpoint is the module-save action (same one
+   *   readModuleViaSave uses):
+   *     POST /rw/rapid/modules/{module}?task={task}&action=save
+   *     body name=<file>&path=<dir>  → 204
+   *   The controller blindly appends '.mod' to the given name — even when it
+   *   already ends in .mod (name=save1.mod wrote $TEMP/save1.mod.mod) — so a
+   *   trailing .mod/.sys extension on the destination is stripped here.
+   * `filepath` may be a directory ('$TEMP'), a full destination path
+   * ('$HOME/backups/Copy.mod'), or a bare file name ('Copy.mod', saved under
+   * $HOME); a directory destination saves under the module's own name.
+   */
   async saveModule(task: string, moduleName: string, filepath: string): Promise<void> {
-    await this.rws1Post(`/rw/rapid/tasks/${task}?action=savemod`,
-      `name=${encodeURIComponent(moduleName)}&filepath=${encodeURIComponent(filepath)}`);
+    const ext = /\.(mod|sys)$/i;
+    const clean = filepath.replace(/\/+$/, '');
+    const slash = clean.lastIndexOf('/');
+    const last = clean.slice(slash + 1);
+    let dir: string;
+    let name: string;
+    if (ext.test(last)) {
+      dir = slash >= 0 ? clean.slice(0, slash) : '$HOME';
+      name = last.replace(ext, '');
+    } else {
+      dir = clean || '$HOME';
+      name = moduleName.replace(ext, '');
+    }
+    // Encode per segment, keeping the $HOME/$TEMP root literal (the controller
+    // expects the $-prefix raw; everything after may contain space/#/%/&).
+    const encDir = dir.split('/')
+      .map((seg, i) => (i === 0 && seg.startsWith('$')) ? seg : encodeURIComponent(seg))
+      .join('/');
+    await this.rws1Post(
+      `/rw/rapid/modules/${encodeURIComponent(moduleName)}?task=${encodeURIComponent(task)}&action=save`,
+      `name=${encodeURIComponent(name)}&path=${encDir}`,
+    );
   }
 
   async getModuleSource(task: string, moduleName: string): Promise<string> {

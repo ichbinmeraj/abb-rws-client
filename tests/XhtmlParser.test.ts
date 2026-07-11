@@ -71,5 +71,64 @@ describe('XhtmlParser', () => {
     it('returns null when no error block is present', () => {
       expect(new XhtmlParser('<html/>').getError()).toBeNull();
     });
+
+    it('returns an empty msg when the error block has a code but no msg span', () => {
+      const xml = '<div class="status"><span class="code">-1073445859</span></div>';
+      expect(new XhtmlParser(xml).getError()).toEqual({ code: '-1073445859', msg: '' });
+    });
+
+    it('ignores positive code spans (ABB error codes are negative; positive codes appear in elog entries)', () => {
+      const xml = '<li class="elog-message-li"><span class="code">10205</span><span class="msg">not an error block</span></li>';
+      expect(new XhtmlParser(xml).getError()).toBeNull();
+    });
+
+    it('returns the first error block when several are present', () => {
+      const xml = `
+        <span class="code">-1073445862</span><span class="msg">first</span>
+        <span class="code">-1073445879</span><span class="msg">second</span>`;
+      expect(new XhtmlParser(xml).getError()).toEqual({ code: '-1073445862', msg: 'first' });
+    });
+
+    it('keeps HTML entities in msg undecoded and stops at the first tag', () => {
+      const xml = '<span class="code">-1073445879</span><span class="msg">path &quot;HOME/x.mod&quot; invalid</span>';
+      expect(new XhtmlParser(xml).getError()?.msg).toBe('path &quot;HOME/x.mod&quot; invalid');
+    });
+
+    it('extracts the error from a full RWS 2.0 response document with surrounding state', () => {
+      const xml = `<?xml version="1.0" encoding="utf-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <div class="state"><ul>
+          <li class="pnl-opmode"><span class="opmode">AUTO</span></li>
+        </ul></div>
+        <div class="status"><h3>Error</h3>
+          <span class="code">-1073445862</span>
+          <span class="msg">Requested resource is held by someone else</span>
+        </div></body></html>`;
+      const err = new XhtmlParser(xml).getError();
+      expect(err?.code).toBe('-1073445862');
+      expect(err?.msg).toContain('held by someone else');
+    });
+  });
+
+  describe('class-attribute matching (RWS 2.0 emits exact classes)', () => {
+    it('getAllStates requires an exact class match — extra class tokens do not match', () => {
+      const xml = `
+        <li class="rap-task-li selected"><span class="name">T_SKIP</span></li>
+        <li class="rap-task-li"><span class="name">T_ROB1</span></li>`;
+      const all = new XhtmlParser(xml).getAllStates('rap-task-li');
+      expect(all).toHaveLength(1);
+      expect(all[0].name).toBe('T_ROB1');
+    });
+
+    it('get returns an empty string for an empty span (not undefined)', () => {
+      expect(new XhtmlParser('<span class="dim"></span>').get('dim')).toBe('');
+    });
+
+    it('getAllStates skips spans that carry extra attributes (value capture is attribute-free)', () => {
+      const xml = '<li class="elog-message-li"><span class="arg1" type="string">SYS</span><span class="code">10205</span></li>';
+      const state = new XhtmlParser(xml).getState('elog-message-li');
+      expect(state.arg1).toBeUndefined();
+      expect(state.code).toBe('10205');
+    });
   });
 });

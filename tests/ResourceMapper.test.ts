@@ -1,18 +1,53 @@
 import { describe, it, expect } from 'vitest';
 import {
   controllerState,
+  setControllerState,
   operationMode,
+  speedRatio,
+  setSpeedRatio,
   rapidTasks,
   rapidExecutionState,
   startRapid,
   stopRapid,
   resetRapid,
+  setExecutionCycle,
+  collisionDetectionState,
+  restartController,
+  lockOperationMode,
+  unlockOperationMode,
+  activeUiInstruction,
+  setUiInstructionParam,
+  activateRapidTask,
+  deactivateRapidTask,
+  activateAllRapidTasks,
+  deactivateAllRapidTasks,
+  searchRapidSymbols,
+  validateRapidValue,
+  rapidSymbolProperties,
+  rapidSymbol,
+  setRapidSymbol,
   jointTarget,
   robTarget,
+  cartesianFull,
   loadModule,
   getModule,
   listModules,
   uploadFile,
+  systemInfo,
+  controllerIdentity,
+  clockInfo,
+  setControllerClock,
+  elogMessages,
+  clearElogDomain,
+  clearAllElogs,
+  deleteFile,
+  createDirectory,
+  copyFile,
+  requestMastership,
+  releaseMastership,
+  allSignals,
+  networks,
+  devices,
   signal,
   setSignal,
   subscriptions,
@@ -215,5 +250,219 @@ describe('ResourceMapper', () => {
       expect(fileServicePath('$HOME/plain.mod')).toBe('/fileservice/$HOME/plain.mod');
       expect(fileServicePath('$HOME/plain.mod')).not.toContain('%24');
     });
+  });
+});
+
+// ─── Remaining builders — table-driven URL/body checks ───────────────────────
+
+describe('ResourceMapper — path-only builders', () => {
+  const cases: Array<[string, string, string]> = [
+    ['speedRatio()',                    speedRatio(),                                   '/rw/panel/speedratio'],
+    ['collisionDetectionState()',       collisionDetectionState(),                      '/rw/panel/coldetstate'],
+    ['activeUiInstruction()',           activeUiInstruction(),                          '/rw/rapid/uiinstr/active'],
+    ['rapidSymbol(...)',                rapidSymbol('T_ROB1', 'user', 'reg1'),          '/rw/rapid/symbol/data/RAPID/T_ROB1/user/reg1'],
+    ['rapidSymbolProperties(...)',      rapidSymbolProperties('T_ROB1', 'user', 'reg1'), '/rw/rapid/symbol/properties/RAPID/T_ROB1/user/reg1'],
+    ['cartesianFull() default unit',    cartesianFull(),                                '/rw/motionsystem/mechunits/ROB_1/cartesian'],
+    ['cartesianFull(ROB_2)',            cartesianFull('ROB_2'),                         '/rw/motionsystem/mechunits/ROB_2/cartesian'],
+    ['systemInfo()',                    systemInfo(),                                   '/rw/system'],
+    ['controllerIdentity()',            controllerIdentity(),                           '/ctrl/identity'],
+    ['clockInfo()',                     clockInfo(),                                    '/ctrl/clock'],
+    ['elogMessages() defaults',         elogMessages(),                                 '/rw/elog/0?lang=en'],
+    ['elogMessages(2, de)',             elogMessages(2, 'de'),                          '/rw/elog/2?lang=de'],
+    ['allSignals() defaults',           allSignals(),                                   '/rw/iosystem/signals?start=0&limit=100'],
+    ['allSignals(200, 50)',             allSignals(200, 50),                            '/rw/iosystem/signals?start=200&limit=50'],
+    ['networks()',                      networks(),                                     '/rw/iosystem/networks'],
+    ['devices(Local)',                  devices('Local'),                               '/rw/iosystem/devices?network=Local'],
+    ['deleteFile($HOME/Old.mod)',       deleteFile('$HOME/Old.mod'),                    '/fileservice/$HOME/Old.mod'],
+  ];
+
+  it.each(cases)('%s → %s', (_name, actual, expected) => {
+    expect(actual).toBe(expected);
+  });
+
+  it('URL-encodes symbol path segments but keeps the RAPID prefix literal', () => {
+    expect(rapidSymbol('T ROB1', 'my mod', 'my var')).toBe(
+      '/rw/rapid/symbol/data/RAPID/T%20ROB1/my%20mod/my%20var',
+    );
+  });
+
+  it('URL-encodes the network name in devices()', () => {
+    expect(devices('My Net')).toBe('/rw/iosystem/devices?network=My%20Net');
+  });
+});
+
+describe('ResourceMapper — action builders (path + form body)', () => {
+  const cases: Array<[string, { path: string; body: string }, string, string]> = [
+    ['setControllerState(motoron)',   setControllerState('motoron'),  '/rw/panel/ctrlstate?action=setctrlstate', 'ctrl-state=motoron'],
+    ['setControllerState(motoroff)',  setControllerState('motoroff'), '/rw/panel/ctrlstate?action=setctrlstate', 'ctrl-state=motoroff'],
+    ['setExecutionCycle(once)',       setExecutionCycle('once'),      '/rw/rapid/execution?action=setcycle',     'cycle=once'],
+    ['setExecutionCycle(forever)',    setExecutionCycle('forever'),   '/rw/rapid/execution?action=setcycle',     'cycle=forever'],
+    ['setExecutionCycle(asis)',       setExecutionCycle('asis'),      '/rw/rapid/execution?action=setcycle',     'cycle=asis'],
+    ['restartController(restart)',    restartController('restart'),   '/rw/panel?action=restart',                'restart-mode=restart'],
+    ['restartController(istart)',     restartController('istart'),    '/rw/panel?action=restart',                'restart-mode=istart'],
+    ['restartController(pstart)',     restartController('pstart'),    '/rw/panel?action=restart',                'restart-mode=pstart'],
+    ['restartController(bstart)',     restartController('bstart'),    '/rw/panel?action=restart',                'restart-mode=bstart'],
+    ['unlockOperationMode()',         unlockOperationMode(),          '/rw/panel/opmode?action=unlock',          ''],
+    ['activateRapidTask(T_ROB2)',     activateRapidTask('T_ROB2'),    '/rw/rapid/tasks/T_ROB2?action=activate',  ''],
+    ['deactivateRapidTask(T_ROB2)',   deactivateRapidTask('T_ROB2'),  '/rw/rapid/tasks/T_ROB2?action=deactivate', ''],
+    ['activateAllRapidTasks()',       activateAllRapidTasks(),        '/rw/rapid/tasks?action=activate',         ''],
+    ['deactivateAllRapidTasks()',     deactivateAllRapidTasks(),      '/rw/rapid/tasks?action=deactivate',       ''],
+    ['requestMastership(cfg)',        requestMastership('cfg'),       '/rw/mastership/cfg?action=request',       ''],
+    ['requestMastership(motion)',     requestMastership('motion'),    '/rw/mastership/motion?action=request',    ''],
+    ['releaseMastership(rapid)',      releaseMastership('rapid'),     '/rw/mastership/rapid?action=release',     ''],
+    ['clearElogDomain() default',     clearElogDomain(),              '/rw/elog/0?action=clear',                 ''],
+    ['clearElogDomain(3)',            clearElogDomain(3),             '/rw/elog/3?action=clear',                 ''],
+    ['clearAllElogs()',               clearAllElogs(),                '/rw/elog?action=clearall',                ''],
+  ];
+
+  it.each(cases)('%s', (_name, actual, expectedPath, expectedBody) => {
+    expect(actual.path).toBe(expectedPath);
+    expect(actual.body).toBe(expectedBody);
+  });
+
+  it('URL-encodes the task name in per-task activation paths', () => {
+    expect(activateRapidTask('T ROB2').path).toBe('/rw/rapid/tasks/T%20ROB2?action=activate');
+  });
+});
+
+describe('setSpeedRatio', () => {
+  it('builds the setspeedratio action with the ratio in the body', () => {
+    expect(setSpeedRatio(42)).toEqual({
+      path: '/rw/panel/speedratio?action=setspeedratio',
+      body: 'speed-ratio=42',
+    });
+  });
+
+  it('clamps to 0–100', () => {
+    expect(setSpeedRatio(150).body).toBe('speed-ratio=100');
+    expect(setSpeedRatio(-10).body).toBe('speed-ratio=0');
+  });
+
+  it('rounds fractional ratios to integers', () => {
+    expect(setSpeedRatio(49.6).body).toBe('speed-ratio=50');
+    expect(setSpeedRatio(0.4).body).toBe('speed-ratio=0');
+  });
+});
+
+describe('lockOperationMode', () => {
+  it('sends pin and permanent=1 for a permanent lock', () => {
+    expect(lockOperationMode('1234', true)).toEqual({
+      path: '/rw/panel/opmode?action=lock',
+      body: 'pin=1234&permanent=1',
+    });
+  });
+
+  it('sends permanent=0 for a temporary lock', () => {
+    expect(lockOperationMode('1234', false).body).toBe('pin=1234&permanent=0');
+  });
+
+  it('URL-encodes the pin', () => {
+    expect(lockOperationMode('12&4', false).body).toBe('pin=12%264&permanent=0');
+  });
+});
+
+describe('setUiInstructionParam', () => {
+  it('percent-encodes the stack URL (including / % $) and the param name', () => {
+    const { path, body } = setUiInstructionParam('RAPID/T_ROB1/%$104', 'Result', '42');
+    expect(path).toBe(
+      '/rw/rapid/uiinstr/active/param/RAPID%2FT_ROB1%2F%25%24104/Result?action=set',
+    );
+    expect(body).toBe('value=42');
+  });
+
+  it('percent-encodes the value', () => {
+    expect(setUiInstructionParam('s', 'Result', 'a b&c').body).toBe('value=a%20b%26c');
+  });
+});
+
+describe('setRapidSymbol', () => {
+  it('appends ?action=set to the symbol data path', () => {
+    const { path } = setRapidSymbol('T_ROB1', 'user', 'reg1', '42');
+    expect(path).toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/user/reg1?action=set');
+  });
+
+  it('percent-encodes RAPID-syntax values (quotes, brackets, spaces)', () => {
+    expect(setRapidSymbol('T_ROB1', 'user', 's1', '"hello world"').body).toBe(
+      'value=%22hello%20world%22',
+    );
+    expect(setRapidSymbol('T_ROB1', 'user', 'p1', '[1,0,0,0]').body).toBe(
+      'value=%5B1%2C0%2C0%2C0%5D',
+    );
+  });
+});
+
+describe('searchRapidSymbols', () => {
+  it('builds a minimal body from the required task param', () => {
+    expect(searchRapidSymbols({ task: 'T_ROB1' })).toEqual({
+      path: '/rw/rapid/symbols?action=search-symbol',
+      body: 'task=T_ROB1',
+    });
+  });
+
+  it('appends optional filters in a stable order with recursive last', () => {
+    const { body } = searchRapidSymbols({
+      task: 'T_ROB1',
+      view: 'block',
+      vartyp: 'num',
+      symtyp: 'per',
+      dattyp: 'num',
+      regexp: '^my',
+      blockurl: 'RAPID/T_ROB1',
+      recursive: true,
+    });
+    expect(body).toBe(
+      'task=T_ROB1&view=block&vartyp=num&symtyp=per&dattyp=num&regexp=%5Emy&blockurl=RAPID%2FT_ROB1&recursive=true',
+    );
+  });
+
+  it('includes recursive=false explicitly but omits it when undefined', () => {
+    expect(searchRapidSymbols({ task: 'T1', recursive: false }).body).toBe('task=T1&recursive=false');
+    expect(searchRapidSymbols({ task: 'T1' }).body).not.toContain('recursive');
+  });
+});
+
+describe('validateRapidValue', () => {
+  it('builds the validate action with task, value, and datatype encoded', () => {
+    expect(validateRapidValue('T_ROB1', '[1,2,3]', 'robtarget')).toEqual({
+      path: '/rw/rapid/symbol/data?action=validate',
+      body: 'task=T_ROB1&value=%5B1%2C2%2C3%5D&datatype=robtarget',
+    });
+  });
+});
+
+describe('setControllerClock', () => {
+  it('builds a PUT to /ctrl/clock with all six sys-clock fields', () => {
+    expect(setControllerClock(2026, 7, 9, 12, 30, 5)).toEqual({
+      path: '/ctrl/clock',
+      body: 'sys-clock-year=2026&sys-clock-month=7&sys-clock-day=9&sys-clock-hour=12&sys-clock-min=30&sys-clock-sec=5',
+      method: 'PUT',
+    });
+  });
+});
+
+describe('copyFile', () => {
+  it('POSTs to the SOURCE path with fs-action=copy and a bare-filename fs-newname', () => {
+    expect(copyFile('$HOME/Source.mod', '$HOME/Copy.mod')).toEqual({
+      path: '/fileservice/$HOME/Source.mod',
+      body: 'fs-action=copy&fs-newname=Copy.mod',
+    });
+  });
+
+  it('strips directory components from the destination (same-directory-only copy)', () => {
+    expect(copyFile('$HOME/A.mod', '$HOME/Backup/A.mod').body).toBe('fs-action=copy&fs-newname=A.mod');
+    expect(copyFile('$HOME/A.mod', 'C:\\temp\\B.mod').body).toBe('fs-action=copy&fs-newname=B.mod');
+  });
+
+  it('percent-encodes the new filename', () => {
+    expect(copyFile('$HOME/A.mod', '$HOME/My Copy.mod').body).toBe(
+      'fs-action=copy&fs-newname=My%20Copy.mod',
+    );
+  });
+});
+
+describe('createDirectory', () => {
+  it('targets the parent directory fileservice path (body supplied by the caller)', () => {
+    expect(createDirectory('$HOME')).toEqual({ path: '/fileservice/$HOME' });
+    expect(createDirectory('$HOME/sub dir')).toEqual({ path: '/fileservice/$HOME/sub%20dir' });
   });
 });

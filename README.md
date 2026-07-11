@@ -250,6 +250,8 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **`getModuleSource(task, name)`** — pull a module's RAPID text in one call. Works even when the module has no backing file in `HOME` (loaded from `.pgf`/RobotStudio/pendant): the client saves it to the controller's TEMP volume, reads it, and deletes it.
 - **`compressPath(source, dest)`** — controller-side compression.
 - **`validateRapidValue(task, value, datatype)`** — pre-flight a literal before writing.
+- **`RobotManager.discoverControllersMdns(opts?)`** *(static)* — find every ABB controller (real or virtual) announcing on the local network via mDNS/Bonjour. Returns system name, host, RWS port, RobotWare version, system GUID, and a `'rws1' | 'rws2'` classification — no port scanning needed.
+- **Simulation panel** *(RWS 2.0 virtual controllers only)* — `simEmergencyStop()`, `simResetEmergencyStop()`, `simGeneralStop(engage?)`, `simAutoStop(engage?)`, `simEnableSwitch(on)`, `teleportMechunit(mechunit, joints, extJoints?)`. Drive the E-stop / guard-stop chain and reposition the simulated robot from the API. Throw `RwsError` on real hardware and RW6 (VC-only endpoints).
 
 Every method returns `Promise<...>` and throws `RwsError` on failure.
 

@@ -104,6 +104,46 @@ describe('RWS1Adapter cfg instance writes', () => {
   });
 });
 
+// ─── saveModule (live-verified wire shape, IRC5 VC RW6.16) ───────────────────
+
+describe('RWS1Adapter.saveModule', () => {
+  it('POSTs the module-save action when given a directory (savemod on the task resource is dead)', async () => {
+    const { calls, client } = makeFake();
+    const adapter = new RWS1Adapter(client);
+    await adapter.saveModule('T_ROB1', 'MainModule', '$TEMP');
+
+    const whats = calls.map(c => c.what);
+    const idx = whats.indexOf('POST /rw/rapid/modules/MainModule?task=T_ROB1&action=save&json=1');
+    expect(idx).toBeGreaterThan(-1);
+    expect(calls[idx].body).toBe('name=MainModule&path=$TEMP');
+  });
+
+  it('splits a full destination path and strips the extension the controller re-appends', async () => {
+    const { calls, client } = makeFake();
+    const adapter = new RWS1Adapter(client);
+    await adapter.saveModule('T_ROB1', 'MainModule', '$HOME/backups/copy.mod');
+
+    const post = calls.find(c => c.what.startsWith('POST'));
+    expect(post?.what).toBe('POST /rw/rapid/modules/MainModule?task=T_ROB1&action=save&json=1');
+    expect(post?.body).toBe('name=copy&path=$HOME/backups');
+  });
+
+  it('defaults the directory to $HOME for a bare file name and strips .sys too', async () => {
+    const { calls, client } = makeFake();
+    const adapter = new RWS1Adapter(client);
+    await adapter.saveModule('T_ROB1', 'SysMod1', 'SysMod1.sys');
+
+    const post = calls.find(c => c.what.startsWith('POST'));
+    expect(post?.body).toBe('name=SysMod1&path=$HOME');
+  });
+
+  it('surfaces HTTP errors from the save action', async () => {
+    const { client } = makeFake((m) => m === 'POST' ? { status: 400, body: '' } : undefined);
+    const adapter = new RWS1Adapter(client);
+    await expect(adapter.saveModule('T_ROB1', 'MainModule', '$TEMP')).rejects.toThrow();
+  });
+});
+
 // ─── subscribe() accepts the optional onLost parameter ───────────────────────
 
 describe('RWS1Adapter.subscribe', () => {

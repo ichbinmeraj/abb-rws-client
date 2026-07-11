@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as https from 'node:https';
 import { RobotManager } from '../src/RobotManager.js';
 import { MultiRobotManager } from '../src/MultiRobotManager.js';
+import * as MdnsDiscovery from '../src/MdnsDiscovery.js';
 import { RWS1Adapter } from '../src/RWS1Adapter.js';
 import { RWS2Adapter } from '../src/RWS2Adapter.js';
 import { RwsClient } from '../src/RwsClient.js';
@@ -13,6 +14,13 @@ import { RwsClient } from '../src/RwsClient.js';
 // namespace is frozen under vitest, so vi.spyOn(fs, ...) needs this indirection.
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual };
+});
+
+// Same indirection for the mDNS module, so the delegation test can spy on it
+// without sending real multicast queries.
+vi.mock('../src/MdnsDiscovery.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/MdnsDiscovery.js')>();
   return { ...actual };
 });
 
@@ -311,6 +319,41 @@ describe('RobotManager polling vs disconnect', () => {
   });
 });
 
+describe('RobotManager simulation panel wrappers', () => {
+  it('delegates to the RWS 2.0 adapter', async () => {
+    const mgr = new RobotManager();
+    const calls: Array<[string, unknown[]]> = [];
+    const fake = Object.create(RWS2Adapter.prototype);
+    for (const m of ['simEmergencyStop', 'simResetEmergencyStop', 'simGeneralStop', 'simAutoStop']) {
+      fake[m] = async () => { calls.push([m, []]); };
+    }
+    fake.simEnableSwitch = async (on: boolean) => { calls.push(['simEnableSwitch', [on]]); };
+    fake.teleportMechunit = async (...a: unknown[]) => { calls.push(['teleportMechunit', a]); };
+    (mgr as any).adapter = fake;
+
+    await mgr.simEmergencyStop();
+    await mgr.simResetEmergencyStop();
+    await mgr.simGeneralStop();
+    await mgr.simAutoStop();
+    await mgr.simEnableSwitch(true);
+    await mgr.teleportMechunit('ROB_1', [10, 0, 0, 0, 0, 0]);
+
+    expect(calls.map(c => c[0])).toEqual([
+      'simEmergencyStop', 'simResetEmergencyStop', 'simGeneralStop', 'simAutoStop',
+      'simEnableSwitch', 'teleportMechunit',
+    ]);
+    expect(calls[4][1]).toEqual([true]);
+    expect(calls[5][1]).toEqual(['ROB_1', [10, 0, 0, 0, 0, 0], undefined]);
+  });
+
+  it('rejects with a clear error on an RWS 1.0 connection', async () => {
+    const mgr = new RobotManager();
+    (mgr as any).adapter = makeFakeAdapter();
+    await expect(mgr.simEmergencyStop()).rejects.toThrow(/OmniCore|RWS 2\.0/);
+    await expect(mgr.teleportMechunit('ROB_1', [0, 0, 0, 0, 0, 0])).rejects.toThrow(/OmniCore|RWS 2\.0/);
+  });
+});
+
 describe('RobotManager subscription loss fallback', () => {
   let mgr: RobotManager | null = null;
 
@@ -573,5 +616,25 @@ describe('RobotManager strictTls option', () => {
     await mgr.connect('vc-omni', 'u', 'p', 443);
     expect(rws2CtorArgs).toHaveLength(1);
     expect(rws2CtorArgs[0][3]).toMatchObject({ rejectUnauthorized: false });
+  });
+});
+
+describe('RobotManager.discoverControllersMdns', () => {
+  it('delegates to the mDNS discovery module, passing timeoutMs through', async () => {
+    const sample = [{
+      instanceName: 'RobotWebServices_Omni1', systemName: 'Omni1',
+      host: '127.0.0.1', port: 5466, probableProtocol: 'rws2' as const,
+    }];
+    const spy = vi.spyOn(MdnsDiscovery, 'discoverControllersMdns').mockResolvedValue(sample);
+    try {
+      const found = await RobotManager.discoverControllersMdns({ timeoutMs: 123 });
+      expect(found).toEqual(sample);
+      expect(spy).toHaveBeenCalledWith({ timeoutMs: 123 });
+
+      await RobotManager.discoverControllersMdns();
+      expect(spy).toHaveBeenLastCalledWith(undefined);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

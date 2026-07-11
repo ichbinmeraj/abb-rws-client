@@ -1,6 +1,7 @@
 import * as https from 'https';
 import * as http from 'http';
 import { XhtmlParser } from './XhtmlParser.js';
+import { HalJsonParser } from './HalJsonParser.js';
 import { Logger } from './Logger.js';
 import { RwsError, type RwsErrorCode } from './types.js';
 import type {
@@ -23,7 +24,10 @@ import type {
  * Key differences vs RWS 1.0 (all confirmed by live virtual-controller probing):
  * - HTTP Basic auth instead of Digest
  * - Path-based actions: /rw/rapid/execution/stop (not ?action=stop)
- * - XHTML responses only (Accept: application/xhtml+xml;v=2.0)
+ * - GETs are negotiated as HAL JSON (Accept: application/hal+json;v=2.0 —
+ *   live-verified 2026-07-09 on RW7.21 for every GET family) with an automatic
+ *   per-instance fallback to application/xhtml+xml;v=2.0 for older RW7
+ *   releases; form-POST responses and subscription events are XHTML-only
  * - Mastership domains: 'edit' replaces both 'cfg' and 'rapid'
  * - FileService home: 'HOME' not '$HOME'
  * - Self-signed TLS on all shipping controllers → verification is OFF by default;
@@ -69,9 +73,40 @@ export class RwsClient2 {
 
   // ─── HTTP transport ────────────────────────────────────────────────────────
 
+  /** Primary GET representation. Officially supported on RWS 2.0; live-verified
+   *  2026-07-09 on OmniCore VC RW7.21 for every GET endpoint family in this client. */
+  private static readonly ACCEPT_HAL = 'application/hal+json;v=2.0';
+  /** Representation for writes, fileservice, subscriptions, and the fallback GET path. */
+  private static readonly ACCEPT_XHTML = 'application/xhtml+xml;v=2.0';
+
+  /** Set once a controller rejects hal+json (HTTP 406 or a non-JSON reply to a
+   *  hal+json GET) — older RW7 releases predate HAL JSON. All subsequent GETs on
+   *  this instance then go straight to XHTML instead of re-negotiating each time. */
+  private preferXhtml = false;
+
+  /** GET paths that must keep the XHTML Accept: fileservice serves raw file bytes
+   *  (a content-type-based negotiation retry would double every file read, and the
+   *  service rejects some Accept values), and /logout's body is ignored anyway. */
+  private static isXhtmlOnlyPath(path: string): boolean {
+    return path.startsWith('/fileservice') || path === '/logout';
+  }
+
+  /** Picks the parser for a response body: HAL JSON (primary GET representation)
+   *  or XHTML (fallback GETs, form-POST responses). Both expose the same reads. */
+  private static parse(body: string): XhtmlParser | HalJsonParser {
+    return HalJsonParser.looksLikeJson(body) ? new HalJsonParser(body) : new XhtmlParser(body);
+  }
+
+  /** Error block from either representation (JSON status.code/msg or XHTML spans). */
+  private static extractError(body: string): { code: string; msg: string } | null {
+    return RwsClient2.parse(body).getError();
+  }
+
   /**
    * Core HTTP request. acceptExtra lists additional success status codes beyond 200/204.
    * Used by subscribe() to accept HTTP 201 (Created) from POST /subscription.
+   * acceptOverride pins the Accept header for callers that must not negotiate
+   * (e.g. getDeviceTree, which promises a raw XHTML document).
    */
   private async req(
     method: string,
@@ -80,6 +115,7 @@ export class RwsClient2 {
     rawBody?: string,
     rawContentType?: string,
     acceptExtra: number[] = [],
+    acceptOverride?: string,
   ): Promise<string> {
     const wait = RwsClient2.MIN_MS - (Date.now() - this.lastReqTime);
     if (wait > 0) { await new Promise(r => setTimeout(r, wait)); }
@@ -91,6 +127,11 @@ export class RwsClient2 {
     // RWS 2.0 requires Content-Type on all POST/PUT/DELETE requests, even with no body
     // (mastership and a few other endpoints return HTTP 406 without it).
     const writingMethod = method === 'POST' || method === 'PUT' || method === 'DELETE';
+    // GETs negotiate HAL JSON; writes stay XHTML (form-POST responses are XHTML-only).
+    const wantsHal = method === 'GET' && !this.preferXhtml
+      && !acceptOverride && !RwsClient2.isXhtmlOnlyPath(path);
+    const accept = acceptOverride
+      ?? (wantsHal ? RwsClient2.ACCEPT_HAL : RwsClient2.ACCEPT_XHTML);
     const options: http.RequestOptions & { agent?: https.Agent | http.Agent; rejectUnauthorized?: boolean } = {
       method,
       hostname: url.hostname,
@@ -98,7 +139,7 @@ export class RwsClient2 {
       path: url.pathname + url.search,
       headers: {
         Authorization: this.authHeader,
-        Accept: 'application/xhtml+xml;v=2.0',
+        Accept: accept,
         ...(this.sessionCookie ? { Cookie: this.sessionCookie } : {}),
         ...(writingMethod ? {
           'Content-Type':   rawContentType ?? 'application/x-www-form-urlencoded;v=2.0',
@@ -141,12 +182,27 @@ export class RwsClient2 {
             Logger.trace?.('http.res', `RWS2 ${method} ${path} → 204`, { protocol: 'rws2', method, path, status, durationMs });
             resolve(''); return;
           }
+          // HAL JSON negotiation fallback: a controller predating hal+json either
+          // rejects the Accept outright (406) or ignores it and answers XHTML.
+          // Retry this one request as XHTML and remember the preference so every
+          // later GET on this instance skips the failed negotiation.
+          if (wantsHal) {
+            const contentType = String(res.headers['content-type'] ?? '');
+            if (status === 406 || (status < 400 && !/json/i.test(contentType))) {
+              this.preferXhtml = true;
+              Logger.trace?.('http.res', `RWS2 ${method} ${path} → ${status} (hal+json not served — falling back to XHTML for this client)`, {
+                protocol: 'rws2', method, path, status, durationMs, contentType,
+              });
+              resolve(this.req(method, path, body, rawBody, rawContentType, acceptExtra));
+              return;
+            }
+          }
           if (acceptExtra.includes(status)) {
             Logger.trace?.('http.res', `RWS2 ${method} ${path} → ${status}`, { protocol: 'rws2', method, path, status, durationMs, bodyPreview: raw.slice(0, 200) });
             resolve(raw); return;
           }
           if (status >= 400) {
-            const err = new XhtmlParser(raw).getError();
+            const err = RwsClient2.extractError(raw);
             Logger.trace?.('http.err', `RWS2 ${method} ${path} → ${status}`, { protocol: 'rws2', method, path, status, durationMs, errCode: err?.code, errMsg: err?.msg, bodyPreview: raw.slice(0, 300) });
             const code: RwsErrorCode =
               status === 401 ? 'AUTH_FAILED' :
@@ -195,7 +251,7 @@ export class RwsClient2 {
   // ─── Panel ─────────────────────────────────────────────────────────────────
 
   async getControllerState(): Promise<ControllerState> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/panel/ctrl-state'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/ctrl-state'));
     return (p.getState('pnl-ctrlstate')['ctrlstate'] ?? 'init') as ControllerState;
   }
 
@@ -204,12 +260,12 @@ export class RwsClient2 {
   }
 
   async getOperationMode(): Promise<OperationMode> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/panel/opmode'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/opmode'));
     return (p.getState('pnl-opmode')['opmode'] ?? 'MANR') as OperationMode;
   }
 
   async getSpeedRatio(): Promise<number> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/panel/speedratio'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/speedratio'));
     return Number(p.getState('pnl-speedratio')['speedratio'] ?? 100);
   }
 
@@ -236,7 +292,7 @@ export class RwsClient2 {
   }
 
   async getCollisionDetectionState(): Promise<CollisionDetectionState> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/panel/coldetstate'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/coldetstate'));
     return (p.getState('pnl-coldetstate')['coldetstate'] ?? 'INIT') as CollisionDetectionState;
   }
 
@@ -284,12 +340,12 @@ export class RwsClient2 {
   // ─── RAPID execution ────────────────────────────────────────────────────────
 
   async getRapidExecutionState(): Promise<ExecutionState> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/rapid/execution'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/execution'));
     return (p.getState('rap-execution')['ctrlexecstate'] ?? 'stopped') as ExecutionState;
   }
 
   async getRapidExecutionInfo(): Promise<ExecutionInfo> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/rapid/execution'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/execution'));
     // Live: <li class="rap-execution"><span class="ctrlexecstate">stopped</span><span class="cycle">forever</span>
     const d = p.getState('rap-execution');
     return {
@@ -318,7 +374,7 @@ export class RwsClient2 {
   }
 
   async getRapidTasks(): Promise<RapidTask[]> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/rapid/tasks'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/tasks'));
     return p.getAllStates('rap-task-li').map(t => ({
       name:       t['name'] ?? '',
       type:       t['type'] ?? 'normal',
@@ -375,7 +431,7 @@ export class RwsClient2 {
   // ─── RAPID modules & variables ──────────────────────────────────────────────
 
   async listModules(task: string): Promise<string[]> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/modules`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/modules`));
     return p.getAllStates('rap-module-info-li').map(m => m['name']).filter(Boolean) as string[];
   }
 
@@ -384,7 +440,7 @@ export class RwsClient2 {
    * Single round-trip — same endpoint as `listModules` but exposes more fields.
    */
   async listModulesDetailed(task: string): Promise<Array<{ name: string; type: string }>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/modules`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/modules`));
     return p.getAllStates('rap-module-info-li')
       .map(m => ({ name: m['name'] ?? '', type: m['type'] ?? '' }))
       .filter(m => m.name);
@@ -412,7 +468,7 @@ export class RwsClient2 {
   async getRapidVariable(task: string, module: string, symbol: string): Promise<string> {
     // RWS 2.0 symbol API: suffix-style — /rw/rapid/symbol/{symburl}/data
     // (RWS 1.0 puts /data at the front: /rw/rapid/symbol/data/{symburl})
-    const p = new XhtmlParser(
+    const p = RwsClient2.parse(
       await this.req('GET', `/rw/rapid/symbol/RAPID/${task}/${module}/${symbol}/data`)
     );
     return p.get('value') ?? '';
@@ -435,7 +491,7 @@ export class RwsClient2 {
   }
 
   async getRapidSymbolProperties(task: string, module: string, symbol: string): Promise<RapidSymbolProperties> {
-    const p = new XhtmlParser(
+    const p = RwsClient2.parse(
       await this.req('GET', `/rw/rapid/symbol/RAPID/${task}/${module}/${symbol}/properties`)
     );
     const d = p.getState('rap-sympropvar') || p.getState('rap-sympropvar-li') || p.getState('rap-symbol-properties');
@@ -492,7 +548,7 @@ export class RwsClient2 {
     ];
     const out: RapidSymbolInfo[] = [];
     for (const cls of liClasses) {
-      const p = new XhtmlParser(xhtml);
+      const p = RwsClient2.parse(xhtml);
       for (const s of p.getAllStates(cls)) {
         out.push({
           symburl: s['symburl'] ?? '',
@@ -511,7 +567,7 @@ export class RwsClient2 {
 
   async getActiveUiInstruction(): Promise<UiInstruction | null> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/rw/rapid/uiinstr/active'));
+      const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/uiinstr/active'));
       const d = p.getState('rap-uiinstr-li') || p.getState('rap-uiinstr');
       if (!d['instr']) { return null; }
       return { instr: d['instr'], event: d['event'] ?? '', stack: d['stack'] ?? '', execlv: d['execlv'] ?? '', msg: d['msg'] ?? '' };
@@ -530,7 +586,7 @@ export class RwsClient2 {
   // ─── Motion ─────────────────────────────────────────────────────────────────
 
   async getJointPositions(mechunit = 'ROB_1'): Promise<JointTarget> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/jointtarget`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/jointtarget`));
     const d = p.getState('ms-jointtarget');
     return {
       rax_1: +d['rax_1'], rax_2: +d['rax_2'], rax_3: +d['rax_3'],
@@ -539,7 +595,7 @@ export class RwsClient2 {
   }
 
   async getCartesianFull(mechunit = 'ROB_1'): Promise<CartesianFull> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/cartesian`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/cartesian`));
     // Live: cf1/cf4/cf6/cfx in RWS 2.0 map to j1/j4/j6/jx in CartesianFull type
     const d = p.getState('ms-mechunit-cartesian');
     return {
@@ -550,7 +606,7 @@ export class RwsClient2 {
   }
 
   async listMechunits(): Promise<string[]> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/motionsystem/mechunits'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/motionsystem/mechunits'));
     // Live: <li class="ms-mechunit-li" title="ROB_1">
     return p.getAllStates('ms-mechunit-li')
       .map(m => m['_title'])
@@ -560,20 +616,24 @@ export class RwsClient2 {
   // ─── System info ─────────────────────────────────────────────────────────────
 
   async getSystemInfo(): Promise<SystemInfo> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/system'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/system'));
     const d = p.getState('sys-system');
-    const opts = p.getAllStates('sys-option').map(o => o['option']).filter(Boolean) as string[];
+    // Type-name drift between representations (live-verified 2026-07-09, RW7.21):
+    // XHTML lists options as class="sys-option"; HAL JSON nests them under the
+    // sys-options-li resource as _type="sys-options". Collect both.
+    const opts = [...p.getAllStates('sys-option'), ...p.getAllStates('sys-options')]
+      .map(o => o['option']).filter(Boolean) as string[];
     return { name: d['name'] ?? '', rwVersion: d['rwversion'] ?? '', sysid: d['sysid'] ?? '', startTime: d['starttm'] ?? '', options: opts };
   }
 
   async getControllerIdentity(): Promise<ControllerIdentity> {
-    const p = new XhtmlParser(await this.req('GET', '/ctrl/identity'));
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/identity'));
     const d = p.getState('ctrl-identity-info');
     return { name: d['ctrl-name'] ?? '', id: '', type: d['ctrl-type'] ?? '', mac: '' };
   }
 
   async getControllerClock(): Promise<ControllerClock> {
-    const p = new XhtmlParser(await this.req('GET', '/ctrl/clock'));
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/clock'));
     return { datetime: p.getState('ctrl-clock-info')['datetime'] ?? '' };
   }
 
@@ -597,7 +657,7 @@ export class RwsClient2 {
 
   async getEventLog(domain = 0): Promise<ElogMessage[]> {
     // lang=en required to get title/desc/causes/actions (confirmed by live probe)
-    const p = new XhtmlParser(await this.req('GET', `/rw/elog/${domain}?lang=en`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/elog/${domain}?lang=en`));
     return p.getAllStates('elog-message-li').map(m => {
       const parts = (m['_title'] ?? '').split('/');
       return {
@@ -627,7 +687,7 @@ export class RwsClient2 {
   // ─── I/O signals ─────────────────────────────────────────────────────────────
 
   async listAllSignals(start = 0, limit = 200): Promise<Signal[]> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/iosystem/signals?start=${start}&limit=${limit}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/iosystem/signals?start=${start}&limit=${limit}`));
     return p.getAllStates('ios-signal-li').map(s => {
       const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
       const parts = (s['_title'] ?? '').split('/');
@@ -637,7 +697,7 @@ export class RwsClient2 {
   }
 
   async readSignal(network: string, device: string, name: string): Promise<Signal> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/iosystem/signals/${network}/${device}/${name}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/iosystem/signals/${network}/${device}/${name}`));
     const d = p.getState('ios-signal-li');
     return { name: d['name'] ?? name, value: d['lvalue'] ?? '0', type: (d['type'] ?? 'DI') as Signal['type'], lvalue: d['lvalue'] ?? '0' };
   }
@@ -659,7 +719,7 @@ export class RwsClient2 {
   }
 
   async listNetworks(): Promise<IoNetwork[]> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/iosystem/networks'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/iosystem/networks'));
     // Live: <li class="ios-network-li" title="IntegratedIONetwork">
     //   <span class="name">IntegratedIONetwork</span><span class="pstate">running</span><span class="lstate">started</span>
     return p.getAllStates('ios-network-li').map(n => ({
@@ -670,7 +730,7 @@ export class RwsClient2 {
   }
 
   async listDevices(network: string): Promise<IoDevice[]> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/iosystem/devices?network=${encodeURIComponent(network)}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/iosystem/devices?network=${encodeURIComponent(network)}`));
     // Live: <li class="ios-device-li" title="IntBus/EPanel">
     //   <span class="name">EPanel</span><span class="lstate">enabled</span><span class="pstate">running</span><span class="address"></span>
     return p.getAllStates('ios-device-li').map(d => ({
@@ -692,7 +752,7 @@ export class RwsClient2 {
   }
 
   async listDirectory(path: string): Promise<FileEntry[]> {
-    const p = new XhtmlParser(await this.req('GET', `/fileservice/${this.rws2Path(path)}`));
+    const p = RwsClient2.parse(await this.req('GET', `/fileservice/${this.rws2Path(path)}`));
     const dirs  = p.getAllStates('fs-dir').map(d => ({ name: d['_title'] ?? '', type: 'dir' as const, modified: d['fs-mdate'] }));
     const files = p.getAllStates('fs-file').map(f => ({ name: f['_title'] ?? '', type: 'file' as const, size: f['fs-size'] ? +f['fs-size'] : undefined, created: f['fs-cdate'], modified: f['fs-mdate'], readonly: f['fs-readonly'] === 'true' }));
     return [...dirs, ...files];
@@ -730,8 +790,24 @@ export class RwsClient2 {
   // ─── Configuration database `/rw/cfg` ───────────────────────────────────────
 
   async listCfgDomains(): Promise<string[]> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/cfg'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/cfg'));
     return p.getAllStates('cfg-domain-li').map(d => d['_title'] ?? d['name']).filter(Boolean) as string[];
+  }
+
+  /**
+   * Next-page path from a paginated list response, resolved relative to the
+   * parent of the current request path (matches the controller's relative
+   * hrefs; live-verified on the XHTML `rel="next"` links and, 2026-07-09 on
+   * RW7.21, on the HAL `_links.next.href` form). Both representations XML-escape
+   * ampersands in the href — even inside JSON strings — hence the unescape.
+   * Returns '' when there is no further page.
+   */
+  private static nextPagePath(responseBody: string, currentPath: string): string {
+    const rel = HalJsonParser.looksLikeJson(responseBody)
+      ? new HalJsonParser(responseBody).nextHref()
+      : responseBody.match(/<a\s+href="([^"]+)"\s+rel="next"/)?.[1];
+    if (!rel) { return ''; }
+    return currentPath.replace(/[^/]*$/, '') + rel.replace(/&amp;/g, '&');
   }
 
   async listCfgTypes(domain: string): Promise<string[]> {
@@ -743,15 +819,9 @@ export class RwsClient2 {
     let pages = 0;
     while (path && pages < 50) {
       const html = await this.req('GET', path);
-      const p = new XhtmlParser(html);
+      const p = RwsClient2.parse(html);
       types.push(...p.getAllStates('cfg-dt-li').map(t => t['_title'] ?? t['name']).filter(Boolean) as string[]);
-      const nextMatch = html.match(/<a\s+href="([^"]+)"\s+rel="next"/);
-      if (nextMatch) {
-        const rel = nextMatch[1].replace(/&amp;/g, '&');
-        // Resolve relative to the parent of the current path (controller's <base href> is /rw/cfg/).
-        const parent = path.replace(/[^/]*$/, '');
-        path = parent + rel;
-      } else { path = ''; }
+      path = RwsClient2.nextPagePath(html, path);
       pages++;
     }
     return types;
@@ -770,14 +840,9 @@ export class RwsClient2 {
       let html: string;
       try { html = await this.req('GET', path); }
       catch { return instances; } // invalid type or no permission — silent empty
-      const p = new XhtmlParser(html);
+      const p = RwsClient2.parse(html);
       instances.push(...p.getAllStates('cfg-dt-instance-li').map(i => i['_title'] ?? '').filter(Boolean));
-      const nextMatch = html.match(/<a\s+href="([^"]+)"\s+rel="next"/);
-      if (nextMatch) {
-        const rel = nextMatch[1].replace(/&amp;/g, '&');
-        const parent = path.replace(/[^/]*$/, '');
-        path = parent + rel;
-      } else { path = ''; }
+      path = RwsClient2.nextPagePath(html, path);
       pages++;
     }
     return instances;
@@ -788,7 +853,7 @@ export class RwsClient2 {
     // Returns an outer cfg-dt-instance li with NESTED cfg-ia-t li elements.
     // Each attribute: <li class="cfg-ia-t" title="ATTR_NAME"><span class="value">VALUE</span></li>
     const html = await this.req('GET', `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}`);
-    const p = new XhtmlParser(html);
+    const p = RwsClient2.parse(html);
     const attribs = p.getAllStates('cfg-ia-t');
     const result: Record<string, string> = {};
     for (const attr of attribs) {
@@ -859,7 +924,7 @@ export class RwsClient2 {
   async listBackups(): Promise<Array<{ name: string; created?: string; size?: number }>> {
     // Backups live under /fileservice/BACKUP — list that volume
     try {
-      const p = new XhtmlParser(await this.req('GET', '/fileservice/BACKUP'));
+      const p = RwsClient2.parse(await this.req('GET', '/fileservice/BACKUP'));
       return p.getAllStates('fs-dir').map(d => ({
         name: d['_title'] ?? '',
         created: d['fs-cdate'],
@@ -876,7 +941,7 @@ export class RwsClient2 {
   }
 
   async getBackupStatus(): Promise<{ active: boolean; progress?: number; phase?: string }> {
-    const p = new XhtmlParser(await this.req('GET', '/ctrl/backup'));
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/backup'));
     const d = p.getState('ctrl-backup-info-li') || p.getState('ctrl-backup-info');
     const phase = d['progress-state'] ?? d['phase'] ?? '';
     return {
@@ -891,19 +956,19 @@ export class RwsClient2 {
   // setting requires updating the active task's tooldata/wobjdata RAPID symbols.
 
   async getActiveTool(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
     const d = p.getState('ms-mechunit');
     return { name: d['tool-name'] ?? 'tool0' };
   }
 
   async getActiveWobj(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
     const d = p.getState('ms-mechunit');
     return { name: d['wobj-name'] ?? 'wobj0' };
   }
 
   async getActivePayload(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
     const d = p.getState('ms-mechunit');
     return { name: d['total-payload-name'] ?? d['payload-name'] ?? 'load0' };
   }
@@ -925,7 +990,7 @@ export class RwsClient2 {
   // ─── DIPC `/rw/dipc` ───────────────────────────────────────────────────────
 
   async listDipcQueues(): Promise<Array<{ name: string; size?: number }>> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/dipc'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/dipc'));
     return p.getAllStates('dipc-queue-li').map(q => ({
       name: q['queue-name'] ?? q['_title'] ?? '',
       size: q['queue-size'] ? +q['queue-size'] : undefined,
@@ -950,7 +1015,7 @@ export class RwsClient2 {
 
   async readDipcMessage(queue: string, timeoutMs = 0): Promise<{ payload: string; type: string } | null> {
     try {
-      const p = new XhtmlParser(await this.req('POST', `/rw/dipc/${encodeURIComponent(queue)}/read`, {
+      const p = RwsClient2.parse(await this.req('POST', `/rw/dipc/${encodeURIComponent(queue)}/read`, {
         'dipc-timeout': String(timeoutMs),
       }));
       const d = p.getState('dipc-message');
@@ -997,7 +1062,7 @@ export class RwsClient2 {
    */
   async requestMastershipWithId(domain: MastershipDomain): Promise<number> {
     const xhtml = await this.req('POST', `/rw/mastership/${this.rws2Domain(domain)}/request-with-id`);
-    const id = new XhtmlParser(xhtml).get('mastership-id');
+    const id = RwsClient2.parse(xhtml).get('mastership-id');
     if (!id) { throw new Error('RWS2 request-with-id: no mastership-id in response'); }
     return Number(id);
   }
@@ -1026,14 +1091,14 @@ export class RwsClient2 {
 
   /** Read mastership status for one domain — returns 'nomaster' | 'remote' | 'local' | similar. */
   async getMastershipStatus(domain: MastershipDomain): Promise<{ mastership: string; uid?: string; application?: string }> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/mastership/${this.rws2Domain(domain)}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/mastership/${this.rws2Domain(domain)}`));
     const d = p.getState('msh-resource');
     return { mastership: d['mastership'] ?? 'unknown', uid: d['uid'], application: d['application'] };
   }
 
   /** List all mastership domains the controller exposes (typically `['edit', 'motion']`). */
   async listMastershipDomains(): Promise<string[]> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/mastership'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/mastership'));
     return p.getAllStates('msh-resource-li').map(d => d['_title']).filter(Boolean) as string[];
   }
 
@@ -1045,16 +1110,19 @@ export class RwsClient2 {
    * Drill into each group with `getDeviceTree(group)`.
    */
   async listSystemDevices(): Promise<Array<{ id: string; name: string }>> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/devices'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/devices'));
     return p.getAllStates('dev-id-li').map(d => ({
       id:   d['_title'] ?? '',
       name: d['name']   ?? '',
     }));
   }
 
-  /** Drill into a device group (e.g. 'HW_DEVICES'). Returns sub-tree as raw XHTML map. */
+  /** Drill into a device group (e.g. 'HW_DEVICES'). Returns sub-tree as raw XHTML map.
+   *  Accept is pinned to XHTML so the promised raw format never changes under
+   *  the HAL JSON negotiation. */
   async getDeviceTree(group: string): Promise<string> {
-    return this.req('GET', `/rw/devices/${encodeURIComponent(group)}`);
+    return this.req('GET', `/rw/devices/${encodeURIComponent(group)}`,
+      undefined, undefined, undefined, [], RwsClient2.ACCEPT_XHTML);
   }
 
   /**
@@ -1063,7 +1131,7 @@ export class RwsClient2 {
    * one's handy when you want a flat overview without enumerating networks first.)
    */
   async listAllIoDevices(): Promise<Array<{ name: string; network: string; lstate: string; pstate: string; address: string }>> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/iosystem/devices'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/iosystem/devices'));
     return p.getAllStates('ios-device-li').map(d => {
       const title = d['_title'] ?? '';
       const network = title.split('/')[0] ?? '';
@@ -1100,7 +1168,7 @@ export class RwsClient2 {
       tool, wobj,
     }).toString();
     const xhtml = await this.req('POST', `/rw/motionsystem/mechunits/${mechunit}?action=CalcRobTFromJoints`, undefined, body);
-    const p = new XhtmlParser(xhtml);
+    const p = RwsClient2.parse(xhtml);
     if (p.getError()) {
       throw new Error(`FK rejected: ${p.getError()?.msg ?? 'unknown'} (likely missing PC Interface 616-1 license)`);
     }
@@ -1127,7 +1195,7 @@ export class RwsClient2 {
 
   async listVisionSystems(): Promise<Array<{ name: string; status?: string }>> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/rw/vision'));
+      const p = RwsClient2.parse(await this.req('GET', '/rw/vision'));
       return p.getAllStates('vision-system-li').map(s => ({
         name: s['_title'] ?? s['name'] ?? '',
         status: s['status'],
@@ -1136,12 +1204,12 @@ export class RwsClient2 {
   }
 
   async getVisionSystemInfo(name: string): Promise<Record<string, string>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/vision/${encodeURIComponent(name)}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/vision/${encodeURIComponent(name)}`));
     return p.getState('vision-system');
   }
 
   async listVisionJobs(system: string): Promise<Array<{ name: string; active?: boolean }>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/vision/${encodeURIComponent(system)}/jobs`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/vision/${encodeURIComponent(system)}/jobs`));
     return p.getAllStates('vision-job-li').map(j => ({
       name: j['name'] ?? j['_title'] ?? '',
       active: j['active'] === 'true',
@@ -1156,7 +1224,7 @@ export class RwsClient2 {
 
   async getSafetyStatus(): Promise<{ state: string; details?: Record<string, string> }> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/ctrl/safety'));
+      const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety'));
       const d = p.getState('ctrl-safety') || p.getState('ctrl-safety-info');
       return { state: d['state'] ?? 'unknown', details: d };
     } catch { return { state: 'unavailable' }; }
@@ -1164,7 +1232,7 @@ export class RwsClient2 {
 
   async listSafetyZones(): Promise<Array<Record<string, string>>> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/ctrl/safety/zones'));
+      const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety/zones'));
       return p.getAllStates('ctrl-safety-zone-li');
     } catch { return []; }
   }
@@ -1184,7 +1252,7 @@ export class RwsClient2 {
     //   /vtspeed → class="ctrl-vtspeed" → span "vtcurrspeed" (1.0=real, 10=10x)
     const fetch = async (sub: string) => {
       try {
-        const p = new XhtmlParser(await this.req('GET', `/ctrl/virtualtime/${sub}`));
+        const p = RwsClient2.parse(await this.req('GET', `/ctrl/virtualtime/${sub}`));
         return p.getState(`ctrl-${sub}`) || {};
       } catch { return {}; }
     };
@@ -1212,7 +1280,7 @@ export class RwsClient2 {
 
   async listCertificates(): Promise<Array<{ name: string; subject?: string; expires?: string }>> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/ctrl/certstore'));
+      const p = RwsClient2.parse(await this.req('GET', '/ctrl/certstore'));
       return p.getAllStates('ctrl-cert-li').map(c => ({
         name: c['name'] ?? c['_title'] ?? '',
         subject: c['subject'],
@@ -1233,7 +1301,7 @@ export class RwsClient2 {
 
   async getRegistry(): Promise<Record<string, string>> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/ctrl/registry'));
+      const p = RwsClient2.parse(await this.req('GET', '/ctrl/registry'));
       return p.getState('ctrl-registry');
     } catch { return {}; }
   }
@@ -1248,7 +1316,7 @@ export class RwsClient2 {
 
   async listFileVolumes(): Promise<string[]> {
     try {
-      const p = new XhtmlParser(await this.req('GET', '/fileservice'));
+      const p = RwsClient2.parse(await this.req('GET', '/fileservice'));
       return p.getAllStates('fs-volume').map(v => v['_title'] ?? v['name']).filter(Boolean) as string[];
     } catch {
       // Fallback: known standard volumes
@@ -1286,7 +1354,7 @@ export class RwsClient2 {
   async listBreakpoints(task: string): Promise<Array<{ module: string; row: number; col?: number }>> {
     try {
       // Live-verified: /rw/rapid/tasks/{task}/program/breakpoints (not /breakpoint at task root)
-      const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/program/breakpoints`));
+      const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/program/breakpoints`));
       return p.getAllStates('rap-breakpoint-li').map(b => ({
         module: b['modulename'] ?? b['modulemame'] ?? b['module'] ?? '',
         row: +(b['begin-position-row'] ?? '0'),
@@ -1311,7 +1379,7 @@ export class RwsClient2 {
 
   async getMechunitBaseFrame(mechunit = 'ROB_1'): Promise<{ x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }> {
     // Live-verified class: ms-mechunit-baseframe (not ms-baseframe)
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/baseframe`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/baseframe`));
     const d = p.getState('ms-mechunit-baseframe') || p.getState('ms-baseframe');
     return {
       x: +d['x'], y: +d['y'], z: +d['z'],
@@ -1329,7 +1397,7 @@ export class RwsClient2 {
   async getMechunitAxes(mechunit = 'ROB_1'): Promise<Array<Record<string, string>>> {
     // Live-verified: /axes returns a count + sub-resource links (axes/1..N).
     // Fetch each axis individually and assemble the result.
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes`));
     const total = p.getState('ms-mechunit-axes');
     const axisCount = +(total['axes'] ?? 0);
     if (axisCount === 0) { return []; }
@@ -1337,7 +1405,7 @@ export class RwsClient2 {
     const axes: Array<Record<string, string>> = [];
     for (let i = 1; i <= axisCount; i++) {
       try {
-        const ap = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes/${i}`));
+        const ap = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes/${i}`));
         const ad = ap.getState('ms-mechunit-axis') || ap.getState('ms-axis');
         axes.push({ axis: String(i), ...ad });
       } catch { axes.push({ axis: String(i), error: 'unreachable' }); }
@@ -1346,7 +1414,7 @@ export class RwsClient2 {
   }
 
   async getMechunitPjoints(mechunit = 'ROB_1'): Promise<Record<string, number>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/pjoints`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/pjoints`));
     const d = p.getState('ms-pjoints');
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(d)) { if (!k.startsWith('_')) { out[k] = +v; } }
@@ -1354,7 +1422,7 @@ export class RwsClient2 {
   }
 
   async getMechunitInfo(mechunit = 'ROB_1'): Promise<Record<string, string>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}`));
     return p.getState('ms-mechunit');
   }
 
@@ -1408,7 +1476,7 @@ export class RwsClient2 {
     // <li class="rap-module" title="{task}/{module}"> with spans modname,
     // filename (bare name like 'BASE.sysx' — NO path) and attribute.
     // (rap-module-info-li is the class used by the module LIST endpoint.)
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/modules/${encodeURIComponent(moduleName)}`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/modules/${encodeURIComponent(moduleName)}`));
     const d = p.getState('rap-module');
     if (Object.keys(d).length > 0) { return d; }
     return p.getState('rap-module-info-li') || p.getState('rap-module-info');
@@ -1422,17 +1490,17 @@ export class RwsClient2 {
   // ─── Per-task additional endpoints ──────────────────────────────────────────
 
   async getTaskStructuralChangeCount(task: string): Promise<number> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/structural-changecount`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/structural-changecount`));
     return Number(p.get('change-count') ?? p.get('structural-changecount') ?? 0);
   }
 
   async getTaskMotion(task: string): Promise<Record<string, string>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/motion`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/motion`));
     return p.getState('rap-task-motion') || {};
   }
 
   async getTaskActivationRecord(task: string): Promise<Record<string, string>> {
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/activation-record`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/activation-record`));
     return p.getState('rap-activation-record') || {};
   }
 
@@ -1440,7 +1508,7 @@ export class RwsClient2 {
     // Endpoint returns 204 (no content) when no program is loaded — caller handles this.
     const xml = await this.req('GET', `/rw/rapid/tasks/${task}/program`);
     if (!xml) { return {}; }
-    return new XhtmlParser(xml).getState('rap-program-info') || {};
+    return RwsClient2.parse(xml).getState('rap-program-info') || {};
   }
 
   // ─── WebSocket subscriptions ──────────────────────────────────────────────────
@@ -1794,7 +1862,7 @@ export class RwsClient2 {
    */
   async getRmmpPrivilege(): Promise<string> {
     const xml = await this.req('GET', '/users/rmmp');
-    const p = new XhtmlParser(xml);
+    const p = RwsClient2.parse(xml);
     const priv     = p.get('privilege') ?? 'none';
     const heldByMe = (p.get('rmmpheldbyme') ?? 'false').toLowerCase() === 'true';
     if (priv === 'none') { return 'none'; }
@@ -1839,15 +1907,120 @@ export class RwsClient2 {
     );
   }
 
+  // ─── Simulation panel (virtual controllers only) ─────────────────────────────
+  // RobotWare 7 VCs expose the panel hardware (e-stop chain, enabling device) and
+  // a joint-teleport endpoint for simulation. Real controllers do not serve these
+  // paths (404) — the FlexPendant hardware is the source of truth there — so every
+  // method below translates a 404 into a clear "virtual controllers only" error.
+  // All wire shapes live-verified 2026-07-09 on an OmniCore VC RW7.21.
+
+  /** Shared POST for the VC-only simulation endpoints. */
+  private async simPost(
+    label: string,
+    path: string,
+    body?: Record<string, string>,
+    rawBody?: string,
+  ): Promise<void> {
+    try {
+      await this.req('POST', path, body, rawBody);
+    } catch (e) {
+      if (e instanceof RwsError && e.httpStatus === 404) {
+        throw new RwsError(
+          `${label}: ${path} returned 404 — simulation endpoints exist only on RobotWare 7 virtual controllers (not on real hardware or RW6)`,
+          'UNKNOWN', 404, e.rwsDetail,
+        );
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Engage the (internal) emergency stop — controller state goes to
+   * `emergencystop`. Live-verified 2026-07-09 on OmniCore VC RW7.21:
+   *   POST /rw/panel/emergency-stop  body `state=off` → 204.
+   * The polarity is INVERTED from the ABB Swagger example: state=off OPENS the
+   * safety chain (engages the stop), state=on closes it again. Fully reversible
+   * on a VC via {@link simResetEmergencyStop} — no physical reset step exists
+   * there (unlike real hardware, which latches until the button is released).
+   */
+  simEmergencyStop(): Promise<void> {
+    return this.simPost('simEmergencyStop', '/rw/panel/emergency-stop', { state: 'off' });
+  }
+
+  /** Release the simulated emergency stop (`state=on`) — controller returns to
+   *  `motoroff`. See {@link simEmergencyStop} for the polarity note. */
+  simResetEmergencyStop(): Promise<void> {
+    return this.simPost('simResetEmergencyStop', '/rw/panel/emergency-stop', { state: 'on' });
+  }
+
+  /**
+   * Engage the general stop (controller state → `guardstop`); pass `false` to
+   * release it again (→ `motoroff`). Live-verified 2026-07-09 on OmniCore VC
+   * RW7.21: POST /rw/panel/general-stop, `state=off` engages / `state=on`
+   * releases (same inverted polarity as the e-stop endpoints).
+   */
+  simGeneralStop(engage = true): Promise<void> {
+    return this.simPost('simGeneralStop', '/rw/panel/general-stop', { state: engage ? 'off' : 'on' });
+  }
+
+  /**
+   * Engage the automatic stop (controller state → `guardstop`); pass `false` to
+   * release it. Live-verified 2026-07-09 on OmniCore VC RW7.21:
+   * POST /rw/panel/auto-stop, `state=off` engages / `state=on` releases.
+   */
+  simAutoStop(engage = true): Promise<void> {
+    return this.simPost('simAutoStop', '/rw/panel/auto-stop', { state: engage ? 'off' : 'on' });
+  }
+
+  /**
+   * Press (`true`) or release (`false`) the simulated three-position enabling
+   * device. Live-verified 2026-07-09 on OmniCore VC RW7.21:
+   *   POST /rw/panel/enable-switch  body `state=on|off` → 204.
+   * This endpoint's polarity is direct (no inversion). In AUTO the controller
+   * accepts the call as a no-op; driving motors on requires manual mode.
+   */
+  simEnableSwitch(on: boolean): Promise<void> {
+    return this.simPost('simEnableSwitch', '/rw/panel/enable-switch', { state: on ? 'on' : 'off' });
+  }
+
+  /**
+   * Teleport a mechanical unit to absolute joint values (degrees) — the VC
+   * equivalent of dragging the robot in RobotStudio; no motors, mastership, or
+   * program stop needed. Live-verified 2026-07-09 on OmniCore VC RW7.21:
+   *   POST /rw/motionsystem/mechunits/{mechunit}/position
+   *   body `rob_joint=[j1,j2,j3,j4,j5,j6]&ext_joint=[e1,e2,e3,e4,e5,e6]` → 204
+   * BOTH keys are required by the controller (omitting either → 400
+   * "No rob_joint parameter"), which is why `extJoints` defaults to six zeros.
+   * The readback (`getJointPositions`) may show sub-µdeg float rounding.
+   * Caveat (live-verified 2026-07-09): while an operation-mode change is
+   * pending (opmode AUTO_CH — FlexPendant acknowledge outstanding) the endpoint
+   * answers 403 "Operation not allowed for user in current operation mode".
+   */
+  async teleportMechunit(mechunit: string, joints: number[], extJoints?: number[]): Promise<void> {
+    if (joints.length !== 6 || (extJoints !== undefined && extJoints.length !== 6)) {
+      throw new RwsError(
+        'teleportMechunit: exactly 6 robot joint values (and 6 external-axis values, if given) are required',
+        'UNKNOWN',
+      );
+    }
+    const ext = extJoints ?? [0, 0, 0, 0, 0, 0];
+    await this.simPost(
+      'teleportMechunit',
+      `/rw/motionsystem/mechunits/${mechunit}/position`,
+      undefined,
+      `rob_joint=[${joints.join(',')}]&ext_joint=[${ext.join(',')}]`,
+    );
+  }
+
   // ─── System detail endpoints ────────────────────────────────────────────────
 
   async getLicenseInfo(): Promise<{ entries: Array<Record<string, string>> }> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/system/license'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/system/license'));
     return { entries: p.getAllStates('sys-license') };
   }
 
   async listProducts(): Promise<Array<Record<string, string>>> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/system/products'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/system/products'));
     // Live-verified class: sys-product-li (with -li suffix). Each product has a _title
     // (the product name e.g. "RobotControl") plus version and version-name spans.
     return p.getAllStates('sys-product-li').map(p => ({
@@ -1858,14 +2031,14 @@ export class RwsClient2 {
   }
 
   async getRobotType(): Promise<{ type: string; variant?: string }> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/system/robottype'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/system/robottype'));
     const d = p.getState('sys-robottype');
     // Live-verified: span class is 'robot-type' (with hyphen), not 'robottype'
     return { type: d['robot-type'] ?? d['robottype'] ?? d['type'] ?? '', variant: d['variant'] };
   }
 
   async getEnergyStats(): Promise<Record<string, string>> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/system/energy'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/system/energy'));
     // Live-verified class: sys-energy-state (not sys-energy)
     return p.getState('sys-energy-state');
   }
@@ -1874,7 +2047,7 @@ export class RwsClient2 {
 
   async getReturnCode(code: number, lang = 'en'): Promise<{ code: number; title: string; desc: string } | null> {
     try {
-      const p = new XhtmlParser(await this.req('GET', `/rw/retcode?code=${code}&lang=${lang}`));
+      const p = RwsClient2.parse(await this.req('GET', `/rw/retcode?code=${code}&lang=${lang}`));
       const d = p.getState('rw-retcode') || p.getState('rw-retcode-li');
       if (!d['title'] && !d['desc']) { return null; }
       return { code, title: d['title'] ?? '', desc: d['desc'] ?? '' };
@@ -1884,7 +2057,7 @@ export class RwsClient2 {
   // ─── Controller detail endpoints ────────────────────────────────────────────
 
   async listControllerOptions(): Promise<Array<{ name: string; description?: string }>> {
-    const p = new XhtmlParser(await this.req('GET', '/ctrl/options'));
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/options'));
     return p.getAllStates('ctrl-option').map(o => ({
       name: o['option'] ?? o['name'] ?? '',
       description: o['description'],
@@ -1892,26 +2065,26 @@ export class RwsClient2 {
   }
 
   async listFeatures(): Promise<Array<Record<string, string>>> {
-    const p = new XhtmlParser(await this.req('GET', '/ctrl/features'));
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/features'));
     return p.getAllStates('ctrl-feature');
   }
 
   // ─── Motion detail endpoints ────────────────────────────────────────────────
 
   async getMotionChangeCount(): Promise<number> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/motionsystem?resource=change-count'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/motionsystem?resource=change-count'));
     return Number(p.get('change-count') ?? 0);
   }
 
   async getMotionErrorState(): Promise<{ state: string; details?: Record<string, string> }> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/motionsystem/errorstate'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/motionsystem/errorstate'));
     const d = p.getState('ms-errorstate-li') || p.getState('ms-errorstate');
     return { state: d['err-state'] ?? d['state'] ?? 'unknown', details: d };
   }
 
   async getNonMotionExecution(): Promise<boolean> {
     // Live-verified: class="ms-nonmotionexecution", span "mode" returns quoted "OFF" or "ON".
-    const p = new XhtmlParser(await this.req('GET', '/rw/motionsystem/nonmotionexecution'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/motionsystem/nonmotionexecution'));
     const v = (p.get('mode') ?? p.get('state') ?? 'OFF').replace(/"/g, '').toUpperCase();
     return v === 'ON';
   }
@@ -1923,7 +2096,7 @@ export class RwsClient2 {
   async getCollisionPredictionMode(): Promise<string> {
     // Live-verified: class="ms-collision-prediction-mode" with span "collision-prediction-mode-enabled"
     // returning "true" / "false". Map back to ON/OFF for caller convenience.
-    const p = new XhtmlParser(await this.req('GET', '/rw/motionsystem/collisionprediction'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/motionsystem/collisionprediction'));
     const enabled = p.get('collision-prediction-mode-enabled') ?? p.get('mode') ?? 'false';
     return enabled.toLowerCase() === 'true' ? 'ON' : 'OFF';
   }
@@ -1935,7 +2108,7 @@ export class RwsClient2 {
   // ─── Panel detail endpoints ─────────────────────────────────────────────────
 
   async getEnableRequest(): Promise<{ state: string; raw: Record<string, string> }> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/panel/enreq'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/enreq'));
     const d = p.getState('pnl-enreq') || p.getState('pnl-enreq-li');
     return { state: d['state'] ?? d['enreq'] ?? 'unknown', raw: d };
   }
@@ -1943,7 +2116,7 @@ export class RwsClient2 {
   // ─── RAPID detail endpoints ─────────────────────────────────────────────────
 
   async listAliasIO(): Promise<Array<{ alias: string; signal: string }>> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/rapid/aliasio'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/aliasio'));
     return p.getAllStates('rap-aliasio-li').map(a => ({
       alias: a['name'] ?? a['alias'] ?? '',
       signal: a['signal'] ?? a['_title'] ?? '',
@@ -1951,7 +2124,7 @@ export class RwsClient2 {
   }
 
   async getTaskSelection(): Promise<{ selected: string[]; available: string[] }> {
-    const p = new XhtmlParser(await this.req('GET', '/rw/rapid/taskselection'));
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/taskselection'));
     const sel = p.getAllStates('rap-taskselection-li').map(t => t['name']).filter(Boolean) as string[];
     const all = p.getAllStates('rap-task-li').map(t => t['name']).filter(Boolean) as string[];
     return { selected: sel, available: all };
@@ -1969,7 +2142,7 @@ export class RwsClient2 {
     //   beginposition  → "row,col" combined string
     //   endposition    → "row,col"
     //   changecount, executiontype
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/pcp`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/pcp`));
     const d = p.getState('pcp-info') || p.getState('program-pointer-state') || p.getState('rap-pcp-li');
     const begin = (d['beginposition'] ?? '').split(',');
     return {
@@ -1984,7 +2157,7 @@ export class RwsClient2 {
   async getMotionPointer(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number; state?: string }> {
     // Live-verified: /syncstate/motion-pointer returns class="rap-task-sync-state"
     // with a single span class="motion-pointer-state" containing 'Off' or position info.
-    const p = new XhtmlParser(await this.req('GET', `/rw/rapid/tasks/${task}/syncstate/motion-pointer`));
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/syncstate/motion-pointer`));
     const d = p.getState('rap-task-sync-state');
     const stateVal = d['motion-pointer-state'] ?? '';
     return {
@@ -2029,7 +2202,7 @@ export class RwsClient2 {
       bodyStr,
       'application/x-www-form-urlencoded;v=2.0',
     );
-    const p = new XhtmlParser(html);
+    const p = RwsClient2.parse(html);
     const d = p.getState('ms-jointtarget');
     if (!d['rax_1']) { throw new Error('IK: no joint values in response'); }
     return {
