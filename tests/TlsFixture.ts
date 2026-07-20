@@ -1,6 +1,6 @@
 /**
  * Self-signed localhost certificate (CN=127.0.0.1, SAN IP:127.0.0.1) used by
- * tests that need a real TLS server. Valid until 2036 — regenerate with:
+ * tests that need a real TLS server. Valid until 2036 - regenerate with:
  *   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem \
  *     -days 3650 -nodes -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1"
  */

@@ -1,4 +1,4 @@
-// Auto-detect protocol — works for both IRC5 (RWS 1.0) and OmniCore (RWS 2.0).
+// Auto-detect protocol - works for both IRC5 (RWS 1.0) and OmniCore (RWS 2.0).
 // Useful when your code has to support both controller generations.
 
 import { createClient, RwsClient2 } from 'abb-rws-client';

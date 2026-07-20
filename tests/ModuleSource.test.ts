@@ -7,8 +7,8 @@ import type { RwsClient } from '../src/RwsClient.js';
 import { RwsError } from '../src/types.js';
 
 // getModuleSource must return what's in PROGRAM MEMORY, which is where modules
-// loaded from .pgf / RobotStudio / the FlexPendant (abb-rws-vscode issue #3) —
-// and any unsaved edits — live. A file on disk can be stale, so the
+// loaded from .pgf / RobotStudio / the FlexPendant (abb-rws-vscode issue #3) -
+// and any unsaved edits - live. A file on disk can be stale, so the
 // save-to-TEMP round-trip (save program memory to a scratch file, read it,
 // delete it) is the PRIMARY path; direct file reads are only a fallback for
 // when the save endpoint itself fails.
@@ -42,7 +42,7 @@ const notFound = (res: http.ServerResponse): void => {
 };
 
 describe('getModuleSource (RWS 2.0)', () => {
-  it('saves to TEMP:, reads the .modx back, and deletes it — even when a (stale) HOME file exists', async () => {
+  it('saves to TEMP:, reads the .modx back, and deletes it - even when a (stale) HOME file exists', async () => {
     const files = new Map<string, string>();
     const deletes: string[] = [];
     let saveBody = '';
@@ -77,7 +77,7 @@ describe('getModuleSource (RWS 2.0)', () => {
       const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
       const src = await client.getModuleSource('T_ROB1', 'PgfMod');
       expect(src).toBe('MODULE PgfMod\r\nENDMODULE\r\n'); // program memory, not the stale disk copy
-      // Extensionless collision-safe name — the controller always appends '.modx'.
+      // Extensionless collision-safe name - the controller always appends '.modx'.
       expect(saveBody).toMatch(/^name=PgfMod_[a-z0-9]+&path=TEMP:$/i);
       expect(deletes.length).toBe(1);
       expect(files.size).toBe(0);
@@ -94,7 +94,7 @@ describe('getModuleSource (RWS 2.0)', () => {
       }
       if (req.method === 'GET' && url === '/rw/rapid/tasks/T_ROB1/modules/DiskMod') {
         // Live-verified per-module shape (OmniCore RW7.21): li class="rap-module"
-        // with modname / filename / attribute spans — no full path is exposed.
+        // with modname / filename / attribute spans - no full path is exposed.
         res.writeHead(200, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
         res.end('<html><body><ul><li class="rap-module" title="T_ROB1/DiskMod">'
           + '<span class="modname">DiskMod</span><span class="filename">DiskMod.sysx</span>'
@@ -134,7 +134,7 @@ describe('getModuleSource (RWS 2.0)', () => {
 });
 
 describe('getModuleSource (RWS 1.0)', () => {
-  it('saves to $TEMP, reads the .mod back, and deletes it — even when a (stale) $HOME file exists', async () => {
+  it('saves to $TEMP, reads the .mod back, and deletes it - even when a (stale) $HOME file exists', async () => {
     const calls: string[] = [];
     const files = new Map<string, string>([
       ['$HOME/user.mod', 'MODULE user\r\n! STALE DISK COPY\r\nENDMODULE\r\n'],
@@ -151,7 +151,7 @@ describe('getModuleSource (RWS 1.0)', () => {
         calls.push(`${method} ${url}`);
         if (method === 'POST' && url === '/rw/rapid/modules/user?task=T_ROB1&action=save&json=1') {
           const name = /(?:^|&)name=([^&]*)/.exec(body ?? '')?.[1] ?? '';
-          // Extensionless collision-safe name — the controller always appends '.mod'.
+          // Extensionless collision-safe name - the controller always appends '.mod'.
           expect(name).toMatch(/^user_[a-z0-9]+$/i);
           expect(body).toContain('path=$TEMP');
           files.set(`$TEMP/${name}.mod`, 'MODULE user (SYSMODULE)\r\nENDMODULE\r\n');

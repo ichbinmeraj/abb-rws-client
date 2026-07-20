@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RWS1Adapter } from '../src/RWS1Adapter.js';
 import type { RwsClient } from '../src/RwsClient.js';
 
-// ─── Fake RwsClient — records calls, replies per URL ─────────────────────────
+// ─── Fake RwsClient - records calls, replies per URL ─────────────────────────
 
 interface FakeCall { what: string; body?: string }
 

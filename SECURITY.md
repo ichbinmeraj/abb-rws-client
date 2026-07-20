@@ -14,5 +14,5 @@ rather than opening a public issue. You should receive a response within a week.
 
 This library talks to industrial robot controllers. Anything that could allow an
 unauthorized party to move a robot, alter RAPID programs, or intercept controller
-credentials is in scope — including TLS/certificate handling, credential storage,
+credentials is in scope - including TLS/certificate handling, credential storage,
 and authentication flows.

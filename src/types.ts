@@ -1,4 +1,4 @@
-// abb-rws-client — shared type definitions
+// abb-rws-client - shared type definitions
 // Used by BOTH protocol clients: RwsClient (RWS 1.0 / IRC5 / RW6) and
 // RwsClient2 (RWS 2.0 / OmniCore / RW7). See src/index.ts for the public surface.
 
@@ -138,7 +138,7 @@ export interface UiInstruction {
   instr: string;
   /** Event type: 'SEND' | 'POST' | 'ABORT' */
   event: string;
-  /** Stack URL — used as {stackurl} when setting a parameter value */
+  /** Stack URL - used as {stackurl} when setting a parameter value */
   stack: string;
   /** Execution level: 'NORMAL' | 'TRAP' | ... */
   execlv: string;
@@ -320,9 +320,9 @@ export interface DigestChallenge {
   realm: string;
   nonce: string;
   opaque?: string;
-  /** 'auth' | 'auth-int' — if absent, use RFC 2069 compat mode */
+  /** 'auth' | 'auth-int' - if absent, use RFC 2069 compat mode */
   qop?: string;
-  /** Hash algorithm — typically 'MD5' (default) */
+  /** Hash algorithm - typically 'MD5' (default) */
   algorithm?: string;
   stale?: boolean;
   domain?: string;

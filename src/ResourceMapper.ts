@@ -1,5 +1,5 @@
 /**
- * ResourceMapper — pure functions that map RWS operations to URL paths and
+ * ResourceMapper - pure functions that map RWS operations to URL paths and
  * application/x-www-form-urlencoded request bodies.
  *
  * No HTTP, no state. All functions are individually exported for tree-shaking.
@@ -26,12 +26,12 @@ export function operationMode(): string {
   return '/rw/panel/opmode';
 }
 
-/** Path to read the current speed ratio (0–100) */
+/** Path to read the current speed ratio (0-100) */
 export function speedRatio(): string {
   return '/rw/panel/speedratio';
 }
 
-/** Path + body to set the speed ratio. Only valid in AUTO mode. @param ratio 0–100 */
+/** Path + body to set the speed ratio. Only valid in AUTO mode. @param ratio 0-100 */
 export function setSpeedRatio(ratio: number): { path: string; body: string } {
   return {
     path: '/rw/panel/speedratio?action=setspeedratio',
@@ -276,7 +276,7 @@ export function robTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): s
 
 /**
  * Path to read Cartesian position including robot configuration flags (j1, j4, j6, jx).
- * Uses the /cartesian sub-resource instead of /robtarget — no tool/wobj parameters.
+ * Uses the /cartesian sub-resource instead of /robtarget - no tool/wobj parameters.
  * @param mechunit - Default 'ROB_1'
  */
 export function cartesianFull(mechunit = 'ROB_1'): string {
@@ -289,7 +289,7 @@ export function cartesianFull(mechunit = 'ROB_1'): string {
  * Path + body to load a RAPID module into a task.
  * @param taskName   - RAPID task name, e.g. 'T_ROB1'
  * @param modulePath - Controller filesystem path, e.g. '$HOME/MyMod.mod'
- *                     Do not double-encode the '$' prefix — the controller expects it literal.
+ *                     Do not double-encode the '$' prefix - the controller expects it literal.
  */
 export function loadModule(taskName: string, modulePath: string, replace = false): { path: string; body: string } {
   return {
@@ -387,7 +387,7 @@ export function clearAllElogs(): { path: string; body: string } {
  * Use '$HOME/' prefix to target the controller home directory.
  *
  * Each segment is percent-encoded so names with spaces, '#', '%', etc. survive
- * URL parsing. The '$' of IRC5 volume roots ($HOME, $TEMP, …) stays literal —
+ * URL parsing. The '$' of IRC5 volume roots ($HOME, $TEMP, …) stays literal -
  * the controller rejects '%24'.
  */
 export function fileServicePath(remotePath: string): string {

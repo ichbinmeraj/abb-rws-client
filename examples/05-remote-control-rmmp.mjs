@@ -5,7 +5,7 @@
 // is a separate user-level grant: requesting it triggers a popup on the
 // FlexPendant; the operator taps Allow once and you have write access.
 //
-// This is what RobotStudio Online does — that's why it "just works".
+// This is what RobotStudio Online does - that's why it "just works".
 //
 // Run: RWS_HOST=127.0.0.1 RWS_PORT=5466 node examples/05-remote-control-rmmp.mjs
 
@@ -25,7 +25,7 @@ console.log(`Current RMMP: ${priv}`);
 
 // 2) If no privilege, request it. The FlexPendant pops up; operator approves.
 if (priv === 'none') {
-  console.log('Requesting RMMP — operator must approve on the FlexPendant…');
+  console.log('Requesting RMMP - operator must approve on the FlexPendant…');
   await robot.requestRmmp('modify');
 
   // Poll until the operator approves (or 30s timeout)

@@ -253,9 +253,9 @@ describe('ResourceMapper', () => {
   });
 });
 
-// ─── Remaining builders — table-driven URL/body checks ───────────────────────
+// ─── Remaining builders - table-driven URL/body checks ───────────────────────
 
-describe('ResourceMapper — path-only builders', () => {
+describe('ResourceMapper - path-only builders', () => {
   const cases: Array<[string, string, string]> = [
     ['speedRatio()',                    speedRatio(),                                   '/rw/panel/speedratio'],
     ['collisionDetectionState()',       collisionDetectionState(),                      '/rw/panel/coldetstate'],
@@ -291,7 +291,7 @@ describe('ResourceMapper — path-only builders', () => {
   });
 });
 
-describe('ResourceMapper — action builders (path + form body)', () => {
+describe('ResourceMapper - action builders (path + form body)', () => {
   const cases: Array<[string, { path: string; body: string }, string, string]> = [
     ['setControllerState(motoron)',   setControllerState('motoron'),  '/rw/panel/ctrlstate?action=setctrlstate', 'ctrl-state=motoron'],
     ['setControllerState(motoroff)',  setControllerState('motoroff'), '/rw/panel/ctrlstate?action=setctrlstate', 'ctrl-state=motoroff'],
@@ -333,7 +333,7 @@ describe('setSpeedRatio', () => {
     });
   });
 
-  it('clamps to 0–100', () => {
+  it('clamps to 0-100', () => {
     expect(setSpeedRatio(150).body).toBe('speed-ratio=100');
     expect(setSpeedRatio(-10).body).toBe('speed-ratio=0');
   });

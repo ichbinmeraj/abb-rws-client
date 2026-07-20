@@ -34,14 +34,14 @@ async function run() {
     console.log(`  ${t.name}  type=${t.type}  excstate=${t.excstate}  active=${t.active}  motion=${t.motiontask}`);
   }
 
-  section('Motion — Joint Positions');
+  section('Motion - Joint Positions');
   const joints = await client.getJointPositions('ROB_1');
   console.log('Joint target (deg):');
   for (const [k, v] of Object.entries(joints)) {
     console.log(`  ${k}: ${v.toFixed(4)}`);
   }
 
-  section('Motion — Cartesian Position');
+  section('Motion - Cartesian Position');
   const cart = await client.getCartesianPosition('ROB_1');
   console.log(`  x=${cart.x.toFixed(2)}  y=${cart.y.toFixed(2)}  z=${cart.z.toFixed(2)}`);
   console.log(`  q1=${cart.q1.toFixed(6)}  q2=${cart.q2.toFixed(6)}  q3=${cart.q3.toFixed(6)}  q4=${cart.q4.toFixed(6)}`);

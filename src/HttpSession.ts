@@ -1,5 +1,5 @@
 /**
- * HttpSession — HTTP communication layer for ABB IRC5 controllers.
+ * HttpSession - HTTP communication layer for ABB IRC5 controllers.
  *
  * Features:
  * - HTTP Digest Authentication (RFC 2617) implemented from scratch using node:crypto
@@ -54,13 +54,13 @@ export class HttpSession {
   /** Last parsed digest challenge from WWW-Authenticate */
   private digestChallenge: DigestChallenge | null = null;
 
-  /** Nonce use counter — reset to 0 whenever a new nonce is received */
+  /** Nonce use counter - reset to 0 whenever a new nonce is received */
   private nonceCount = 0;
 
   /** Timestamp of the most recent request sent */
   private lastRequestTime = 0;
 
-  /** Timestamp of the most recent successful response — used for session expiry */
+  /** Timestamp of the most recent successful response - used for session expiry */
   private lastActivityTime = 0;
 
   /** Promise chain that serialises all outbound requests */
@@ -171,7 +171,7 @@ export class HttpSession {
     Logger.trace?.('http.req', `RWS1 ${method} ${path}`, { protocol: 'rws1', method, path, bodyPreview });
 
     // Auto re-authenticate if the session may have expired.
-    // Only clear digest auth state — keep the session cookie so the controller
+    // Only clear digest auth state - keep the session cookie so the controller
     // reuses the same session slot instead of creating a new one.
     if (this.isSessionExpired()) {
       this.digestChallenge = null;
@@ -194,7 +194,7 @@ export class HttpSession {
 
       if (response.status === 401) {
         Logger.trace?.('http.err', `RWS1 ${method} ${path} → 401 (auth failed)`, { protocol: 'rws1', method, path });
-        throw new RwsError('Authentication failed — check username and password', 'AUTH_FAILED', 401);
+        throw new RwsError('Authentication failed - check username and password', 'AUTH_FAILED', 401);
       }
     }
 
@@ -204,7 +204,7 @@ export class HttpSession {
       response = await this.rawFetch(method, path, body);
       if (response.status === 503) {
         Logger.trace?.('http.err', `RWS1 ${method} ${path} → 503 busy`, { protocol: 'rws1', method, path });
-        throw new RwsError('Controller busy (503) — retry later', 'CONTROLLER_BUSY', 503);
+        throw new RwsError('Controller busy (503) - retry later', 'CONTROLLER_BUSY', 503);
       }
     }
 
@@ -265,7 +265,7 @@ export class HttpSession {
 
     if (this.digestChallenge) {
       // The URI in the Authorization header and HA2 computation must be the path + query,
-      // NOT the full URL with scheme and host — a common implementation mistake.
+      // NOT the full URL with scheme and host - a common implementation mistake.
       headers['Authorization'] = this.buildAuthHeader(method, path);
     }
 
@@ -329,8 +329,8 @@ export class HttpSession {
    * RFC 2617 §3.2.2:
    *   HA1 = MD5(username:realm:password)
    *   HA2 = MD5(method:digestURI)
-   *   response = MD5(HA1:nonce:nc:cnonce:qop:HA2)  — when qop=auth
-   *   response = MD5(HA1:nonce:HA2)                — RFC 2069 compat (no qop)
+   *   response = MD5(HA1:nonce:nc:cnonce:qop:HA2)  - when qop=auth
+   *   response = MD5(HA1:nonce:HA2)                - RFC 2069 compat (no qop)
    *
    * Important: the space in 'Default User' is NOT percent-encoded for HA1.
    * The nc value is NOT quoted in the Authorization header.
@@ -347,7 +347,7 @@ export class HttpSession {
       const offered = challenge.qop.split(',').map((q) => q.trim());
       if (!offered.includes('auth')) {
         throw new RwsError(
-          `Digest qop "${challenge.qop}" is not supported — only qop=auth`,
+          `Digest qop "${challenge.qop}" is not supported - only qop=auth`,
           'AUTH_FAILED',
         );
       }
@@ -365,7 +365,7 @@ export class HttpSession {
       // RFC 2617 qop mode
       responseHash = md5(`${ha1}:${challenge.nonce}:${nc}:${cnonce}:auth:${ha2}`);
     } else {
-      // RFC 2069 compat — no qop
+      // RFC 2069 compat - no qop
       responseHash = md5(`${ha1}:${challenge.nonce}:${ha2}`);
     }
 
@@ -401,7 +401,7 @@ export class HttpSession {
   private storeCookies(headers: Headers): void {
     let setCookies: string[];
 
-    // getSetCookie() is the WHATWG-spec method returning string[] — available Node 18.14.1+
+    // getSetCookie() is the WHATWG-spec method returning string[] - available Node 18.14.1+
     if (typeof (headers as { getSetCookie?: () => string[] }).getSetCookie === 'function') {
       setCookies = (headers as { getSetCookie: () => string[] }).getSetCookie();
     } else {

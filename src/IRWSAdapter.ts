@@ -26,7 +26,7 @@ export interface IRWSAdapter {
   unlockOperationMode(): Promise<void>;
   /**
    * Switch the controller's operation mode (AUTO/MANR/MANF).
-   * **Virtual controllers only** — real hardware respects the FlexPendant key
+   * **Virtual controllers only** - real hardware respects the FlexPendant key
    * switch and will reject this with 403 (or silently keep the current mode).
    */
   setOperationMode?(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void>;
@@ -47,9 +47,9 @@ export interface IRWSAdapter {
   // ── RAPID modules & variables ────────────────────────────────────────────
   listModules(task: string): Promise<string[]>;
   /**
-   * Detailed module list — returns each module's name AND type
+   * Detailed module list - returns each module's name AND type
    * (`SysMod` for system modules / `ProgMod` for program modules / etc.).
-   * Optional — adapter may return an empty array if the underlying API is
+   * Optional - adapter may return an empty array if the underlying API is
    * unavailable. Callers should fall back to `listModules` for the names.
    */
   listModulesDetailed?(task: string): Promise<Array<{ name: string; type: string }>>;
@@ -79,7 +79,7 @@ export interface IRWSAdapter {
    *   robot_configuration, elog_at_error
    *
    * Note: virtual controllers (RobotStudio) reject every input with HTTP 400
-   * "Position outside of reach" (SYS_CTRL_E_POSE_OUTSIDE_REACH, -1073436654) —
+   * "Position outside of reach" (SYS_CTRL_E_POSE_OUTSIDE_REACH, -1073436654) -
    * even the controller's own current pose. This is a VC-only limitation: the
    * standard VC ships without the PC Interface (616-1) option that enables the
    * full kinematic solver, and wobj0 can desync from the displayed mechanism.
@@ -171,7 +171,7 @@ export interface IRWSAdapter {
   setTaskSelection?(tasks: string[]): Promise<void>;
   /** Program-pointer position for a task. */
   getProgramPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;
-  /** Motion-pointer (ahead of PP — what the motion planner is executing). */
+  /** Motion-pointer (ahead of PP - what the motion planner is executing). */
   getMotionPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;
 
   // ── Event log ────────────────────────────────────────────────────────────
@@ -195,7 +195,7 @@ export interface IRWSAdapter {
   copyFile(sourcePath: string, destPath: string): Promise<void>;
 
   // ── Configuration database `/rw/cfg` ─────────────────────────────────────
-  // 6 domains: EIO, MMC, MOC, PROC, SIO, SYS — each with many types (e.g. MOC has
+  // 6 domains: EIO, MMC, MOC, PROC, SIO, SYS - each with many types (e.g. MOC has
   // ARM, ARM_TYPE, JOINT, MOTOR, ROBOT_TYPE, SINGLE, etc.).
 
   /** List the 6 configuration domains. */
@@ -204,7 +204,7 @@ export interface IRWSAdapter {
   listCfgTypes?(domain: string): Promise<string[]>;
   /** List instance names of a given type (e.g. ROB_1, ROB_L1 under MOC/ARM). */
   listCfgInstances?(domain: string, type: string): Promise<string[]>;
-  /** Read a single configuration instance — returns the named attributes for that instance. */
+  /** Read a single configuration instance - returns the named attributes for that instance. */
   getCfgInstance?(domain: string, type: string, instance: string): Promise<Record<string, string>>;
   /** Update an existing configuration instance. Requires 'edit' mastership. */
   setCfgInstance?(domain: string, type: string, instance: string, attributes: Record<string, string>): Promise<void>;
@@ -224,7 +224,7 @@ export interface IRWSAdapter {
   /** Trigger a backup. Returns a promise that resolves when the backup is initiated;
    *  use `getBackupStatus()` to poll for completion. */
   createBackup?(name: string): Promise<void>;
-  /** Restore from a previous backup. Long-running — controller may restart afterwards. */
+  /** Restore from a previous backup. Long-running - controller may restart afterwards. */
   restoreBackup?(name: string): Promise<void>;
   /** Get current backup-or-restore operation status. */
   getBackupStatus?(): Promise<{ active: boolean; progress?: number; phase?: string }>;
@@ -235,13 +235,13 @@ export interface IRWSAdapter {
   getActiveTool?(mechunit?: string): Promise<{ name: string; data?: Record<string, string> }>;
   getActiveWobj?(mechunit?: string): Promise<{ name: string; data?: Record<string, string> }>;
   getActivePayload?(mechunit?: string): Promise<{ name: string; data?: Record<string, string> }>;
-  /** Switch the active tool/wobj — both delegate to the corresponding RAPID symbol. */
+  /** Switch the active tool/wobj - both delegate to the corresponding RAPID symbol. */
   setActiveTool?(mechunit: string, toolName: string): Promise<void>;
   setActiveWobj?(mechunit: string, wobjName: string): Promise<void>;
 
   // ── Service routine / PROC call ──────────────────────────────────────────
 
-  /** Execute a PROC remotely (typically a service routine). Async — returns once execution starts. */
+  /** Execute a PROC remotely (typically a service routine). Async - returns once execution starts. */
   callServiceRoutine?(task: string, routineName: string, args?: Record<string, string>): Promise<void>;
 
   // ── DIPC (Distributed Inter-Process Communication) `/rw/dipc` ────────────
@@ -267,7 +267,7 @@ export interface IRWSAdapter {
   requestMastershipWithId?(domain: MastershipDomain): Promise<number>;
   /** Release token-acquired mastership using the ID returned by `requestMastershipWithId()`. */
   releaseMastershipWithId?(domain: MastershipDomain, id: number): Promise<void>;
-  /** Reset the edit-mastership watchdog (RobotWare 7.8+) — call ~every 1s while holding mastership during a long RAPID run. */
+  /** Reset the edit-mastership watchdog (RobotWare 7.8+) - call ~every 1s while holding mastership during a long RAPID run. */
   resetMastershipWatchdog?(): Promise<void>;
   /** Read mastership status for one domain. */
   getMastershipStatus?(domain: MastershipDomain): Promise<{ mastership: string; uid?: string; application?: string }>;
@@ -278,7 +278,7 @@ export interface IRWSAdapter {
 
   /** Top-level device groupings (e.g. HW_DEVICES, SW_RESOURCES). */
   listSystemDevices?(): Promise<Array<{ id: string; name: string }>>;
-  /** Drill into a system-device group — returns the raw XHTML sub-tree. */
+  /** Drill into a system-device group - returns the raw XHTML sub-tree. */
   getDeviceTree?(group: string): Promise<string>;
   /** All configured I/O devices across every network in one call. */
   listAllIoDevices?(): Promise<Array<{ name: string; network: string; lstate: string; pstate: string; address: string }>>;
@@ -320,7 +320,7 @@ export interface IRWSAdapter {
 
   /** Get current virtual time (only meaningful on virtual controllers). */
   getVirtualTime?(): Promise<{ time: number; running: boolean }>;
-  /** Pause/resume virtual time — fast-forward simulation. */
+  /** Pause/resume virtual time - fast-forward simulation. */
   setVirtualTimeRunning?(running: boolean): Promise<void>;
   /** Set scaling factor (1.0 = real-time, 10.0 = 10x faster, 0 = paused). */
   setVirtualTimeScale?(scale: number): Promise<void>;
@@ -336,7 +336,7 @@ export interface IRWSAdapter {
 
   // ── Registry `/ctrl/registry` (ABB-internal) ─────────────────────────────
 
-  /** Read controller registry (mostly ABB internal — limited use). */
+  /** Read controller registry (mostly ABB internal - limited use). */
   getRegistry?(): Promise<Record<string, string>>;
 
   // ── Compress `/ctrl/compress` ────────────────────────────────────────────
@@ -344,7 +344,7 @@ export interface IRWSAdapter {
   /** Compress a file/directory on the controller. Returns the new archive path. */
   compressPath?(source: string, destination: string): Promise<void>;
 
-  // ── File service — additional volumes ───────────────────────────────────
+  // ── File service - additional volumes ───────────────────────────────────
 
   /** List all available file volumes (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP). */
   listFileVolumes?(): Promise<string[]>;
@@ -355,7 +355,7 @@ export interface IRWSAdapter {
   setProgramPointer?(task: string, params: { module?: string; routine: string; row?: number; col?: number }): Promise<void>;
   /** Move PP to cursor position in a module. */
   setPPToCursor?(task: string, module: string, row: number, col: number): Promise<void>;
-  /** Step Into / Over / Out — RAPID single-step. */
+  /** Step Into / Over / Out - RAPID single-step. */
   stepRapid?(task: string, mode: 'into' | 'over' | 'out'): Promise<void>;
   /** Hold-to-run mode. */
   holdToRun?(task: string, action: 'press' | 'release'): Promise<void>;
@@ -391,7 +391,7 @@ export interface IRWSAdapter {
 
   // ── Per-task additional endpoints (live-discovered) ─────────────────────
 
-  /** Per-task structural-change counter — increments when symbols/modules change. */
+  /** Per-task structural-change counter - increments when symbols/modules change. */
   getTaskStructuralChangeCount?(task: string): Promise<number>;
   /** Per-task motion data (current state of motion in this task). */
   getTaskMotion?(task: string): Promise<Record<string, string>>;
@@ -403,12 +403,12 @@ export interface IRWSAdapter {
   // ── Real-time subscriptions ───────────────────────────────────────────────
   /**
    * Subscribe to real-time RWS resource events via WebSocket.
-   * Returns an async unsubscribe function — call it on disconnect.
+   * Returns an async unsubscribe function - call it on disconnect.
    * Falls back gracefully: if the controller does not support subscriptions,
    * implementations should throw so callers can fall back to polling.
    *
    * `onLost` (optional) is invoked at most once, when the event stream is
-   * terminally lost — i.e. the connection dropped and the adapter's reconnect
+   * terminally lost - i.e. the connection dropped and the adapter's reconnect
    * attempts have all failed. Callers should treat it as "events stopped
    * flowing; switch to polling or reconnect". Adapters without reconnect
    * logic may ignore it.

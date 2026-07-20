@@ -1,4 +1,4 @@
-// Multi-robot orchestration — manages multiple controllers in one process.
+// Multi-robot orchestration - manages multiple controllers in one process.
 // The MultiRobotManager keeps one robot "active" at a time (handy for UIs)
 // while still polling state for all of them.
 
@@ -11,7 +11,7 @@ const multi = MultiRobotManager.fromConfigs([
 
 // Single sink for connection failures across all robots.
 multi.onError(async (msg, actions) => {
-  console.error(`[MultiRobot] ${msg} — actions: ${actions.join(', ')}`);
+  console.error(`[MultiRobot] ${msg} - actions: ${actions.join(', ')}`);
   return undefined; // headless: just log, don't auto-reconnect
 });
 
@@ -22,7 +22,7 @@ multi.onDidChange(() => {
   }
 });
 
-// Connect each robot independently — failures don't stop the others.
+// Connect each robot independently - failures don't stop the others.
 for (const { id } of multi.entries) {
   await multi.connectRobot(id).catch(e => console.warn(`Could not connect ${id}: ${e.message}`));
 }

@@ -1,5 +1,5 @@
 /**
- * WsSubscriber — WebSocket subscription manager for ABB IRC5 RWS events.
+ * WsSubscriber - WebSocket subscription manager for ABB IRC5 RWS events.
  *
  * Flow:
  *   1. POST /subscription via HttpSession to register resources → get subscription ID
@@ -12,7 +12,7 @@
  *      backoff 1s/2s/4s
  *
  * Always connects through the 'ws' package: the RWS upgrade request must carry the
- * session Cookie header, and native (undici) WebSocket has no headers option — it
+ * session Cookie header, and native (undici) WebSocket has no headers option - it
  * silently ignores the ws-style third constructor argument, so the handshake goes
  * out unauthenticated. Live-verified 2026-07-08 against IRC5 RW6.16: native WS is
  * rejected with HTTP 403, 'ws' with the same Cookie opens and delivers events.
@@ -28,7 +28,7 @@ import { parseSubscriptionId } from './ResponseParser.js';
 const BACKOFF_MS = [1000, 2000, 4000] as const;
 const MAX_RETRIES = 3;
 
-/** WebSocket constructor shape used by WsSubscriber — ws-style options 3rd arg */
+/** WebSocket constructor shape used by WsSubscriber - ws-style options 3rd arg */
 type WebSocketCtor = new (
   url: string,
   protocols: string[],
@@ -36,7 +36,7 @@ type WebSocketCtor = new (
 ) => WebSocket;
 
 /**
- * Resolve the 'ws' package constructor. Never returns native globalThis.WebSocket —
+ * Resolve the 'ws' package constructor. Never returns native globalThis.WebSocket -
  * it cannot send the Cookie header the controller requires for WS auth.
  */
 function resolveWebSocket(): WebSocketCtor {
@@ -56,7 +56,7 @@ function resolveWebSocket(): WebSocketCtor {
 
 /**
  * Map a SubscriptionResource to its RWS 1.0 event path (with ;state suffix where needed).
- * Paths are NOT percent-encoded — semicolons must be literal in the subscription body.
+ * Paths are NOT percent-encoded - semicolons must be literal in the subscription body.
  */
 function resourceToPath(resource: SubscriptionResource): string {
   if (resource === 'execution')     return '/rw/rapid/execution;ctrlexecstate';
@@ -98,7 +98,7 @@ function buildSubscriptionBody(resources: SubscriptionResource[]): string {
   resources.forEach((resource, index) => {
     const i = index + 1;
     const path = resourceToPath(resource);
-    // Do NOT encodeURIComponent the path — RWS expects literal semicolons
+    // Do NOT encodeURIComponent the path - RWS expects literal semicolons
     parts.push(`${i}=${path}&${i}-p=1`);
   });
   return parts.join('&');
@@ -171,7 +171,7 @@ export class WsSubscriber {
    *
    * Resolves only once the event WebSocket is open. If the socket fails before
    * opening (refused connection, failed upgrade), rejects with RwsError after
-   * best-effort deleting the subscription registered by the POST — otherwise the
+   * best-effort deleting the subscription registered by the POST - otherwise the
    * caller believes it has live events while the controller streams to nobody.
    *
    * @param resources - Array of resources to subscribe to
@@ -228,7 +228,7 @@ export class WsSubscriber {
 
     this.subscriptions.set(subscriptionId, sub);
 
-    // Step 3: open the WebSocket and wait for it — a subscription without a live
+    // Step 3: open the WebSocket and wait for it - a subscription without a live
     // event stream is worse than no subscription (silent staleness).
     try {
       await this.openWebSocket(sub);
@@ -236,7 +236,7 @@ export class WsSubscriber {
       sub.closed = true;
       sub.ws = null;
       this.subscriptions.delete(subscriptionId);
-      // Free the controller-side slot registered by the POST — best-effort
+      // Free the controller-side slot registered by the POST - best-effort
       await this.session.delete(sub.deleteUrl).catch(() => undefined);
       throw err;
     }
@@ -249,7 +249,7 @@ export class WsSubscriber {
         sub.ws = null;
       }
       this.subscriptions.delete(subscriptionId);
-      // Best-effort DELETE — ignore errors (controller may have already cleaned up)
+      // Best-effort DELETE - ignore errors (controller may have already cleaned up)
       await this.session.delete(sub.deleteUrl).catch(() => undefined);
     };
   }
@@ -311,7 +311,7 @@ export class WsSubscriber {
             sub.handler(e);
           }
         } catch {
-          // Silently discard unparseable messages — don't crash the subscriber
+          // Silently discard unparseable messages - don't crash the subscriber
         }
       };
 
@@ -322,12 +322,12 @@ export class WsSubscriber {
 
       ws.onclose = (event: Event & { wasClean?: boolean }): void => {
         if (!opened) {
-          // Never established — reject and let the caller decide (subscribe
+          // Never established - reject and let the caller decide (subscribe
           // deletes the registration; reconnect attempts consume a retry)
           failBeforeOpen();
           return;
         }
-        if (sub.closed) return; // intentional close — do not reconnect
+        if (sub.closed) return; // intentional close - do not reconnect
 
         if (!event.wasClean) {
           this.scheduleReconnect(sub);

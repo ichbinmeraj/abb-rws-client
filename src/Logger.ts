@@ -12,7 +12,7 @@
  *   - warn(msg):                   recoverable issues (subscription fallback)
  *   - error(msg, err?):            failures the user needs to see
  *   - trace(category, msg, data?): structured debug lines (HTTP req/res, WS frames,
- *                                  command dispatches). Optional — implementers can
+ *                                  command dispatches). Optional - implementers can
  *                                  ignore for terse output. Categories used by the
  *                                  lib: 'http.req', 'http.res', 'http.err', 'ws',
  *                                  'subscription', 'mastership'.

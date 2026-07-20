@@ -1,8 +1,8 @@
 /**
- * ResponseParser — pure functions that parse RWS 1.0 XML/XHTML responses into typed objects.
+ * ResponseParser - pure functions that parse RWS 1.0 XML/XHTML responses into typed objects.
  *
  * RWS returns XHTML with <li class="..."> elements containing <span class="..."> children.
- * Parsing uses regex + string methods only — no external XML libraries.
+ * Parsing uses regex + string methods only - no external XML libraries.
  * All functions throw RwsError('PARSE_ERROR') on malformed or missing data.
  */
 
@@ -151,7 +151,7 @@ export function parseOperationMode(xml: string): OperationMode {
  * Parse a /rw/rapid/execution XML response into an ExecutionState.
  * XML: <li class="rap-execution"><span class="ctrlexecstate">stopped</span><span class="cycle">forever</span></li>
  *
- * Note: some firmware versions emit the <li> with class "rap-execution-state" — we
+ * Note: some firmware versions emit the <li> with class "rap-execution-state" - we
  * try both and also fall back to a flat span search.
  */
 export function parseExecutionState(xml: string): ExecutionState {
@@ -361,7 +361,7 @@ export function parseRapidTasks(xml: string): RapidTask[] {
 }
 
 /**
- * Parse a /rw/panel/speedratio response into a number (0–100).
+ * Parse a /rw/panel/speedratio response into a number (0-100).
  * XML: <li class="pnl-speedratio"><span class="speedratio">100</span></li>
  */
 export function parseSpeedRatio(xml: string): number {
@@ -370,7 +370,7 @@ export function parseSpeedRatio(xml: string): number {
 }
 
 /**
- * Parse a /rw/rapid/symbol/data/... response — returns the raw value string.
+ * Parse a /rw/rapid/symbol/data/... response - returns the raw value string.
  * XML: <li class="rap-data"><span class="value">42</span></li>
  * The caller interprets the string (number, bool, array, record, etc.).
  */

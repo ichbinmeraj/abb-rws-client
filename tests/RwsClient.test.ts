@@ -40,7 +40,7 @@ function digestField(header: string, key: string): string | undefined {
   return bare?.[1];
 }
 
-/** Full RFC 2617 verification — recomputes the qop=auth response hash. */
+/** Full RFC 2617 verification - recomputes the qop=auth response hash. */
 function verifyDigest(header: string, method: string, url: string): boolean {
   if (!header.startsWith('Digest ')) return false;
   const username = digestField(header, 'username');
@@ -151,7 +151,7 @@ function makeClient(port: number, extra: Record<string, unknown> = {}): RwsClien
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('RwsClient — request shaping against a mock controller', () => {
+describe('RwsClient - request shaping against a mock controller', () => {
   let mock: MockController;
 
   beforeEach(async () => {
@@ -303,7 +303,7 @@ describe('RwsClient — request shaping against a mock controller', () => {
   });
 
   it('paces queued requests by the default 55 ms interval (asserted loosely)', async () => {
-    // No requestIntervalMs override — the constructor default (55 ms) applies.
+    // No requestIntervalMs override - the constructor default (55 ms) applies.
     const client = new RwsClient({
       host: '127.0.0.1',
       port: mock.port,

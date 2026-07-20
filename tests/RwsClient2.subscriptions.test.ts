@@ -80,7 +80,7 @@ async function startSubscriptionServer(opts: {
   } else {
     wss = new WebSocketServer({
       server,
-      // Echo the first offered subprotocol so the handshake succeeds regardless —
+      // Echo the first offered subprotocol so the handshake succeeds regardless -
       // the tests assert on what the client OFFERED, not what was selected.
       handleProtocols: protocols => {
         protocolsSeen.push([...protocols]);

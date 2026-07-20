@@ -4,7 +4,7 @@ import type { IRWSAdapter } from './IRWSAdapter.js';
 /**
  * RWS 2.0 adapter that satisfies the `IRWSAdapter` unified interface.
  *
- * Thin wrapper over `RwsClient2` — the protocol-level client. They expose the
+ * Thin wrapper over `RwsClient2` - the protocol-level client. They expose the
  * same public surface (the protocol method set IS the IRWSAdapter contract for
  * RWS 2.0); this class just brands the type with `implements IRWSAdapter` so
  * code that's polymorphic over RWS 1.0 + 2.0 (e.g. RobotManager) can hold

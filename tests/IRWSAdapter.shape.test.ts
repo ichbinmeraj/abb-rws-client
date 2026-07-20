@@ -13,7 +13,7 @@ import { RwsClient } from '../src/RwsClient.js';
 
 describe('IRWSAdapter shape', () => {
   it('RWS2Adapter is constructable and IRWSAdapter-compatible', () => {
-    // Construction is offline-safe — connect() is async and not invoked here.
+    // Construction is offline-safe - connect() is async and not invoked here.
     const a = new RWS2Adapter('https://127.0.0.1:5466', 'u', 'p');
     // Type-level assertion: drift will surface as a compile error.
     expectTypeOf<RWS2Adapter>().toMatchTypeOf<IRWSAdapter>();

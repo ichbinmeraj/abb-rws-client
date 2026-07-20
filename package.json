@@ -1,7 +1,7 @@
 {
   "name": "abb-rws-client",
   "version": "1.0.0",
-  "description": "Typed TypeScript/Node.js client for ABB Robot Web Services — supports both RWS 1.0 (IRC5/RobotWare 6) and RWS 2.0 (OmniCore/RobotWare 7).",
+  "description": "Typed TypeScript/Node.js client for ABB Robot Web Services - supports both RWS 1.0 (IRC5/RobotWare 6) and RWS 2.0 (OmniCore/RobotWare 7).",
   "keywords": [
     "abb",
     "robot",

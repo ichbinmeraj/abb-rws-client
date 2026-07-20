@@ -1,4 +1,4 @@
-// Explicit RWS 1.0 client — for IRC5 controllers (RobotWare 6.x).
+// Explicit RWS 1.0 client - for IRC5 controllers (RobotWare 6.x).
 // Use this when you only target RWS 1.0 and don't need protocol detection.
 
 import { RwsClient } from 'abb-rws-client';

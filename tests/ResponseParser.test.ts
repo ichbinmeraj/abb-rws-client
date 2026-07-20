@@ -285,7 +285,7 @@ describe('parseJointTarget', () => {
 });
 
 describe('parseRobTarget', () => {
-  it('parses x, y, z, q1–q4 as numbers', () => {
+  it('parses x, y, z, q1-q4 as numbers', () => {
     const rt = parseRobTarget(ROB_TARGET_XML);
     expect(rt.x).toBeCloseTo(512.34);
     expect(rt.y).toBeCloseTo(-123.45);
@@ -416,7 +416,7 @@ const SPEED_RATIO_XML = `<?xml version="1.0" encoding="utf-8"?>
 </div></body></html>`;
 
 // Live-verified 2026-07-09: RW6.16 emits a trailing space inside the span class
-// attribute — class="coldetstate " — the parser must still match it.
+// attribute - class="coldetstate " - the parser must still match it.
 const COLDET_XML = `<li class="pnl-coldetstate" title="collisiondetectstate"><span class="coldetstate ">INIT</span></li>`;
 
 const EXECUTION_FULL_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -636,7 +636,7 @@ describe('parseRapidSymbolProperties', () => {
   });
 
   // Live-verified 2026-07-09 on IRC5 RW6.16: persistents (tool0) return
-  // <li class="rap-symproppers"> — the parser only matches rap-sympropvar and
+  // <li class="rap-symproppers"> - the parser only matches rap-sympropvar and
   // currently throws PARSE_ERROR for them.
   it.fails('parses a PERS properties response (rap-symproppers li)', () => {
     const p = parseRapidSymbolProperties(SYMBOL_PROPERTIES_PERS_XML);
@@ -644,7 +644,7 @@ describe('parseRapidSymbolProperties', () => {
     expect(p.dattyp).toBe('tooldata');
   });
 
-  // Live-verified 2026-07-09: RW6.16 emits <span class="rdonly">, never "ro" —
+  // Live-verified 2026-07-09: RW6.16 emits <span class="rdonly">, never "ro" -
   // the ro field therefore never reflects the controller's readonly flag.
   it.fails('maps the live rdonly span onto the ro field', () => {
     expect(parseRapidSymbolProperties(SYMBOL_PROPERTIES_READONLY_XML).ro).toBe(true);

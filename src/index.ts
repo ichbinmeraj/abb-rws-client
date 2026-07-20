@@ -1,22 +1,22 @@
 /**
- * abb-rws-client — public API
+ * abb-rws-client - public API
  *
  * Typed HTTP/WebSocket client for ABB robot controllers, covering BOTH RWS protocols:
- *   - RWS 1.0 — IRC5 / RobotWare 6.x   → use `RwsClient` (HTTP Digest, JSON via ?json=1)
- *   - RWS 2.0 — OmniCore / RobotWare 7.x → use `RwsClient2` (HTTP Basic, XHTML;v=2.0)
+ *   - RWS 1.0 - IRC5 / RobotWare 6.x   → use `RwsClient` (HTTP Digest, JSON via ?json=1)
+ *   - RWS 2.0 - OmniCore / RobotWare 7.x → use `RwsClient2` (HTTP Basic, XHTML;v=2.0)
  *
- * Don't know which protocol the controller speaks? Use `createClient(host)` —
+ * Don't know which protocol the controller speaks? Use `createClient(host)` -
  * it probes the WWW-Authenticate header and returns the right one.
  *
  * For polymorphic code that wants a single type across both protocols, use
  * the `IRWSAdapter` interface and the `RWS1Adapter` / `RWS2Adapter` wrappers
- * — or the `createAdapter(host)` helper.
+ * - or the `createAdapter(host)` helper.
  *
  * Higher-level helpers:
- *   - `RobotManager` — connection lifecycle, polling, WS subscriptions, port discovery
- *   - `MultiRobotManager` — multi-controller orchestration
- *   - `XhtmlParser` — RWS 2.0 response parser (exported for advanced users)
- *   - `setLogger(impl)` — install your own logging backend
+ *   - `RobotManager` - connection lifecycle, polling, WS subscriptions, port discovery
+ *   - `MultiRobotManager` - multi-controller orchestration
+ *   - `XhtmlParser` - RWS 2.0 response parser (exported for advanced users)
+ *   - `setLogger(impl)` - install your own logging backend
  */
 
 // Protocol clients

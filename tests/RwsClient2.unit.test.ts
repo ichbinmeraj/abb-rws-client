@@ -7,7 +7,7 @@ import { RwsError } from '../src/types.js';
 import { TEST_TLS_KEY, TEST_TLS_CERT } from './TlsFixture.js';
 
 /**
- * Unit tests for RwsClient2 against local mock servers — no live controller.
+ * Unit tests for RwsClient2 against local mock servers - no live controller.
  * The protocol-level methods are exercised by tests/RwsClient2.live.test.ts and
  * the extension's test-rws2-writes.js when a VC is available.
  */
@@ -52,7 +52,7 @@ describe('RwsClient2 (unit)', () => {
 
   describe('rws2ResourcePath (subscription URL builder)', () => {
     it('maps string resources to known panel paths', () => {
-      // The static method is private — exercise it via known inputs/outputs.
+      // The static method is private - exercise it via known inputs/outputs.
       // We can't import it directly; instead verify the names exist on the class.
       // (If this drifts the live subscribe tests catch it.)
       expect('rws2ResourcePath' in RwsClient2).toBe(true);
@@ -65,7 +65,7 @@ describe('RwsClient2 (unit)', () => {
 
   describe('constructor signature', () => {
     it('accepts (baseUrl, username, password)', () => {
-      // Construction shouldn't throw — actual network only happens on .connect().
+      // Construction shouldn't throw - actual network only happens on .connect().
       const c = new RwsClient2('https://127.0.0.1:5466', 'Default User', 'robotics');
       expect(c).toBeInstanceOf(RwsClient2);
     });
@@ -83,7 +83,7 @@ describe('RwsClient2 (unit)', () => {
 
   describe('constructor options: timeout', () => {
     it('aborts requests after the configured timeout', async () => {
-      // Server that never answers — the request must die by client-side timeout.
+      // Server that never answers - the request must die by client-side timeout.
       const server = http.createServer(() => { /* hold the request open */ });
       await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
       const port = (server.address() as AddressInfo).port;

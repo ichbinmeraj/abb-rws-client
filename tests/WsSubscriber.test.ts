@@ -71,13 +71,13 @@ function makeFakeWs(behavior: 'open' | 'fail') {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('WsSubscriber — transport selection', () => {
+describe('WsSubscriber - transport selection', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it('default transport is the ws package, never native: Cookie and subprotocol reach the wire', async () => {
-    // Native (undici) WebSocket ignores the ws-style headers option — the Cookie
+    // Native (undici) WebSocket ignores the ws-style headers option - the Cookie
     // would be silently dropped and RWS 1.0 WS auth would fail. Prove the default
     // (no injected constructor) transport delivers both on the upgrade request.
     const nativeCtor = vi.fn();
@@ -137,7 +137,7 @@ describe('WsSubscriber — transport selection', () => {
   });
 });
 
-describe('WsSubscriber — subscribe awaits the WebSocket open', () => {
+describe('WsSubscriber - subscribe awaits the WebSocket open', () => {
   it('does not resolve before the WebSocket has opened', async () => {
     const { session } = makeFakeSession();
     const { FakeWs, state } = makeFakeWs('open');

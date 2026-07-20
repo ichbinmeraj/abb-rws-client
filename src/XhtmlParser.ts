@@ -23,7 +23,7 @@ export class XhtmlParser {
       const titleM = attrs.match(/title="([^"]*)"/);
       if (titleM) { fields['_title'] = titleM[1]; }
 
-      // href with rel="self" — stores the resource path (used for signal network/device)
+      // href with rel="self" - stores the resource path (used for signal network/device)
       const hrefM = inner.match(/href="([^"]*?)" rel="self"/);
       if (hrefM) { fields['_href'] = hrefM[1]; }
 

@@ -19,12 +19,12 @@ import type {
  *
  * Companion to `RwsClient` (RWS 1.0 / IRC5 / RobotWare 6.x). If you don't know
  * which protocol your controller uses, prefer `createClient(host)` from this
- * package — it probes the auth challenge and returns the right client.
+ * package - it probes the auth challenge and returns the right client.
  *
  * Key differences vs RWS 1.0 (all confirmed by live virtual-controller probing):
  * - HTTP Basic auth instead of Digest
  * - Path-based actions: /rw/rapid/execution/stop (not ?action=stop)
- * - GETs are negotiated as HAL JSON (Accept: application/hal+json;v=2.0 —
+ * - GETs are negotiated as HAL JSON (Accept: application/hal+json;v=2.0 -
  *   live-verified 2026-07-09 on RW7.21 for every GET family) with an automatic
  *   per-instance fallback to application/xhtml+xml;v=2.0 for older RW7
  *   releases; form-POST responses and subscription events are XHTML-only
@@ -46,11 +46,11 @@ export class RwsClient2 {
   /** When true, TLS certificate verification stays ON everywhere (requests, subscription POST, WebSocket). */
   private readonly rejectUnauthorized: boolean;
 
-  /** Session cookie set by the controller on first auth — REQUIRED to avoid creating
+  /** Session cookie set by the controller on first auth - REQUIRED to avoid creating
    *  a new session per request (controller's session pool fills in seconds otherwise). */
   private sessionCookie: string | null = null;
 
-  /** Signal name → {network, device} — populated by listAllSignals for writeSignal lookups */
+  /** Signal name → {network, device} - populated by listAllSignals for writeSignal lookups */
   private readonly sigCoords = new Map<string, { n: string; d: string }>();
 
   constructor(
@@ -80,7 +80,7 @@ export class RwsClient2 {
   private static readonly ACCEPT_XHTML = 'application/xhtml+xml;v=2.0';
 
   /** Set once a controller rejects hal+json (HTTP 406 or a non-JSON reply to a
-   *  hal+json GET) — older RW7 releases predate HAL JSON. All subsequent GETs on
+   *  hal+json GET) - older RW7 releases predate HAL JSON. All subsequent GETs on
    *  this instance then go straight to XHTML instead of re-negotiating each time. */
   private preferXhtml = false;
 
@@ -190,7 +190,7 @@ export class RwsClient2 {
             const contentType = String(res.headers['content-type'] ?? '');
             if (status === 406 || (status < 400 && !/json/i.test(contentType))) {
               this.preferXhtml = true;
-              Logger.trace?.('http.res', `RWS2 ${method} ${path} → ${status} (hal+json not served — falling back to XHTML for this client)`, {
+              Logger.trace?.('http.res', `RWS2 ${method} ${path} → ${status} (hal+json not served - falling back to XHTML for this client)`, {
                 protocol: 'rws2', method, path, status, durationMs, contentType,
               });
               resolve(this.req(method, path, body, rawBody, rawContentType, acceptExtra));
@@ -210,7 +210,7 @@ export class RwsClient2 {
               status === 429 ? 'RATE_LIMITED' : 'UNKNOWN';
             reject(new RwsError(
               `RWS2 ${method} ${path}: HTTP ${status}` +
-              (err ? ` — ${err.msg}` : ''),
+              (err ? ` - ${err.msg}` : ''),
               code, status, err?.msg
             ));
             return;
@@ -273,7 +273,7 @@ export class RwsClient2 {
    * Set the speed ratio (0-100). Live-verified format on OmniCore VC RW7.21
    * via scripts/probe-speedratio.js (2026-05-07):
    *   ✓ POST /rw/panel/speedratio?action=setspeedratio  body speed-ratio=N
-   *     (RWS 1.0 wire format — OmniCore kept the legacy path)
+   *     (RWS 1.0 wire format - OmniCore kept the legacy path)
    *     Requires `edit` mastership: 403 "user does not have required
    *     mastership" without it.
    *   ✗ POST /rw/panel/speedratio  body speedratio=N  → 400 "Invalid input form data"
@@ -309,14 +309,14 @@ export class RwsClient2 {
   }
 
   /**
-   * Switch the controller's operation mode. **Virtual controllers only** —
+   * Switch the controller's operation mode. **Virtual controllers only** -
    * real hardware respects the FlexPendant key switch.
    *
-   * Endpoint + wire format — ALL live-verified on OmniCore VC RW7.x via
+   * Endpoint + wire format - ALL live-verified on OmniCore VC RW7.x via
    * scripts/probe-opmode-write.js (2026-05-07):
    *   ✓ POST /rw/panel/opmode  body opmode=auto  → AUTO (200 OK)
    *   ✓ POST /rw/panel/opmode  body opmode=man   → MANR (200 OK)
-   *   ✓ POST /rw/panel/opmode  body opmode=manf  → MANF (200 OK) — NOTE: `manf`,
+   *   ✓ POST /rw/panel/opmode  body opmode=manf  → MANF (200 OK) - NOTE: `manf`,
    *      NOT `manfs` as RWS 1.0 uses. RWS 2.0 dropped the 's'.
    *   ✗ POST /rw/panel/opmode/set                → 404 (path doesn't exist)
    *   ✗ POST /rw/panel/opmode  body opmode=AUTO  → 400 invalid value
@@ -329,7 +329,7 @@ export class RwsClient2 {
    *
    * Side note: the controller pops up a confirmation dialog on the FlexPendant
    * after the call returns 200 OK; the operator must approve before the mode
-   * actually flips. There is no API path to bypass this — UAS-grant changes
+   * actually flips. There is no API path to bypass this - UAS-grant changes
    * are FlexPendant-only by design.
    */
   setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
@@ -437,7 +437,7 @@ export class RwsClient2 {
 
   /**
    * Returns each loaded module's name + type (SysMod | ProgMod | …).
-   * Single round-trip — same endpoint as `listModules` but exposes more fields.
+   * Single round-trip - same endpoint as `listModules` but exposes more fields.
    */
   async listModulesDetailed(task: string): Promise<Array<{ name: string; type: string }>> {
     const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/modules`));
@@ -451,7 +451,7 @@ export class RwsClient2 {
     // (The /program/load endpoint is for full multi-module .pgf programs and uses a different
     // "virtual root" path scheme that doesn't accept user-uploaded HOME/* files.)
     //
-    // The path needs to be in fileservice form WITHOUT the leading `$` — translate
+    // The path needs to be in fileservice form WITHOUT the leading `$` - translate
     // `$HOME/...` → `HOME/...` so the same code works for callers passing either format.
     const modulePath = path.replace(/^\$HOME\//, 'HOME/').replace(/^\$/, '');
     const body: Record<string, string> = { modulepath: modulePath };
@@ -466,7 +466,7 @@ export class RwsClient2 {
   }
 
   async getRapidVariable(task: string, module: string, symbol: string): Promise<string> {
-    // RWS 2.0 symbol API: suffix-style — /rw/rapid/symbol/{symburl}/data
+    // RWS 2.0 symbol API: suffix-style - /rw/rapid/symbol/{symburl}/data
     // (RWS 1.0 puts /data at the front: /rw/rapid/symbol/data/{symburl})
     const p = RwsClient2.parse(
       await this.req('GET', `/rw/rapid/symbol/RAPID/${task}/${module}/${symbol}/data`)
@@ -479,7 +479,7 @@ export class RwsClient2 {
   }
 
   async validateRapidValue(task: string, value: string, datatype: string): Promise<boolean> {
-    // RWS 2.0: endpoint path differs — use per-task validate
+    // RWS 2.0: endpoint path differs - use per-task validate
     try {
       await this.req('POST', `/rw/rapid/symbol/RAPID/${task}/data?action=validate`, {
         value, dattyp: datatype,
@@ -514,7 +514,7 @@ export class RwsClient2 {
 
   async searchRapidSymbols(params: RapidSymbolSearchParams): Promise<RapidSymbolInfo[]> {
     // RWS 2.0 /rw/rapid/symbols/search expects view=block + blockurl + symtyp=any
-    // (NOT a `task` field — that returns 400 "Invalid parameter").
+    // (NOT a `task` field - that returns 400 "Invalid parameter").
     // It returns one <li> per match. The `class` of the <li> tells you the kind:
     //   rap-sympropvar-li  → variable (VAR)
     //   rap-syproppers-li  → persistent (PERS)
@@ -522,7 +522,7 @@ export class RwsClient2 {
     //   rap-sympropproc-li → procedure (PROC)
     //   rap-sympropfun-li  → function (FUNC)
     //   rap-sympropmod-li  → module
-    // Earlier versions only parsed vars — missing all the routines.
+    // Earlier versions only parsed vars - missing all the routines.
     const body: Record<string, string> = {};
     if (params.view)      { body['view']      = params.view; }
     if (params.vartyp)    { body['vartyp']    = params.vartyp; }
@@ -638,7 +638,7 @@ export class RwsClient2 {
   }
 
   setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
-    // PUT /ctrl/clock — field names confirmed from RwsClient ResourceMapper
+    // PUT /ctrl/clock - field names confirmed from RwsClient ResourceMapper
     return this.req('PUT', '/ctrl/clock', {
       'sys-clock-year':  String(year),
       'sys-clock-month': String(month),
@@ -709,7 +709,7 @@ export class RwsClient2 {
       if (!c) {
         // Without coordinates the URL would degenerate to /signals///{name}/set-value.
         return Promise.reject(new RwsError(
-          `writeSignal: network/device unknown for signal "${name}" — pass them explicitly or call listAllSignals() first`,
+          `writeSignal: network/device unknown for signal "${name}" - pass them explicitly or call listAllSignals() first`,
           'UNKNOWN',
         ));
       }
@@ -799,7 +799,7 @@ export class RwsClient2 {
    * parent of the current request path (matches the controller's relative
    * hrefs; live-verified on the XHTML `rel="next"` links and, 2026-07-09 on
    * RW7.21, on the HAL `_links.next.href` form). Both representations XML-escape
-   * ampersands in the href — even inside JSON strings — hence the unescape.
+   * ampersands in the href - even inside JSON strings - hence the unescape.
    * Returns '' when there is no further page.
    */
   private static nextPagePath(responseBody: string, currentPath: string): string {
@@ -811,7 +811,7 @@ export class RwsClient2 {
   }
 
   async listCfgTypes(domain: string): Promise<string[]> {
-    // Live-verified class: cfg-dt-li (datatype-li). Paginated — controller returns 70/page.
+    // Live-verified class: cfg-dt-li (datatype-li). Paginated - controller returns 70/page.
     // Pagination quirk: the `rel="next"` href is relative to the response's <base href>
     // which is /rw/cfg/, NOT to /rw/. Resolve relative to the current request's parent path.
     const types: string[] = [];
@@ -832,14 +832,14 @@ export class RwsClient2 {
     // Each is class="cfg-dt-instance-li" with the instance name as the title attribute.
     // Paginated: controller returns 70/page with `rel="next"` link.
     // Note: a few "types" returned by listCfgTypes are placeholders (e.g. SYS/SYSTEM_NAME)
-    // that error with HTTP 400 "Invalid type id" — return [] silently for those.
+    // that error with HTTP 400 "Invalid type id" - return [] silently for those.
     const instances: string[] = [];
     let path = `/rw/cfg/${domain}/${type}/instances`;
     let pages = 0;
     while (path && pages < 50) {
       let html: string;
       try { html = await this.req('GET', path); }
-      catch { return instances; } // invalid type or no permission — silent empty
+      catch { return instances; } // invalid type or no permission - silent empty
       const p = RwsClient2.parse(html);
       instances.push(...p.getAllStates('cfg-dt-instance-li').map(i => i['_title'] ?? '').filter(Boolean));
       path = RwsClient2.nextPagePath(html, path);
@@ -922,7 +922,7 @@ export class RwsClient2 {
   // ─── Backup / Restore `/ctrl/backup` ────────────────────────────────────────
 
   async listBackups(): Promise<Array<{ name: string; created?: string; size?: number }>> {
-    // Backups live under /fileservice/BACKUP — list that volume
+    // Backups live under /fileservice/BACKUP - list that volume
     try {
       const p = RwsClient2.parse(await this.req('GET', '/fileservice/BACKUP'));
       return p.getAllStates('fs-dir').map(d => ({
@@ -1055,7 +1055,7 @@ export class RwsClient2 {
 
   /**
    * Request mastership on `domain` and receive a numeric ID token. Use the ID
-   * with `releaseMastershipWithId()` from a different session — useful when a
+   * with `releaseMastershipWithId()` from a different session - useful when a
    * client needs mastership to outlive the cookie that acquired it (e.g. a
    * webapp that periodically reconnects). Token-based release is the only way
    * to free a stuck mastership after session loss without a controller restart.
@@ -1069,7 +1069,7 @@ export class RwsClient2 {
 
   /**
    * Release mastership previously acquired via `requestMastershipWithId()`.
-   * Body parameter is `mastershipid` (no dash — controller-specific naming
+   * Body parameter is `mastershipid` (no dash - controller-specific naming
    * confirmed via 400 "Invalid value" probing; the dash variant returns the
    * same error code as a missing value).
    */
@@ -1089,7 +1089,7 @@ export class RwsClient2 {
     return this.req('POST', '/rw/mastership/watchdog').then(() => {});
   }
 
-  /** Read mastership status for one domain — returns 'nomaster' | 'remote' | 'local' | similar. */
+  /** Read mastership status for one domain - returns 'nomaster' | 'remote' | 'local' | similar. */
   async getMastershipStatus(domain: MastershipDomain): Promise<{ mastership: string; uid?: string; application?: string }> {
     const p = RwsClient2.parse(await this.req('GET', `/rw/mastership/${this.rws2Domain(domain)}`));
     const d = p.getState('msh-resource');
@@ -1127,7 +1127,7 @@ export class RwsClient2 {
 
   /**
    * List ALL configured I/O devices across every network in one call.
-   * (`listDevices(network)` is the per-network variant — both are fine; this
+   * (`listDevices(network)` is the per-network variant - both are fine; this
    * one's handy when you want a flat overview without enumerating networks first.)
    */
   async listAllIoDevices(): Promise<Array<{ name: string; network: string; lstate: string; pstate: string; address: string }>> {
@@ -1152,7 +1152,7 @@ export class RwsClient2 {
    * Mirror of `calcJointsFromCartesian()` (which is inverse kinematics).
    *
    * Note: like IK, virtual controllers without the PC Interface (616-1) option
-   * generally reject this — the response comes back HTTP 200 but the body
+   * generally reject this - the response comes back HTTP 200 but the body
    * contains a retcode error link instead of the result. Real hardware with
    * PC Interface licensed returns a valid pose.
    */
@@ -1173,7 +1173,7 @@ export class RwsClient2 {
       throw new Error(`FK rejected: ${p.getError()?.msg ?? 'unknown'} (likely missing PC Interface 616-1 license)`);
     }
     // RWS 2.0 sometimes returns HTTP 200 with the error embedded as
-    // `<a href="…/retcode?code=N" rel="error"/>` — no <span class="code"> block.
+    // `<a href="…/retcode?code=N" rel="error"/>` - no <span class="code"> block.
     // Match either attribute order (href-first or rel-first).
     const errLink = xhtml.match(/<a [^>]*retcode\?code=(-?\d+)[^>]*rel="error"|<a [^>]*rel="error"[^>]*retcode\?code=(-?\d+)/);
     if (errLink) {
@@ -1312,7 +1312,7 @@ export class RwsClient2 {
     await this.req('POST', '/ctrl/compress', { source, destination });
   }
 
-  // ─── File service — list volumes ──────────────────────────────────────────
+  // ─── File service - list volumes ──────────────────────────────────────────
 
   async listFileVolumes(): Promise<string[]> {
     try {
@@ -1429,17 +1429,17 @@ export class RwsClient2 {
   // ─── Module detailed endpoints ──────────────────────────────────────────────
 
   async getModuleSource(task: string, moduleName: string): Promise<string> {
-    // Program memory is the source of truth — the save round-trip reads it
+    // Program memory is the source of truth - the save round-trip reads it
     // directly, so it is the PRIMARY path. A direct file read can return a
     // stale on-disk copy (module edited in memory, or a leftover HOME file
     // shadowing a module that was actually loaded from .pgf / RobotStudio),
     // and module metadata exposes no reliable backing path to trust: the
     // per-module GET only carries a bare `filename` span (live-verified
-    // 2026-07-09 on OmniCore VC RW7.21 — no path/file-path field exists).
+    // 2026-07-09 on OmniCore VC RW7.21 - no path/file-path field exists).
     try {
       return await this.readModuleViaSave(task, moduleName);
     } catch {
-      // Save endpoint failed (permissions, disk, transient) — fall back to the
+      // Save endpoint failed (permissions, disk, transient) - fall back to the
       // backing file named by metadata, or the conventional HOME location.
       const info = await this.getModuleInfo(task, moduleName).catch(() => ({} as Record<string, string>));
       const filepath = info['path'] ?? info['file-path']
@@ -1453,7 +1453,7 @@ export class RwsClient2 {
    * Live-verified 2026-07-08 on OmniCore VC RW7.21:
    *   POST /rw/rapid/tasks/{task}/modules/{module}/save  body name=<tmp>&path=TEMP:
    *   → 204, no mastership required. The controller ALWAYS appends '.modx' to
-   *   the given name (even for SysMod modules — never '.sysx'), so the name is
+   *   the given name (even for SysMod modules - never '.sysx'), so the name is
    *   passed without extension. TEMP: avoids any risk of clobbering HOME files.
    */
   private async readModuleViaSave(task: string, moduleName: string): Promise<string> {
@@ -1474,7 +1474,7 @@ export class RwsClient2 {
   async getModuleInfo(task: string, moduleName: string): Promise<Record<string, string>> {
     // Live-verified 2026-07-09 on OmniCore VC RW7.21: the per-module GET returns
     // <li class="rap-module" title="{task}/{module}"> with spans modname,
-    // filename (bare name like 'BASE.sysx' — NO path) and attribute.
+    // filename (bare name like 'BASE.sysx' - NO path) and attribute.
     // (rap-module-info-li is the class used by the module LIST endpoint.)
     const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/modules/${encodeURIComponent(moduleName)}`));
     const d = p.getState('rap-module');
@@ -1505,7 +1505,7 @@ export class RwsClient2 {
   }
 
   async getTaskProgramInfo(task: string): Promise<Record<string, string>> {
-    // Endpoint returns 204 (no content) when no program is loaded — caller handles this.
+    // Endpoint returns 204 (no content) when no program is loaded - caller handles this.
     const xml = await this.req('GET', `/rw/rapid/tasks/${task}/program`);
     if (!xml) { return {}; }
     return RwsClient2.parse(xml).getState('rap-program-info') || {};
@@ -1515,7 +1515,7 @@ export class RwsClient2 {
 
   /**
    * Maps a SubscriptionResource to the RWS 2.0 path;stateParam string.
-   * Semicolons must NOT be URL-encoded — the controller requires them literal.
+   * Semicolons must NOT be URL-encoded - the controller requires them literal.
    */
   private static rws2ResourcePath(r: SubscriptionResource): string | null {
     if (typeof r === 'string') {
@@ -1561,12 +1561,12 @@ export class RwsClient2 {
   private static readonly WS_OPEN_TIMEOUT_MS = 8000;
 
   /**
-   * POST /subscription — accept HTTP 201 (Created).
+   * POST /subscription - accept HTTP 201 (Created).
    * Captures the Location header (authoritative WS URL) and the group resource
-   * path (`/subscription/{id}` — the URL a DELETE must target to free the group).
+   * path (`/subscription/{id}` - the URL a DELETE must target to free the group).
    *
    * Rides the client's main HTTP session: live-verified 2026-07-09 on OmniCore
-   * VC RW7.21 (probe-sub-session.mjs) — POST /subscription with the existing
+   * VC RW7.21 (probe-sub-session.mjs) - POST /subscription with the existing
    * session Cookie returns 201 with NO Set-Cookie (no new session minted) and
    * the WebSocket authenticates with that same cookie. Without the Cookie the
    * controller mints one session per subscribe, and reconnect loops would burn
@@ -1590,7 +1590,7 @@ export class RwsClient2 {
           'Content-Length': String(encoded.length),
           ...(this.sessionCookie ? { Cookie: this.sessionCookie } : {}),
         },
-        // Per-request as well as on the agent — see req() for why (issue #2).
+        // Per-request as well as on the agent - see req() for why (issue #2).
         ...(this.isHttps
           ? { agent: this.httpsAgent, ...(this.rejectUnauthorized ? {} : { rejectUnauthorized: false }) }
           : {}),
@@ -1626,7 +1626,7 @@ export class RwsClient2 {
           const deleteUrl = groupId ? `/subscription/${groupId}` : '';
 
           // Capture the session cookie if this POST minted one (first-ever request
-          // on this client) — same capture rule as req(). The WebSocket authenticates
+          // on this client) - same capture rule as req(). The WebSocket authenticates
           // with Cookie, NOT Authorization.
           const setCookies = (res.headers['set-cookie'] ?? []) as string[];
           if (setCookies.length > 0 && !this.sessionCookie) {
@@ -1656,7 +1656,7 @@ export class RwsClient2 {
     const parts = [`resources=${paths.length}`];
     paths.forEach((p, i) => {
       // Format: <idx>=<path;stateParam>&<idx>-p=<priority>
-      // Semicolons must be LITERAL — do NOT encodeURIComponent
+      // Semicolons must be LITERAL - do NOT encodeURIComponent
       parts.push(`${i + 1}=${p}&${i + 1}-p=1`);
     });
     const bodyStr = parts.join('&');
@@ -1681,12 +1681,12 @@ export class RwsClient2 {
 
     // Best-effort removal of a subscription group (DELETE /subscription/{id}).
     // Groups live as long as the session that owns them, and the session is the
-    // client's main one — orphaned groups would pile up on every reconnect.
+    // client's main one - orphaned groups would pile up on every reconnect.
     const dropGroup = (path: string): Promise<void> =>
       path ? this.req('DELETE', path).then(() => {}, () => {}) : Promise.resolve();
 
     // The subscription rides the main HTTP session (see createSubscription), so a
-    // dropped WebSocket does NOT invalidate the group — but its poll URL is spent.
+    // dropped WebSocket does NOT invalidate the group - but its poll URL is spent.
     // Every (re)connect drops the previous group, then POSTs a fresh /subscription
     // on the same session; no extra sessions are ever minted.
     const open = async (): Promise<void> => {
@@ -1699,7 +1699,7 @@ export class RwsClient2 {
 
       // 2. Open WebSocket and wait for confirmation it actually connected.
       //    Auth: Cookie from subscription response (NOT Authorization header).
-      //    Subprotocol: "rws_subscription" — the RWS 2.0 name. Live-verified 2026-07-08
+      //    Subprotocol: "rws_subscription" - the RWS 2.0 name. Live-verified 2026-07-08
       //    on OmniCore VC RW7.21: "robapi2_subscription" (the RWS 1.0 name) is rejected
       //    with HTTP 400; "rws_subscription" upgrades with 101.
       const ws = new WsImpl(wsUrl, ['rws_subscription'], {
@@ -1751,7 +1751,7 @@ export class RwsClient2 {
         });
       });
 
-      // Unsubscribed while the handshake was in flight — discard the connection.
+      // Unsubscribed while the handshake was in flight - discard the connection.
       if (conn.closed) {
         ws.close();
         dropGroup(deleteUrl);
@@ -1784,7 +1784,7 @@ export class RwsClient2 {
         }
       });
 
-      // Non-fatal error after open — the matching 'close' event drives cleanup/reconnect.
+      // Non-fatal error after open - the matching 'close' event drives cleanup/reconnect.
       ws.on('error', (err: Error) => {
         console.warn('[RWS2] WebSocket error:', err.message);
       });
@@ -1797,29 +1797,29 @@ export class RwsClient2 {
 
     const scheduleReconnect = (): void => {
       // unsubscribe() clears the pending timer, but an open() already in
-      // flight lands here through its .catch — without this guard it would
+      // flight lands here through its .catch - without this guard it would
       // keep retrying (and eventually fire onLost) after the consumer left.
       if (conn.closed) { return; }
       if (conn.attempts >= RwsClient2.WS_RECONNECT_MAX_ATTEMPTS) {
-        const msg = `RWS2 subscription lost — giving up after ${conn.attempts} reconnect attempts`;
+        const msg = `RWS2 subscription lost - giving up after ${conn.attempts} reconnect attempts`;
         Logger.error(msg);
         console.error(`[RWS2] ${msg}`);
         void dropGroup(conn.deleteUrl);
         conn.deleteUrl = '';
         if (!conn.lostNotified) {
           conn.lostNotified = true;
-          try { onLost?.(); } catch { /* consumer callback — never let it break us */ }
+          try { onLost?.(); } catch { /* consumer callback - never let it break us */ }
         }
         return;
       }
       const delay = RwsClient2.WS_RECONNECT_BASE_MS * 2 ** conn.attempts;
       conn.attempts++;
-      Logger.trace?.('subscription', `RWS2 WebSocket dropped — reconnect attempt ${conn.attempts} in ${delay} ms`);
+      Logger.trace?.('subscription', `RWS2 WebSocket dropped - reconnect attempt ${conn.attempts} in ${delay} ms`);
       conn.reconnectTimer = setTimeout(() => {
         open()
           .then(() => {
             if (conn.closed) {
-              // unsubscribe() won the race against this reconnect — tear the
+              // unsubscribe() won the race against this reconnect - tear the
               // fresh socket/group down instead of leaving a zombie stream.
               conn.ws?.close();
               const url = conn.deleteUrl;
@@ -1838,7 +1838,7 @@ export class RwsClient2 {
 
     await open();
 
-    // 5. Return unsubscribe — close WS and DELETE the subscription group
+    // 5. Return unsubscribe - close WS and DELETE the subscription group
     return async () => {
       conn.closed = true;
       if (conn.reconnectTimer) { clearTimeout(conn.reconnectTimer); }
@@ -1856,7 +1856,7 @@ export class RwsClient2 {
 
   /**
    * Effective RMMP privilege held by THIS session.
-   * The controller's /users/rmmp returns whoever currently holds the privilege —
+   * The controller's /users/rmmp returns whoever currently holds the privilege -
    * we have to check `rmmpheldbyme` to know whether it's us or some other user.
    * Returns 'none' if another user holds it (we'd need to re-request for our own session).
    */
@@ -1910,7 +1910,7 @@ export class RwsClient2 {
   // ─── Simulation panel (virtual controllers only) ─────────────────────────────
   // RobotWare 7 VCs expose the panel hardware (e-stop chain, enabling device) and
   // a joint-teleport endpoint for simulation. Real controllers do not serve these
-  // paths (404) — the FlexPendant hardware is the source of truth there — so every
+  // paths (404) - the FlexPendant hardware is the source of truth there - so every
   // method below translates a 404 into a clear "virtual controllers only" error.
   // All wire shapes live-verified 2026-07-09 on an OmniCore VC RW7.21.
 
@@ -1926,7 +1926,7 @@ export class RwsClient2 {
     } catch (e) {
       if (e instanceof RwsError && e.httpStatus === 404) {
         throw new RwsError(
-          `${label}: ${path} returned 404 — simulation endpoints exist only on RobotWare 7 virtual controllers (not on real hardware or RW6)`,
+          `${label}: ${path} returned 404 - simulation endpoints exist only on RobotWare 7 virtual controllers (not on real hardware or RW6)`,
           'UNKNOWN', 404, e.rwsDetail,
         );
       }
@@ -1935,19 +1935,19 @@ export class RwsClient2 {
   }
 
   /**
-   * Engage the (internal) emergency stop — controller state goes to
+   * Engage the (internal) emergency stop - controller state goes to
    * `emergencystop`. Live-verified 2026-07-09 on OmniCore VC RW7.21:
    *   POST /rw/panel/emergency-stop  body `state=off` → 204.
    * The polarity is INVERTED from the ABB Swagger example: state=off OPENS the
    * safety chain (engages the stop), state=on closes it again. Fully reversible
-   * on a VC via {@link simResetEmergencyStop} — no physical reset step exists
+   * on a VC via {@link simResetEmergencyStop} - no physical reset step exists
    * there (unlike real hardware, which latches until the button is released).
    */
   simEmergencyStop(): Promise<void> {
     return this.simPost('simEmergencyStop', '/rw/panel/emergency-stop', { state: 'off' });
   }
 
-  /** Release the simulated emergency stop (`state=on`) — controller returns to
+  /** Release the simulated emergency stop (`state=on`) - controller returns to
    *  `motoroff`. See {@link simEmergencyStop} for the polarity note. */
   simResetEmergencyStop(): Promise<void> {
     return this.simPost('simResetEmergencyStop', '/rw/panel/emergency-stop', { state: 'on' });
@@ -1984,7 +1984,7 @@ export class RwsClient2 {
   }
 
   /**
-   * Teleport a mechanical unit to absolute joint values (degrees) — the VC
+   * Teleport a mechanical unit to absolute joint values (degrees) - the VC
    * equivalent of dragging the robot in RobotStudio; no motors, mastership, or
    * program stop needed. Live-verified 2026-07-09 on OmniCore VC RW7.21:
    *   POST /rw/motionsystem/mechunits/{mechunit}/position
@@ -1993,7 +1993,7 @@ export class RwsClient2 {
    * "No rob_joint parameter"), which is why `extJoints` defaults to six zeros.
    * The readback (`getJointPositions`) may show sub-µdeg float rounding.
    * Caveat (live-verified 2026-07-09): while an operation-mode change is
-   * pending (opmode AUTO_CH — FlexPendant acknowledge outstanding) the endpoint
+   * pending (opmode AUTO_CH - FlexPendant acknowledge outstanding) the endpoint
    * answers 403 "Operation not allowed for user in current operation mode".
    */
   async teleportMechunit(mechunit: string, joints: number[], extJoints?: number[]): Promise<void> {
@@ -2137,7 +2137,7 @@ export class RwsClient2 {
 
   async getProgramPointer(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number; executionType?: string }> {
     // Live-verified: class="pcp-info" with spans:
-    //   modulemame (sic — controller typo for modulename)
+    //   modulemame (sic - controller typo for modulename)
     //   routinename
     //   beginposition  → "row,col" combined string
     //   endposition    → "row,col"

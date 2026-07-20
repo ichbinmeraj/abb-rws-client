@@ -1,4 +1,4 @@
-# VALIDATION.md — Manual Validation Guide
+# VALIDATION.md - Manual Validation Guide
 
 Procedures for validating `abb-rws-client` against a real ABB IRC5 controller or ABB RobotStudio virtual controller.
 
@@ -40,7 +40,7 @@ Run with: `node validate.mjs`
 
 ---
 
-## Scenario 1 — Basic smoke test (connect to RobotStudio virtual controller)
+## Scenario 1 - Basic smoke test (connect to RobotStudio virtual controller)
 
 **Setup**: Start ABB RobotStudio → Create new station → Start virtual controller at `127.0.0.1:80`.
 
@@ -54,7 +54,7 @@ console.log('Controller state:', state);
 
 ---
 
-## Scenario 2 — Digest auth challenge-response
+## Scenario 2 - Digest auth challenge-response
 
 **Validation**: Observe the first HTTP exchange in Wireshark or by adding a debug log to `HttpSession.ts`.
 
@@ -66,7 +66,7 @@ console.log('Controller state:', state);
 
 ---
 
-## Scenario 3 — Session cookie persists across 10+ consecutive requests
+## Scenario 3 - Session cookie persists across 10+ consecutive requests
 
 ```js
 for (let i = 0; i < 12; i++) {
@@ -79,7 +79,7 @@ for (let i = 0; i < 12; i++) {
 
 ---
 
-## Scenario 4 — Rate limiter prevents 429/503 under rapid calls
+## Scenario 4 - Rate limiter prevents 429/503 under rapid calls
 
 ```js
 // Fire 20 requests as fast as possible
@@ -92,7 +92,7 @@ console.log(`All ${results.length} requests completed`);
 
 ---
 
-## Scenario 5 — Upload a `.mod` file
+## Scenario 5 - Upload a `.mod` file
 
 ```js
 const modContent = `MODULE TestMod
@@ -105,13 +105,13 @@ await client.uploadModule('$HOME/TestMod.mod', modContent);
 console.log('✓ File uploaded to $HOME/TestMod.mod');
 ```
 
-**Verify**: In RobotStudio → Controller tab → File System → HOME directory — `TestMod.mod` should be listed.
+**Verify**: In RobotStudio → Controller tab → File System → HOME directory - `TestMod.mod` should be listed.
 
 **Pass criteria**: No exception; file visible on controller filesystem.
 
 ---
 
-## Scenario 6 — Load uploaded module into RAPID task
+## Scenario 6 - Load uploaded module into RAPID task
 
 ```js
 await client.loadModule('T_ROB1', '$HOME/TestMod.mod');
@@ -126,7 +126,7 @@ console.log('Loaded modules:', modules);
 
 ---
 
-## Scenario 7 — Start and stop RAPID execution; verify state transitions
+## Scenario 7 - Start and stop RAPID execution; verify state transitions
 
 ```js
 // Motor on and AUTO mode required for this scenario
@@ -145,7 +145,7 @@ console.log('After stop:', state); // Expected: 'stopped'
 
 ---
 
-## Scenario 8 — Read a digital input signal value
+## Scenario 8 - Read a digital input signal value
 
 ```js
 // Replace 'Local', 'DRV_1', 'DI_1' with actual signal coordinates from your system
@@ -157,7 +157,7 @@ console.log(`Signal ${sig.name} = ${sig.value} (type: ${sig.type})`);
 
 ---
 
-## Scenario 9 — Write a digital output signal value
+## Scenario 9 - Write a digital output signal value
 
 ```js
 // Ensure DO_1 is a writable digital output in your I/O configuration
@@ -172,7 +172,7 @@ console.log('Read back:', sig.value); // Expected: '1'
 
 ---
 
-## Scenario 10 — Subscribe to execution state changes
+## Scenario 10 - Subscribe to execution state changes
 
 ```js
 const unsubscribe = await client.subscribe(['execution'], (event) => {
@@ -187,11 +187,11 @@ await new Promise(r => setTimeout(r, 1000));
 await unsubscribe();
 ```
 
-**Pass criteria**: At least 2 events received — one with `value='running'` and one with `value='stopped'`.
+**Pass criteria**: At least 2 events received - one with `value='running'` and one with `value='stopped'`.
 
 ---
 
-## Scenario 11 — Subscribe to a signal value change
+## Scenario 11 - Subscribe to a signal value change
 
 ```js
 const unsubscribe = await client.subscribe(
@@ -213,7 +213,7 @@ await unsubscribe();
 
 ---
 
-## Scenario 12 — Session expiry recovery
+## Scenario 12 - Session expiry recovery
 
 ```js
 // Step 1: Establish session
@@ -232,7 +232,7 @@ console.log('State after re-auth:', state);
 
 ---
 
-## Scenario 13 — Network disconnect recovery (WsSubscriber)
+## Scenario 13 - Network disconnect recovery (WsSubscriber)
 
 ```js
 const unsubscribe = await client.subscribe(['execution'], (event) => {
@@ -254,7 +254,7 @@ await unsubscribe();
 
 ---
 
-## Scenario 14 — Wrong credentials → RwsError AUTH_FAILED
+## Scenario 14 - Wrong credentials → RwsError AUTH_FAILED
 
 ```js
 const badClient = new RwsClient({
@@ -279,7 +279,7 @@ try {
 
 ---
 
-## Scenario 15 — Motors off state → RwsError MOTORS_OFF
+## Scenario 15 - Motors off state → RwsError MOTORS_OFF
 
 **Setup**: Set controller to motors-off state (press E-stop or use FlexPendant).
 
@@ -297,4 +297,4 @@ try {
 }
 ```
 
-**Pass criteria**: `RwsError` thrown with `code === 'MOTORS_OFF'`. Note that the exact HTTP status from the controller when motors are off may vary by firmware version — check `e.httpStatus` and `e.rwsDetail` if the code is `'UNKNOWN'`.
+**Pass criteria**: `RwsError` thrown with `code === 'MOTORS_OFF'`. Note that the exact HTTP status from the controller when motors are off may vary by firmware version - check `e.httpStatus` and `e.rwsDetail` if the code is `'UNKNOWN'`.

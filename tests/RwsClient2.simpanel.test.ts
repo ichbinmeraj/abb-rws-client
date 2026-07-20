@@ -6,10 +6,10 @@ import { RWS1Adapter } from '../src/RWS1Adapter.js';
 import { RwsError } from '../src/types.js';
 
 /**
- * Simulation-panel methods — VC-only endpoints (RobotWare 7 virtual controllers).
+ * Simulation-panel methods - VC-only endpoints (RobotWare 7 virtual controllers).
  * Wire shapes live-verified 2026-07-09 on an OmniCore VC RW7.21:
  * the stop endpoints take a single `state` key whose polarity is INVERTED from
- * the Swagger example — state=off ENGAGES the stop (opens the safety chain),
+ * the Swagger example - state=off ENGAGES the stop (opens the safety chain),
  * state=on RELEASES it. Teleport posts rob_joint/ext_joint bracket lists.
  */
 
@@ -55,7 +55,7 @@ async function withClient(
 }
 
 describe('RwsClient2 simulation panel (VC-only)', () => {
-  it('simEmergencyStop engages the e-stop (state=off — inverted polarity)', () =>
+  it('simEmergencyStop engages the e-stop (state=off - inverted polarity)', () =>
     withClient(ok204, async (client, requests) => {
       await client.simEmergencyStop();
       expect(requests[0].method).toBe('POST');

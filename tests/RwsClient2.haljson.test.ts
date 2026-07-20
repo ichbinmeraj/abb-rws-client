@@ -8,7 +8,7 @@ import { RwsError } from '../src/types.js';
  * RWS 2.0 HAL JSON primary path + XHTML fallback.
  *
  * All JSON fixtures below are captured from a live OmniCore VC RW7.21
- * (2026-07-09, GET with Accept: application/hal+json;v=2.0) — the shapes are
+ * (2026-07-09, GET with Accept: application/hal+json;v=2.0) - the shapes are
  * real controller output, not hand-written approximations.
  */
 

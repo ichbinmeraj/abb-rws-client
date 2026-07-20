@@ -4,7 +4,7 @@ All notable changes to `abb-rws-client` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — 2026-07-09
+## [1.0.0] - 2026-07-09
 
 The library is feature-complete for both controller generations and every wire
 recipe below has been verified against live controllers (RW 6.16 IRC5 +
@@ -12,23 +12,23 @@ RW 7.21 OmniCore). Time to call it 1.0.
 
 ### Added
 
-- **mDNS/Bonjour controller discovery** — `RobotManager.discoverControllersMdns()`
+- **mDNS/Bonjour controller discovery** - `RobotManager.discoverControllersMdns()`
   finds every ABB controller (real or virtual) announcing on the local network:
   zero-dependency DNS-SD implementation, returns system name, host, RWS port,
   RobotWare version, system GUID, and a protocol classification. No more port
   scanning to find RobotStudio's randomly-assigned VC ports.
-- **HAL JSON parsing for RWS 2.0** — GETs negotiate
+- **HAL JSON parsing for RWS 2.0** - GETs negotiate
   `application/hal+json;v=2.0` (officially supported; live-verified) with an
   automatic, remembered per-controller fallback to XHTML for older RobotWare 7
   releases. Byte-identical results across both representations verified live
   over seven read families.
-- **Simulation panel (virtual controllers, RW7)** — `simEmergencyStop()`,
+- **Simulation panel (virtual controllers, RW7)** - `simEmergencyStop()`,
   `simResetEmergencyStop()`, `simGeneralStop()`, `simAutoStop()`,
   `simEnableSwitch(on)`, and `teleportMechunit(mechunit, joints)`. Drive the
-  E-stop/guard-stop chain and reposition the simulated robot from the API —
+  E-stop/guard-stop chain and reposition the simulated robot from the API -
   every recipe converged from live controller validation errors, including the
   undocumented inverted `state=off`-engages polarity.
-- **`RWS1Adapter.saveModule` migrated off a dead endpoint** — the legacy
+- **`RWS1Adapter.saveModule` migrated off a dead endpoint** - the legacy
   `?action=savemod` form returns a blanket 400 on RW6 regardless of body; the
   method now uses the live-verified `?action=save` recipe (and percent-encodes
   the destination path).
@@ -42,23 +42,23 @@ RW 7.21 OmniCore). Time to call it 1.0.
   request path, the mDNS wire parser, HAL/XHTML parity, and the simulation
   panel.
 
-## [0.8.0] — 2026-07-09
+## [0.8.0] - 2026-07-09
 
 ### Fixed
 
 - **RWS 2.0 real-time subscriptions actually work now.** The WebSocket handshake
-  offered `robapi2_subscription` — the RWS **1.0** subprotocol name — and
+  offered `robapi2_subscription` - the RWS **1.0** subprotocol name - and
   RobotWare 7 rejects it with HTTP 400, so every OmniCore connection silently
   fell back to polling since the feature shipped. The client now offers the
   official `rws_subscription` (RWS 2.0 manual 3HAC073675-001). Live-verified on
   RW 7.21: handshake 101, real event frames delivered.
-- **RWS 2.0 WebSocket drops no longer kill live updates for the session** — the
+- **RWS 2.0 WebSocket drops no longer kill live updates for the session** - the
   25 s ping interval is cleared on close, the client re-registers the
   subscription with bounded exponential backoff, and when it finally gives up
   it tells the owner (see `onLost` below) so `RobotManager` can restore fast
   polling instead of idling at the slow cadence forever.
 - **`getModuleSource` works for modules with no backing file** (loaded from
-  `.pgf`, RobotStudio, or the FlexPendant — [abb-rws-vscode#3](https://github.com/ichbinmeraj/abb-rws-vscode/issues/3)):
+  `.pgf`, RobotStudio, or the FlexPendant - [abb-rws-vscode#3](https://github.com/ichbinmeraj/abb-rws-vscode/issues/3)):
   both protocols now fall back to saving the module to the controller's TEMP
   volume, reading it, and deleting it. On RWS 1.0 the save round-trip is the
   primary path so a stale `$HOME` copy can never shadow program memory.
@@ -66,16 +66,16 @@ RW 7.21 OmniCore). Time to call it 1.0.
 - **CFG writes were broken on both protocols**: `setCfgInstance` POSTed a
   non-existent RWS 2.0 path (missing `/instances/`) and sent plain values where
   RobotWare 7 requires the bracket representation (`Attr=[value,1]`);
-  `createCfgInstance` used an endpoint that does not exist (`…/{i}/create`) —
+  `createCfgInstance` used an endpoint that does not exist (`…/{i}/create`) -
   the real flow is `instances/create-default` + set. RWS 1.0 had no CFG write
   support at all; the adapter now implements set/create/remove with the
   plain-value forms. Full create → set → readback → delete cycles live-verified
   on both controllers.
-- **`probeProtocol` no longer misdetects arbitrary web servers as RWS 2.0** —
+- **`probeProtocol` no longer misdetects arbitrary web servers as RWS 2.0** -
   classification now requires a Digest (RWS 1.0) or Basic (RWS 2.0) challenge;
   Bearer challenges and plain 200 responses are rejected.
 - **`createAdapter` gained the Default-User fallback** `createClient` already
-  had — and the fallback predicate now keys on the typed `AUTH_FAILED` error
+  had - and the fallback predicate now keys on the typed `AUTH_FAILED` error
   code (the old message regex never matched RWS 1.0 login failures).
 - **`connect()`/`disconnect()` races**: disconnecting during an in-flight
   connect no longer resurrects timers or subscriptions; a second `connect()`
@@ -84,7 +84,7 @@ RW 7.21 OmniCore). Time to call it 1.0.
   no longer write stale task state back into a cleared manager.
 - **`writeSignal` with unknown network/device** now throws a descriptive
   `RwsError` instead of firing a malformed `/signals///…` request.
-- **Fileservice paths are percent-encoded per segment on both protocols** —
+- **Fileservice paths are percent-encoded per segment on both protocols** -
   file names containing space, `#`, or `%` no longer break (or truncate at the
   `#`) list/read/upload/delete/copy operations. `$HOME`/`$TEMP` prefixes stay
   literal.
@@ -99,37 +99,37 @@ RW 7.21 OmniCore). Time to call it 1.0.
 
 ### Added
 
-- **`RobotManagerOptions`** — `new RobotManager({ refreshIntervalMs, strictTls })`
+- **`RobotManagerOptions`** - `new RobotManager({ refreshIntervalMs, strictTls })`
   and `MultiRobotManager.fromConfigs(configs, options)`:
   - `refreshIntervalMs` (default 1000, min 200) controls the polling cadence;
     the subscription-active slow poll scales at 5×.
   - `strictTls` (default false) turns real TLS certificate verification on for
     controllers with proper certificates. Off by default because controllers
     ship self-signed certs.
-- **`RwsClient2` constructor options** `{ timeout, rejectUnauthorized }` — the
+- **`RwsClient2` constructor options** `{ timeout, rejectUnauthorized }` - the
   per-request timeout is finally configurable (was hardcoded 10 s), and callers
   can opt into certificate verification.
-- **`onLost` subscription callback** on the adapter `subscribe` surface —
+- **`onLost` subscription callback** on the adapter `subscribe` surface -
   invoked once when the event stream is terminally lost so callers can degrade
   gracefully.
 - **CI workflow** (Node 18/20/22 matrix: build, tests, lint) and `SECURITY.md`.
 
-## [0.7.3] — 2026-07-03
+## [0.7.3] - 2026-07-03
 
 ### Fixed
 
-- **TLS bypass now applied per-request, not only on the HTTP agent** — fixes
+- **TLS bypass now applied per-request, not only on the HTTP agent** - fixes
   connections to real controllers from inside VS Code
   ([abb-rws-vscode#2](https://github.com/ichbinmeraj/abb-rws-vscode/issues/2)).
   VS Code's extension host patches Node's `http`/`https` modules and replaces
   custom agents for non-localhost targets, which silently dropped the
   agent-level `rejectUnauthorized: false` and re-enabled certificate
-  verification — every real OmniCore (self-signed cert) then failed with
+  verification - every real OmniCore (self-signed cert) then failed with
   `self signed certificate`. Localhost VCs were never affected because the
   extension host doesn't intercept localhost traffic. The setting is now also
   set on each request's options in `RwsClient2.req()`, the subscription POST,
   `RobotManager` port probing, and `detect.probeProtocol()`.
-- **Examples 05 & 06 rewritten against the real API** — they previously used an
+- **Examples 05 & 06 rewritten against the real API** - they previously used an
   options-object `RwsClient2` constructor and `RobotManager` methods that never
   existed. Both now use `new RobotManager()` + `connect(host, user, pass, port?)`.
 - **`repository`/`homepage`** now point at the actual GitHub org (`ichbinmeraj`);
@@ -138,30 +138,30 @@ RW 7.21 OmniCore). Time to call it 1.0.
 
 ### Added
 
-- **`prepack` guard** — `npm pack`/`npm publish` now runs the build and the full
+- **`prepack` guard** - `npm pack`/`npm publish` now runs the build and the full
   116-test suite first, so a stale or broken artifact cannot be packed.
 
-## [0.7.2] — 2026-05-08
+## [0.7.2] - 2026-05-08
 
 ### Documentation
 
 - **Fixed the embarrassing compatibility table** that incorrectly claimed
   RobotWare 7.x / OmniCore was "Not compatible". The package has supported
-  both protocols since v0.7.0 — the table was a stale leftover from when
+  both protocols since v0.7.0 - the table was a stale leftover from when
   only RWS 1.0 shipped. Now correctly shows both ✅, with live-tested
   versions called out (RW7.21 + RW6.16).
-- **Documented `RobotManager` higher-level surface** — the README's
+- **Documented `RobotManager` higher-level surface** - the README's
   API-reference tables only covered the protocol-level `RwsClient`, so
   callers couldn't see what `RobotManager` adds on top: RMMP, mastership
   status, opmode auto-routing, backup, FK, service-routine call,
   tool/wobj activation, CFG write surface, DIPC messaging, file volumes,
   module source, compress, value validation. New section lists all of
   these with descriptions.
-- **Clarified RWS 2.0 subscription quirks** — the polling-fallback
+- **Clarified RWS 2.0 subscription quirks** - the polling-fallback
   paragraph now names the specific RWS 2.0 VC `robapi2_subscription`
   rejection that triggers the fallback, rather than implying it's
   always 5s polling.
-- **Session-pool clarifications** — IRC5's 70-session number was being
+- **Session-pool clarifications** - IRC5's 70-session number was being
   presented as universal; called out OmniCore's also-finite-but-different
   pool with the empirical 503-once-full behaviour we observed during
   protocol probes.
@@ -169,52 +169,52 @@ RW 7.21 OmniCore). Time to call it 1.0.
   5 s when WS subscriptions handle state changes, 1 s when polling
   covers everything.
 
-No code changes — pure README updates. `RwsClient`, `RwsClient2`,
+No code changes - pure README updates. `RwsClient`, `RwsClient2`,
 `RobotManager`, `MultiRobotManager`, `createClient`, all examples and
 unit tests are bit-for-bit identical to v0.7.1.
 
-## [0.7.1] — 2026-05-07
+## [0.7.1] - 2026-05-07
 
 ### Added
 
 - **RMMP (Remote Mastership Privilege)** is now part of the public `RobotManager`
-  surface — `getRmmpPrivilege()` and `requestRmmp(level)`. The `withMastership()`
+  surface - `getRmmpPrivilege()` and `requestRmmp(level)`. The `withMastership()`
   helper now also gates on RMMP, so any modify operation in AUTO mode will
   automatically request RMMP and surface an actionable error ("approve the
   popup on the FlexPendant") when the operator hasn't granted remote control
   yet. This matches RobotStudio Online's behaviour and removes the most common
   cause of mastership-acquired-but-403 failures.
-- **Service-routine / arbitrary PROC call** — `callServiceRoutine(task, name,
+- **Service-routine / arbitrary PROC call** - `callServiceRoutine(task, name,
   args?)` lets a remote client kick off a service routine (calibration, brake
   check, custom service procs) without going through the FlexPendant's
   Service Routine menu.
-- **Tool / Work-object activation** — `setActiveTool(mechunit, name)` and
+- **Tool / Work-object activation** - `setActiveTool(mechunit, name)` and
   `setActiveWobj(mechunit, name)` switch the active persistent tooldata /
   wobjdata mid-session.
-- **Module metadata** — `getModuleInfo(task, module)` exposed publicly (was
+- **Module metadata** - `getModuleInfo(task, module)` exposed publicly (was
   adapter-only). Returns path, attributes, type, line count.
-- **Backup restore** — `restoreBackup(name)` exposed publicly (was adapter-only).
-- **Backup status** type-narrowed — `getBackupStatus()` now returns the full
+- **Backup restore** - `restoreBackup(name)` exposed publicly (was adapter-only).
+- **Backup status** type-narrowed - `getBackupStatus()` now returns the full
   `{ active; progress?; phase? }` shape on every code path (no more union
   with bare `{ active }`).
-- **CFG write surface** exposed publicly with mastership wrapping —
+- **CFG write surface** exposed publicly with mastership wrapping -
   `setCfgInstance`, `createCfgInstance`, `removeCfgInstance`, `loadCfgFile`,
   `saveCfgFile`. Each acquires `'edit'` mastership for the duration of the
   call.
-- **DIPC public API** — `listDipcQueues`, `createDipcQueue`, `sendDipcMessage`,
+- **DIPC public API** - `listDipcQueues`, `createDipcQueue`, `sendDipcMessage`,
   `readDipcMessage`, `removeDipcQueue` exposed on `RobotManager`.
-- **File volumes** — `listFileVolumes()` returns the controller's available
+- **File volumes** - `listFileVolumes()` returns the controller's available
   volumes (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
-- **Compress** — `compressPath(source, destination)` for archiving controller
+- **Compress** - `compressPath(source, destination)` for archiving controller
   files in-place.
-- **Mastership status** — `getMastershipStatus(domain)` returns
+- **Mastership status** - `getMastershipStatus(domain)` returns
   `{ mastership; uid?; application? }`. Useful for diagnosing 403s ("which
   client / FlexPendant is currently holding the lock?").
 
 ### Improved
 
 - `getRobotType`, `getProgramPointer`, `getMotionPointer` now have explicit
-  return-type annotations on the `RobotManager` wrappers — TypeScript no
+  return-type annotations on the `RobotManager` wrappers - TypeScript no
   longer collapses the empty-default into a property-less union.
 
 ### No breaking changes
@@ -222,7 +222,7 @@ unit tests are bit-for-bit identical to v0.7.1.
 - All additions are new methods or default-no-op widening. Existing callers
   using `RobotManager` keep working without any changes.
 
-## [0.7.0] — 2026-05-06
+## [0.7.0] - 2026-05-06
 
 This release adds RWS 2.0 (OmniCore / RobotWare 7) support, multi-robot
 management, auto-detection helpers, and a full set of higher-level building
@@ -232,62 +232,62 @@ extras, forward kinematics) that were missing from prior versions.
 
 ### Added
 
-- **`RwsClient2`** — RWS 2.0 protocol client for OmniCore controllers.
+- **`RwsClient2`** - RWS 2.0 protocol client for OmniCore controllers.
   HTTP Basic auth, XHTML responses (`Accept: application/xhtml+xml;v=2.0`),
   path-based actions (`/rw/rapid/execution/stop`), `'edit'` mastership
   domain, `HOME` file-service prefix, self-signed-TLS tolerance for VCs,
   WebSocket subscriptions via `robapi2_subscription` subprotocol.
 
-- **`IRWSAdapter`** — common interface implemented by both RWS 1.0 and 2.0
+- **`IRWSAdapter`** - common interface implemented by both RWS 1.0 and 2.0
   adapters. ~140 methods covering panel, RAPID exec, modules, variables,
   motion, system, event log, I/O, file service, CFG database, mastership,
   backup, DIPC, vision, safety, virtual time, certs, registry, jog, IK/FK.
 
-- **`RWS1Adapter`** / **`RWS2Adapter`** — wrappers that satisfy `IRWSAdapter`
+- **`RWS1Adapter`** / **`RWS2Adapter`** - wrappers that satisfy `IRWSAdapter`
   on top of `RwsClient` and `RwsClient2` respectively. Use these when you
   want a single typed handle that works across both protocols.
 
-- **`RobotManager`** — high-level connection lifecycle: auto port discovery,
+- **`RobotManager`** - high-level connection lifecycle: auto port discovery,
   protocol auto-detection, polling, WebSocket subscriptions with polling
   fallback, reconnect-on-failure, state events. `onError` listener lets the
   host (CLI / UI) decide how to surface failures.
 
-- **`MultiRobotManager`** — orchestrates several `RobotManager` instances.
+- **`MultiRobotManager`** - orchestrates several `RobotManager` instances.
   Tracks an "active" robot for UIs that show one at a time, while polling
   state for all. `onError` cascades to every existing and future robot.
 
-- **`createClient(opts)`** / **`createAdapter(opts)`** — auto-detect helpers
+- **`createClient(opts)`** / **`createAdapter(opts)`** - auto-detect helpers
   that probe the WWW-Authenticate header and return the matching client
   (or `IRWSAdapter`) already connected. Probes common RWS ports if `port`
   is omitted (5466, 9403, 443, 80, 11811).
 
-- **`probeProtocol(host, port, https)`** / **`probeHost(host)`** — lower-level
+- **`probeProtocol(host, port, https)`** / **`probeHost(host)`** - lower-level
   protocol detection for callers that want explicit control.
 
 - **Mastership extras** (RWS 2.0 + partial RWS 1.0):
-  - `requestMastershipAll()` / `releaseMastershipAll()` — all-domains in one call
-  - `requestMastershipWithId(domain)` / `releaseMastershipWithId(domain, id)` —
+  - `requestMastershipAll()` / `releaseMastershipAll()` - all-domains in one call
+  - `requestMastershipWithId(domain)` / `releaseMastershipWithId(domain, id)` -
     token-based mastership that survives session loss; useful for clients
     that periodically reconnect (RWS 2.0 only)
-  - `resetMastershipWatchdog()` — heartbeat for RobotWare 7.8+ during long
+  - `resetMastershipWatchdog()` - heartbeat for RobotWare 7.8+ during long
     RAPID runs
-  - `getMastershipStatus(domain)` / `listMastershipDomains()` — read state
+  - `getMastershipStatus(domain)` / `listMastershipDomains()` - read state
 
-- **Devices** — both `/rw/devices` (system hardware/software inventory) and
+- **Devices** - both `/rw/devices` (system hardware/software inventory) and
   `/rw/iosystem/devices` (all configured I/O devices across networks):
-  - `listSystemDevices()` — top-level groupings (HW_DEVICES, SW_RESOURCES)
-  - `getDeviceTree(group)` — drill into a group
-  - `listAllIoDevices()` — flat list of every I/O device with state
+  - `listSystemDevices()` - top-level groupings (HW_DEVICES, SW_RESOURCES)
+  - `getDeviceTree(group)` - drill into a group
+  - `listAllIoDevices()` - flat list of every I/O device with state
 
-- **Forward Kinematics** — `calcCartesianFromJoints(joints, mechunit?, tool?, wobj?)`,
+- **Forward Kinematics** - `calcCartesianFromJoints(joints, mechunit?, tool?, wobj?)`,
   the missing mirror of `calcJointsFromCartesian`. Same VC-license caveat as IK:
   virtual controllers without PC Interface 616-1 reject the call (clean error
   message; no NaN leakage).
 
-- **`XhtmlParser`** — exported for advanced users parsing RWS 2.0 responses
+- **`XhtmlParser`** - exported for advanced users parsing RWS 2.0 responses
   manually. Handles span / li / state extraction with regex.
 
-- **`setLogger(impl)`** — pluggable logging interface. The lib ships with a
+- **`setLogger(impl)`** - pluggable logging interface. The lib ships with a
   no-op default; hosts (e.g. the VS Code extension) install their own
   backend (output channel, console, file, etc.).
 
@@ -308,12 +308,12 @@ extras, forward kinematics) that were missing from prior versions.
   filling the controller's session pool. Live-verified.
 
 - **`RwsClient` createDirectory**: params now in body (`fs-action=create`
-  in body, not URL query). Live-verified — RWS 1.0 fileservice returns
+  in body, not URL query). Live-verified - RWS 1.0 fileservice returns
   HTTP 400 "Invalid/No Query Parameter" for the URL-query form.
 
 - **`RwsClient` copyFile**: `fs-newname` now sends only the basename of the
   destination path. RWS 1.0 fileservice copy operates within the source's
-  directory — passing a full path returns 400 "Invalid". Cross-directory
+  directory - passing a full path returns 400 "Invalid". Cross-directory
   copy must use read+upload.
 
 - `package.json`: added `description`, `keywords`, `homepage`, `repository`,
@@ -327,7 +327,7 @@ extras, forward kinematics) that were missing from prior versions.
   type exports are unchanged in behavior except for the bug fixes above.
 - New names (`RwsClient2`, `RobotManager`, etc.) sit alongside the old API.
 
-## [0.6.0] — 2026-04-30
+## [0.6.0] - 2026-04-30
 
 - WebSocket subscriptions via `subscribe(resources, handler)`.
 - Generic `request(method, path, body?)` escape hatch for RWS endpoints

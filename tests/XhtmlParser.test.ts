@@ -111,7 +111,7 @@ describe('XhtmlParser', () => {
   });
 
   describe('class-attribute matching (RWS 2.0 emits exact classes)', () => {
-    it('getAllStates requires an exact class match — extra class tokens do not match', () => {
+    it('getAllStates requires an exact class match - extra class tokens do not match', () => {
       const xml = `
         <li class="rap-task-li selected"><span class="name">T_SKIP</span></li>
         <li class="rap-task-li"><span class="name">T_ROB1</span></li>`;

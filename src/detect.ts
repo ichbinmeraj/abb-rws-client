@@ -24,7 +24,7 @@ export interface ConnectOptions {
   /** Per-request timeout in ms. Default 5000. */
   timeout?: number;
   /**
-   * Verify TLS certificates. Default false — ABB controllers (virtual and
+   * Verify TLS certificates. Default false - ABB controllers (virtual and
    * real) ship self-signed certs, so verification stays off unless the
    * deployment has a CA-signed cert on the controller. Applies to the probe
    * requests and to the RWS 2.0 client this factory constructs.
@@ -140,7 +140,7 @@ export async function createClient(opts: ConnectOptions): Promise<AnyClient> {
   if (port === undefined) {
     const probe = await probeHost(host, opts.timeout, strictTls);
     if (!probe) {
-      throw new RwsError(`No RWS endpoint found on ${host} — tried ports 5466, 9403, 443, 80, 11811`, 'PROTOCOL_DETECT_FAILED');
+      throw new RwsError(`No RWS endpoint found on ${host} - tried ports 5466, 9403, 443, 80, 11811`, 'PROTOCOL_DETECT_FAILED');
     }
     port = probe.port;
     useHttps = probe.https;
@@ -149,7 +149,7 @@ export async function createClient(opts: ConnectOptions): Promise<AnyClient> {
     if (useHttps === undefined) { useHttps = port === 443 || port === 5466 || port === 9403; }
     const detected = await probeProtocol(host, port, useHttps, opts.timeout, strictTls);
     if (!detected) {
-      throw new RwsError(`No RWS auth challenge from ${host}:${port} — controller may be off, wrong port, or non-RWS service`, 'PROTOCOL_DETECT_FAILED');
+      throw new RwsError(`No RWS auth challenge from ${host}:${port} - controller may be off, wrong port, or non-RWS service`, 'PROTOCOL_DETECT_FAILED');
     }
     protocol = detected;
   }
@@ -196,7 +196,7 @@ export async function createClient(opts: ConnectOptions): Promise<AnyClient> {
 /**
  * Like `createClient` but returns the unified-interface adapter (`IRWSAdapter`).
  * Use this when you want to hold a single typed reference across both protocols
- * — e.g. if you write code that calls `.getControllerState()` etc. without
+ * - e.g. if you write code that calls `.getControllerState()` etc. without
  * caring whether the underlying transport is 1.0 or 2.0.
  */
 export async function createAdapter(opts: ConnectOptions): Promise<IRWSAdapter> {
@@ -224,7 +224,7 @@ export async function createAdapter(opts: ConnectOptions): Promise<IRWSAdapter> 
     protocol = detected;
   }
 
-  // Same `Default User` retry as createClient — see the comment there.
+  // Same `Default User` retry as createClient - see the comment there.
   const fallbackUser = opts.username === undefined && username === 'Admin'
     ? 'Default User'
     : null;

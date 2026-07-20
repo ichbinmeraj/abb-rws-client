@@ -1,9 +1,9 @@
 # abb-rws-client
 
-A typed TypeScript/Node.js client for **ABB Robot Web Services** — both protocols ABB ships:
+A typed TypeScript/Node.js client for **ABB Robot Web Services** - both protocols ABB ships:
 
-- **RWS 1.0** — IRC5 / RobotWare 6.x → `RwsClient`
-- **RWS 2.0** — OmniCore / RobotWare 7.x → `RwsClient2`
+- **RWS 1.0** - IRC5 / RobotWare 6.x → `RwsClient`
+- **RWS 2.0** - OmniCore / RobotWare 7.x → `RwsClient2`
 
 > **Compatibility:** dual-protocol since v0.7.0. Single-line auto-detection via `createClient()` if you don't know which one your controller speaks.
 
@@ -11,24 +11,24 @@ A typed TypeScript/Node.js client for **ABB Robot Web Services** — both protoc
 
 ## VS Code Extension
 
-Prefer a GUI? The companion VS Code extension gives you live status, motion data, RAPID control, I/O signals, event log, file management, and CFG database editing directly from the sidebar — no code required. Works against both IRC5 and OmniCore.
+Prefer a GUI? The companion VS Code extension gives you live status, motion data, RAPID control, I/O signals, event log, file management, and CFG database editing directly from the sidebar - no code required. Works against both IRC5 and OmniCore.
 
-**[ABB Robot (RWS) — VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)**
+**[ABB Robot (RWS) - VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)**
 
 ---
 
 ## Features
 
-- **Dual-protocol** — RWS 1.0 (Digest, JSON) and RWS 2.0 (Basic, XHTML;v=2.0)
-- **Auto-detection** — `createClient(host)` probes the auth challenge and returns the right client
-- **Multi-robot** — `MultiRobotManager` for orchestrating several controllers in one process
-- **Connection lifecycle** — `RobotManager` handles port discovery, polling, WebSocket subscriptions with polling fallback, reconnect-on-failure
-- **Typed adapter pattern** — `IRWSAdapter` lets you write code that works across both protocols
+- **Dual-protocol** - RWS 1.0 (Digest, JSON) and RWS 2.0 (Basic, XHTML;v=2.0)
+- **Auto-detection** - `createClient(host)` probes the auth challenge and returns the right client
+- **Multi-robot** - `MultiRobotManager` for orchestrating several controllers in one process
+- **Connection lifecycle** - `RobotManager` handles port discovery, polling, WebSocket subscriptions with polling fallback, reconnect-on-failure
+- **Typed adapter pattern** - `IRWSAdapter` lets you write code that works across both protocols
 - **WebSocket subscriptions** for real-time events (panel state, RAPID exec, signals, persvar, elog, jointtarget, …)
 - Session cookie management (IRC5: avoids the controller's 70-session pool fill; OmniCore: avoids 503 lockout from session-pool exhaustion)
 - Automatic `/logout` on disconnect to release server-side mastership and free the session slot
 - Request rate limiting (< 20 req/sec)
-- Fully typed public API — every method throws `RwsError` with a typed `code`
+- Fully typed public API - every method throws `RwsError` with a typed `code`
 - Single dependency: `ws` (only one we don't reimplement)
 
 ---
@@ -75,7 +75,7 @@ If you only target one protocol, skip the helper and instantiate the client dire
 | **IRC5** (RobotWare 6.x) | RWS 1.0 | `RwsClient` | HTTP Digest | 80 (real), 80 / 11811 (VC) |
 | **OmniCore** (RobotWare 7.x) | RWS 2.0 | `RwsClient2` | HTTP Basic | 443 (real), 5466 (VC HTTPS) |
 
-Both classes expose **the same method names** for ~140 endpoints (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, etc.). The protocol differences (URL shapes, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally — your code looks the same.
+Both classes expose **the same method names** for ~140 endpoints (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, etc.). The protocol differences (URL shapes, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally - your code looks the same.
 
 If you need a single typed reference that holds either:
 
@@ -83,7 +83,7 @@ If you need a single typed reference that holds either:
 import { createAdapter, type IRWSAdapter } from 'abb-rws-client';
 
 const adapter: IRWSAdapter = await createAdapter({ host: '192.168.125.1' });
-// adapter is RWS1Adapter or RWS2Adapter — both implement IRWSAdapter
+// adapter is RWS1Adapter or RWS2Adapter - both implement IRWSAdapter
 ```
 
 ---
@@ -151,16 +151,16 @@ const client = new RwsClient2(
 
 await client.connect();
 
-// Same method names as RWS 1.0 — only the underlying protocol differs.
+// Same method names as RWS 1.0 - only the underlying protocol differs.
 console.log('state:', await client.getControllerState());
 console.log('joints:', await client.getJointPositions());
 
-// RAPID variable read — RWS 2.0 symbol API uses suffix-style URLs internally
+// RAPID variable read - RWS 2.0 symbol API uses suffix-style URLs internally
 // (`/rw/rapid/symbol/{symburl}/data`); the method shape is the same.
 const tool0 = await client.getRapidVariable('T_ROB1', 'BASE', 'tool0');
 
 // WebSocket subscriptions over the `rws_subscription` subprotocol
-// (RWS 1.0 uses `robapi2_subscription` — the names are NOT interchangeable:
+// (RWS 1.0 uses `robapi2_subscription` - the names are NOT interchangeable:
 // RobotWare 7 rejects the 1.0 name with HTTP 400).
 const unsubscribe = await client.subscribe(
   ['controllerstate', 'execution'],
@@ -176,13 +176,13 @@ await client.disconnect();
 These are documented because they bite anyone who tries to write an RWS 2.0 client from scratch:
 
 - **HTTP Basic auth**, not Digest (RWS 1.0).
-- **XHTML responses only** — `Accept: application/json` returns 406. Library uses `Accept: application/xhtml+xml;v=2.0`.
-- **Path-based actions** — `/rw/rapid/execution/stop`, not `?action=stop`.
-- **Mastership domains collapsed** — both `'rapid'` and `'cfg'` map to `'edit'`. The adapter maps internally so either name works.
+- **XHTML responses only** - `Accept: application/json` returns 406. Library uses `Accept: application/xhtml+xml;v=2.0`.
+- **Path-based actions** - `/rw/rapid/execution/stop`, not `?action=stop`.
+- **Mastership domains collapsed** - both `'rapid'` and `'cfg'` map to `'edit'`. The adapter maps internally so either name works.
 - **File service home** is `'HOME'`, not `'$HOME'`.
-- **Symbol API path is suffix-style** — `/rw/rapid/symbol/{symburl}/data` (RWS 1.0 puts `/data` at the front).
+- **Symbol API path is suffix-style** - `/rw/rapid/symbol/{symburl}/data` (RWS 1.0 puts `/data` at the front).
 - **Module unload** is `POST /rw/rapid/tasks/{task}/unloadmod` with body, NOT `DELETE` on the module URL (returns 405).
-- **Self-signed TLS** everywhere — controllers ship self-signed certs, so certificate
+- **Self-signed TLS** everywhere - controllers ship self-signed certs, so certificate
   verification is off by default. Pass `strictTls: true` (`RobotManagerOptions`) or
   `rejectUnauthorized: true` (`RwsClient2` options) if your plant installed real certs.
 - **WebSocket subscription URL** comes from the `Location` header (real hardware) or the XHTML body (VC). Subprotocol: `rws_subscription` (RWS 2.0) / `robapi2_subscription` (RWS 1.0).
@@ -221,37 +221,37 @@ multi.setActive('cell-B');
 ```
 
 `MultiRobotManager` wraps individual `RobotManager` instances. Each `RobotManager` handles its own:
-- Auto port discovery (probes 5466 / 9403 / 443 / 80 / 11811 in that order, plus a wide-scan fallback when none of those answer — RobotStudio assigns random VC ports above 30000)
+- Auto port discovery (probes 5466 / 9403 / 443 / 80 / 11811 in that order, plus a wide-scan fallback when none of those answer - RobotStudio assigns random VC ports above 30000)
 - Protocol auto-detection (`WWW-Authenticate: Digest` → RWS 1.0; `Basic` → RWS 2.0)
-- Hybrid polling cadence: **5× the refresh interval when WebSocket subscriptions are active** (positions only — state-change resources stream over WS); **the plain refresh interval when subscriptions are unavailable** (full state coverage via polling). Default 1 s / 5 s, configurable via `refreshIntervalMs`.
+- Hybrid polling cadence: **5× the refresh interval when WebSocket subscriptions are active** (positions only - state-change resources stream over WS); **the plain refresh interval when subscriptions are unavailable** (full state coverage via polling). Default 1 s / 5 s, configurable via `refreshIntervalMs`.
 - WebSocket subscriptions on both protocols, with dropped-socket auto-reconnect and automatic degradation to fast polling if the event stream is terminally lost
 - Reconnect-on-failure (3-strike, surfaces via `onError` listener)
-- Clean `GET /logout` on disconnect — releases server-side mastership and frees the session slot
+- Clean `GET /logout` on disconnect - releases server-side mastership and frees the session slot
 
 You can also create a `RobotManager` directly if you only have one robot.
 
 ---
 
-## `RobotManager` — higher-level surface
+## `RobotManager` - higher-level surface
 
 `RobotManager` wraps either client with operational helpers that handle mastership, polling, and protocol differences for you. In addition to delegating every protocol method to the underlying client, it exposes:
 
-- **`getRmmpPrivilege()`**, **`requestRmmp(level)`** — Remote Mastership Privilege management. Required on OmniCore in AUTO mode for any modify op.
-- **`getMastershipStatus(domain?)`** — read who currently holds rapid/cfg/motion mastership (uid + application name).
-- **`setOperationMode('AUTO' | 'MANR' | 'MANF')`** — VC-only switch with auto-routing through MANR for AUTO ↔ MANF (the controller rejects direct transitions). Acquires `edit` mastership for the higher-privilege direction.
-- **`setSpeedRatio(0..100)`** — wraps `edit` mastership; uses the live-verified `?action=setspeedratio&speed-ratio=N` form on RWS 2.0 (the bare endpoint returns 400).
-- **`createBackup(name)`**, **`restoreBackup(name)`**, **`getBackupStatus()`**, **`listBackups()`** — `/ctrl/backup/...`
-- **`callServiceRoutine(task, name, args?)`** — invoke a service routine remotely (calibration, brake check, etc.).
-- **`calcJointsFromCartesian(...)`** — inverse kinematics. **`calcCartesianFromJoints(...)`** — forward kinematics.
-- **`setActiveTool(mechunit, name)`**, **`setActiveWobj(mechunit, name)`** — switch active persistent tooldata / wobjdata.
-- **CFG write** — `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`, on **both** protocols (RWS 2.0 uses `instances/create-default` + the bracket value representation; RWS 1.0 uses the `?action=` forms — handled by the adapters). Each acquires the needed mastership for the duration.
-- **DIPC** — `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients.
-- **`listFileVolumes()`** — every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
-- **`getModuleSource(task, name)`** — pull a module's RAPID text in one call. Works even when the module has no backing file in `HOME` (loaded from `.pgf`/RobotStudio/pendant): the client saves it to the controller's TEMP volume, reads it, and deletes it.
-- **`compressPath(source, dest)`** — controller-side compression.
-- **`validateRapidValue(task, value, datatype)`** — pre-flight a literal before writing.
-- **`RobotManager.discoverControllersMdns(opts?)`** *(static)* — find every ABB controller (real or virtual) announcing on the local network via mDNS/Bonjour. Returns system name, host, RWS port, RobotWare version, system GUID, and a `'rws1' | 'rws2'` classification — no port scanning needed.
-- **Simulation panel** *(RWS 2.0 virtual controllers only)* — `simEmergencyStop()`, `simResetEmergencyStop()`, `simGeneralStop(engage?)`, `simAutoStop(engage?)`, `simEnableSwitch(on)`, `teleportMechunit(mechunit, joints, extJoints?)`. Drive the E-stop / guard-stop chain and reposition the simulated robot from the API. Throw `RwsError` on real hardware and RW6 (VC-only endpoints).
+- **`getRmmpPrivilege()`**, **`requestRmmp(level)`** - Remote Mastership Privilege management. Required on OmniCore in AUTO mode for any modify op.
+- **`getMastershipStatus(domain?)`** - read who currently holds rapid/cfg/motion mastership (uid + application name).
+- **`setOperationMode('AUTO' | 'MANR' | 'MANF')`** - VC-only switch with auto-routing through MANR for AUTO ↔ MANF (the controller rejects direct transitions). Acquires `edit` mastership for the higher-privilege direction.
+- **`setSpeedRatio(0..100)`** - wraps `edit` mastership; uses the live-verified `?action=setspeedratio&speed-ratio=N` form on RWS 2.0 (the bare endpoint returns 400).
+- **`createBackup(name)`**, **`restoreBackup(name)`**, **`getBackupStatus()`**, **`listBackups()`** - `/ctrl/backup/...`
+- **`callServiceRoutine(task, name, args?)`** - invoke a service routine remotely (calibration, brake check, etc.).
+- **`calcJointsFromCartesian(...)`** - inverse kinematics. **`calcCartesianFromJoints(...)`** - forward kinematics.
+- **`setActiveTool(mechunit, name)`**, **`setActiveWobj(mechunit, name)`** - switch active persistent tooldata / wobjdata.
+- **CFG write** - `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`, on **both** protocols (RWS 2.0 uses `instances/create-default` + the bracket value representation; RWS 1.0 uses the `?action=` forms - handled by the adapters). Each acquires the needed mastership for the duration.
+- **DIPC** - `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients.
+- **`listFileVolumes()`** - every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
+- **`getModuleSource(task, name)`** - pull a module's RAPID text in one call. Works even when the module has no backing file in `HOME` (loaded from `.pgf`/RobotStudio/pendant): the client saves it to the controller's TEMP volume, reads it, and deletes it.
+- **`compressPath(source, dest)`** - controller-side compression.
+- **`validateRapidValue(task, value, datatype)`** - pre-flight a literal before writing.
+- **`RobotManager.discoverControllersMdns(opts?)`** *(static)* - find every ABB controller (real or virtual) announcing on the local network via mDNS/Bonjour. Returns system name, host, RWS port, RobotWare version, system GUID, and a `'rws1' | 'rws2'` classification - no port scanning needed.
+- **Simulation panel** *(RWS 2.0 virtual controllers only)* - `simEmergencyStop()`, `simResetEmergencyStop()`, `simGeneralStop(engage?)`, `simAutoStop(engage?)`, `simEnableSwitch(on)`, `teleportMechunit(mechunit, joints, extJoints?)`. Drive the E-stop / guard-stop chain and reposition the simulated robot from the API. Throw `RwsError` on real hardware and RW6 (VC-only endpoints).
 
 Every method returns `Promise<...>` and throws `RwsError` on failure.
 
@@ -286,13 +286,13 @@ new RwsClient(options: RwsClientOptions)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `host` | `string` | — | Controller IP or hostname |
+| `host` | `string` | - | Controller IP or hostname |
 | `port` | `number` | `80` | HTTP port |
 | `username` | `string` | `'Admin'` | RWS username |
 | `password` | `string` | `'robotics'` | RWS password |
 | `requestIntervalMs` | `number` | `55` | Min ms between requests (enforces < 20 req/sec) |
 | `timeout` | `number` | `5000` | Request timeout in ms |
-| `sessionCookie` | `string` | — | Saved cookie to reuse an existing session slot |
+| `sessionCookie` | `string` | - | Saved cookie to reuse an existing session slot |
 
 ---
 
@@ -302,7 +302,7 @@ new RwsClient(options: RwsClientOptions)
 |--------|---------|-------------|
 | `connect()` | `void` | Establish session and authenticate |
 | `disconnect()` | `void` | Close WebSocket subscriptions and clear session |
-| `getSessionCookie()` | `string \| null` | Current session cookie — persist to avoid 70-session limit |
+| `getSessionCookie()` | `string \| null` | Current session cookie - persist to avoid 70-session limit |
 
 ---
 
@@ -311,12 +311,12 @@ new RwsClient(options: RwsClientOptions)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `getControllerState()` | `ControllerState` | Motor state: motoron / motoroff / guardstop / emergencystop / … |
-| `setControllerState(state)` | `void` | Set motor state — requires mastership |
+| `setControllerState(state)` | `void` | Set motor state - requires mastership |
 | `getOperationMode()` | `OperationMode` | AUTO / MANR / MANF |
 | `lockOperationMode(pin, permanent?)` | `void` | Lock FlexPendant key switch with PIN |
 | `unlockOperationMode()` | `void` | Unlock FlexPendant key switch |
-| `getSpeedRatio()` | `number` | Speed override 0–100 |
-| `setSpeedRatio(ratio)` | `void` | Set speed override — AUTO mode only |
+| `getSpeedRatio()` | `number` | Speed override 0-100 |
+| `setSpeedRatio(ratio)` | `void` | Set speed override - AUTO mode only |
 | `getCollisionDetectionState()` | `CollisionDetectionState` | INIT / TRIGGERED / CONFIRMED / TRIGGERED_ACK |
 | `restartController(mode?)` | `void` | restart / istart / pstart / bstart |
 | `getControllerIdentity()` | `ControllerIdentity` | Name, ID, type, MAC address |
@@ -372,8 +372,8 @@ new RwsClient(options: RwsClientOptions)
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getJointPositions(mechunit?)` | `JointTarget` | rax_1–rax_6 in degrees (default mechunit: ROB_1) |
-| `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1–q4 quaternion |
+| `getJointPositions(mechunit?)` | `JointTarget` | rax_1-rax_6 in degrees (default mechunit: ROB_1) |
+| `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion |
 | `getCartesianFull(mechunit?)` | `CartesianFull` | TCP pose + j1/j4/j6/jx configuration flags |
 
 ---
@@ -397,7 +397,7 @@ new RwsClient(options: RwsClientOptions)
 |--------|---------|-------------|
 | `listAllSignals(start?, limit?)` | `Signal[]` | Paginated flat list of all signals |
 | `readSignal(network, device, name)` | `Signal` | Read a specific signal by address |
-| `writeSignal(network, device, name, value)` | `void` | Write DO/AO/GO — value as string: `'1'`, `'0'`, `'3.14'` |
+| `writeSignal(network, device, name, value)` | `void` | Write DO/AO/GO - value as string: `'1'`, `'0'`, `'3.14'` |
 | `listNetworks()` | `IoNetwork[]` | All I/O networks |
 | `listDevices(network)` | `IoDevice[]` | Devices on a network |
 
@@ -421,8 +421,8 @@ Required before modifying motor state, speed ratio, or certain RAPID operations.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `requestMastership(domain)` | `void` | Take control — `'cfg'` \| `'motion'` \| `'rapid'` |
-| `releaseMastership(domain)` | `void` | Release control — always call in `finally` |
+| `requestMastership(domain)` | `void` | Take control - `'cfg'` \| `'motion'` \| `'rapid'` |
+| `releaseMastership(domain)` | `void` | Release control - always call in `finally` |
 
 ```ts
 await client.requestMastership('rapid');
@@ -463,7 +463,7 @@ await unsubscribe();
 
 ### Error Handling
 
-All public methods throw `RwsError` — never a plain `Error`.
+All public methods throw `RwsError` - never a plain `Error`.
 
 | Code | Meaning |
 |------|---------|
@@ -471,11 +471,11 @@ All public methods throw `RwsError` — never a plain `Error`.
 | `'SESSION_EXPIRED'` | Session timed out |
 | `'MOTORS_OFF'` | Action requires motors on |
 | `'MODULE_NOT_FOUND'` | Module file not found on controller |
-| `'CONTROLLER_BUSY'` | Controller returned 503 — retry later |
+| `'CONTROLLER_BUSY'` | Controller returned 503 - retry later |
 | `'RATE_LIMITED'` | Too many requests (429) |
 | `'NETWORK_ERROR'` | TCP / timeout / WebSocket error |
 | `'PARSE_ERROR'` | Unexpected XML response format |
-| `'UNKNOWN'` | Unmapped error — check `httpStatus` and `rwsDetail` |
+| `'UNKNOWN'` | Unmapped error - check `httpStatus` and `rwsDetail` |
 
 ```ts
 try {
@@ -492,7 +492,7 @@ try {
 
 ## Session Persistence
 
-IRC5 controllers allow a maximum of **70 concurrent RWS sessions**; OmniCore controllers also have a finite session pool (the exact number isn't published, but heavy probing without `/logout` returns HTTP 503 once it fills). Persist the session cookie across restarts to always reuse the same slot — the lib calls `/logout` on `disconnect()` to free the slot cleanly, but a saved cookie is the most robust path:
+IRC5 controllers allow a maximum of **70 concurrent RWS sessions**; OmniCore controllers also have a finite session pool (the exact number isn't published, but heavy probing without `/logout` returns HTTP 503 once it fills). Persist the session cookie across restarts to always reuse the same slot - the lib calls `/logout` on `disconnect()` to free the slot cleanly, but a saved cookie is the most robust path:
 
 ```ts
 import fs from 'fs';
@@ -542,11 +542,11 @@ OmniCore-specific limits aren't fully documented by ABB; what the lib observes e
 
 ## Resources
 
-- [ABB Developer Center — RWS API](https://developercenter.robotstudio.com/api/rwsApi/)
+- [ABB Developer Center - RWS API](https://developercenter.robotstudio.com/api/rwsApi/)
 - [Companion VS Code Extension](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)
 
 ---
 
 ## License
 
-MIT — see [LICENSE](./LICENSE)
+MIT - see [LICENSE](./LICENSE)

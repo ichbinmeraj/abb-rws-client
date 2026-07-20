@@ -174,7 +174,7 @@ describe('opts.timeout reaches the protocol probe', () => {
   let blackHole: ReturnType<typeof listen>;
 
   beforeAll(() => {
-    // Accepts the connection but never answers — forces the probe to time out.
+    // Accepts the connection but never answers - forces the probe to time out.
     blackHole = listen(() => {});
   });
 
@@ -279,8 +279,8 @@ describe('createAdapter Default-User fallback', () => {
 });
 
 describe('Default-User fallback against RWS 1.0 AUTH_FAILED errors', () => {
-  // RwsClient surfaces a rejected login as RwsError('Authentication failed — …',
-  // 'AUTH_FAILED') — no "401" or "unauthorized" in the message, so a message-regex
+  // RwsClient surfaces a rejected login as RwsError('Authentication failed - …',
+  // 'AUTH_FAILED') - no "401" or "unauthorized" in the message, so a message-regex
   // fallback never fires for RWS 1.0. Live-verified against the IRC5 VC.
   let digest401: ReturnType<typeof listen>;
   const users: string[] = [];
@@ -328,7 +328,7 @@ describe('createAdapter returns the matching adapter type', () => {
         res.end('Unauthorized');
         return;
       }
-      // connect() validates by parsing the controller state — return a minimal one.
+      // connect() validates by parsing the controller state - return a minimal one.
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/html');
       res.end('<html><body><li class="pnl-ctrlstate"><span class="ctrlstate">motoron</span></li></body></html>');

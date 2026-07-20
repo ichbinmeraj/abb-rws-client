@@ -17,7 +17,7 @@ export interface RobotConfig {
 
 /**
  * Manages multiple RobotManager instances.
- * One robot is "active" at a time — all panels display that robot's state.
+ * One robot is "active" at a time - all panels display that robot's state.
  */
 export class MultiRobotManager {
   private managers  = new Map<string, RobotManager>();

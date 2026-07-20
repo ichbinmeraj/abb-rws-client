@@ -1,4 +1,4 @@
-// Explicit RWS 2.0 client — for OmniCore controllers (RobotWare 7.x).
+// Explicit RWS 2.0 client - for OmniCore controllers (RobotWare 7.x).
 // Use this when you only target RWS 2.0 and don't need protocol detection.
 
 import { RwsClient2 } from 'abb-rws-client';

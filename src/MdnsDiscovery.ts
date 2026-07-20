@@ -1,5 +1,5 @@
 /**
- * mDNS/Bonjour discovery of ABB controllers — zero dependencies (node:dgram +
+ * mDNS/Bonjour discovery of ABB controllers - zero dependencies (node:dgram +
  * hand-rolled DNS wire parsing).
  *
  * Live-verified 2026-07-08/09 against five RobotStudio VCs (1× RW6.16 IRC5,
@@ -10,13 +10,13 @@
  *     `rws._sub._http._tcp.local` first and plain `_http._tcp.local` as a
  *     fallback (some stacks don't answer subtype PTR queries).
  *   - RW7 VCs attach TXT records: `RwVer=7.21.0 SysGuid=<guid> RwsPort=5466
- *     RobApiP=2558 WanIp= VC=`. RW6 VCs advertise name + SRV(port) only —
+ *     RobApiP=2558 WanIp= VC=`. RW6 VCs advertise name + SRV(port) only -
  *     NO TXT metadata. That asymmetry is the protocol heuristic below.
  *   - The SRV target is the machine hostname (e.g. `DESKTOP-X.local`); the
  *     address comes from the A record in the additionals section, falling
  *     back to the UDP responder's source address.
  *
- * Strategy: one-shot LEGACY unicast query (RFC 6762 §6.7) — bind an ephemeral
+ * Strategy: one-shot LEGACY unicast query (RFC 6762 §6.7) - bind an ephemeral
  * UDP port (never 5353 itself; mDNSResponder owns it), send standard DNS PTR
  * queries to 224.0.0.251:5353, and collect the unicast replies until the
  * timeout. Windows multicast egress is per-interface, so when the host has
@@ -29,11 +29,11 @@ import * as os from 'os';
 export interface MdnsController {
   /** Full mDNS instance label, e.g. `RobotWebServices_MyRobot`. */
   instanceName: string;
-  /** Controller system name — the instance label minus the `RobotWebServices_` prefix. */
+  /** Controller system name - the instance label minus the `RobotWebServices_` prefix. */
   systemName: string;
   /** IPv4 address (A record of the SRV target, else the responder's source address). */
   host: string;
-  /** RWS port — TXT `RwsPort` when present, else the SRV port. */
+  /** RWS port - TXT `RwsPort` when present, else the SRV port. */
   port: number;
   /** RobotWare version from TXT `RwVer` (RW7 only). */
   rwVersion?: string;
@@ -50,7 +50,7 @@ export interface MdnsController {
   probableProtocol: 'rws1' | 'rws2' | 'unknown';
 }
 
-/** Minimal slice of `dgram.Socket` used here — injectable for offline tests. */
+/** Minimal slice of `dgram.Socket` used here - injectable for offline tests. */
 export interface MdnsSocket {
   on(event: 'message', cb: (msg: Buffer, rinfo: { address: string; port: number }) => void): void;
   on(event: 'error', cb: (err: Error) => void): void;
@@ -64,11 +64,11 @@ export interface MdnsSocket {
 export interface MdnsDiscoveryOptions {
   /** How long to collect replies before resolving. Default 2000 ms. */
   timeoutMs?: number;
-  /** Test seam — defaults to `dgram.createSocket('udp4')`. */
+  /** Test seam - defaults to `dgram.createSocket('udp4')`. */
   socketFactory?: () => MdnsSocket;
   /**
    * IPv4 interface addresses to use as multicast egress (in addition to the
-   * OS default route). Defaults to every local IPv4 address — on Windows the
+   * OS default route). Defaults to every local IPv4 address - on Windows the
    * default-route interface is often NOT the one the VCs/robots live on.
    */
   interfaceAddrs?: string[];
@@ -87,7 +87,7 @@ const TYPE_SRV = 33;
 
 // ─── Wire encoding ────────────────────────────────────────────────────────────
 
-/** Build a standard one-question DNS PTR query (legacy unicast — plain QCLASS IN). */
+/** Build a standard one-question DNS PTR query (legacy unicast - plain QCLASS IN). */
 function buildPtrQuery(name: string, id: number): Buffer {
   const parts: Buffer[] = [];
   const header = Buffer.alloc(12);
@@ -111,7 +111,7 @@ function buildPtrQuery(name: string, id: number): Buffer {
 /**
  * Decode a (possibly compressed) domain name. Returns the labels and the
  * offset just past the name in the original (non-pointer) stream. Throws on
- * truncation and pointer loops — callers treat any throw as "malformed
+ * truncation and pointer loops - callers treat any throw as "malformed
  * packet, ignore".
  */
 function readName(buf: Buffer, offset: number): { labels: string[]; next: number } {
@@ -169,7 +169,7 @@ interface RecordStore {
 
 /**
  * Parse one reply packet into the store. Answers, authority, and additionals
- * are treated uniformly — responders put the A record for the SRV target in
+ * are treated uniformly - responders put the A record for the SRV target in
  * additionals. Throws on malformed data (caller ignores the packet).
  */
 function ingestPacket(buf: Buffer, srcAddr: string, store: RecordStore): void {
@@ -230,7 +230,7 @@ function buildControllers(store: RecordStore): MdnsController[] {
     const txt = store.txt.get(key);
     const hasTxtData = txt !== undefined && Object.keys(txt).length > 0;
     const port = positiveInt(txt?.['rwsport']) ?? srv?.port;
-    if (!port) { continue; } // no SRV and no RwsPort — nothing to connect to
+    if (!port) { continue; } // no SRV and no RwsPort - nothing to connect to
     const host = (srv && store.a.get(srv.target.toLowerCase())) ?? inst.srcAddr;
 
     const controller: MdnsController = {
@@ -273,7 +273,7 @@ function ipv4InterfaceAddrs(): string[] {
 /**
  * One-shot mDNS browse for ABB controllers. Resolves after `timeoutMs`
  * (default 2000) with every `RobotWebServices_*` instance heard, deduped by
- * instance name. Never rejects — socket errors resolve with what was
+ * instance name. Never rejects - socket errors resolve with what was
  * collected so far.
  */
 export function discoverControllersMdns(opts: MdnsDiscoveryOptions = {}): Promise<MdnsController[]> {
@@ -305,7 +305,7 @@ export function discoverControllersMdns(opts: MdnsDiscoveryOptions = {}): Promis
       try {
         ingestPacket(msg, rinfo.address, store);
       } catch {
-        // malformed or non-DNS packet — 5353 traffic is noisy, just skip it
+        // malformed or non-DNS packet - 5353 traffic is noisy, just skip it
       }
     });
 
@@ -318,14 +318,14 @@ export function discoverControllersMdns(opts: MdnsDiscoveryOptions = {}): Promis
           }
         };
         sendAll(); // OS default multicast egress
-        // Windows picks ONE egress interface per send — retry through each
+        // Windows picks ONE egress interface per send - retry through each
         // IPv4 interface so controllers on non-default-route networks answer.
         for (const addr of opts.interfaceAddrs ?? ipv4InterfaceAddrs()) {
           try {
             socket.setMulticastInterface(addr);
             sendAll();
           } catch {
-            // interface can't multicast (VPN/virtual adapters) — skip
+            // interface can't multicast (VPN/virtual adapters) - skip
           }
         }
       });

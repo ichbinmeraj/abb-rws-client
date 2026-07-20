@@ -59,7 +59,7 @@ function expectedAuthResponse(auth: string, method: string, uri: string): string
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('HttpSession — digest authentication', () => {
+describe('HttpSession - digest authentication', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let session: HttpSession;
 
@@ -164,7 +164,7 @@ describe('HttpSession — digest authentication', () => {
     fetchMock
       .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))
       .mockResolvedValueOnce(makeResponse(200, ''))
-      // Second call: no 401 — reuse existing challenge
+      // Second call: no 401 - reuse existing challenge
       .mockResolvedValueOnce(makeResponse(200, ''));
 
     await session.get('/path1');
@@ -176,7 +176,7 @@ describe('HttpSession — digest authentication', () => {
   });
 });
 
-describe('HttpSession — digest qop negotiation', () => {
+describe('HttpSession - digest qop negotiation', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let session: HttpSession;
 
@@ -208,7 +208,7 @@ describe('HttpSession — digest qop negotiation', () => {
 
     await session.get('/path').catch(() => undefined);
 
-    // Only the initial unauthenticated request should have gone out — no retry
+    // Only the initial unauthenticated request should have gone out - no retry
     // carrying a bogus qop=auth response for a challenge that never offered auth.
     for (const call of fetchMock.mock.calls) {
       const headers: Record<string, string> = call[1].headers;
@@ -227,7 +227,7 @@ describe('HttpSession — digest qop negotiation', () => {
     const auth: string = fetchMock.mock.calls[1][1].headers['Authorization'];
     expect(auth).toContain('qop=auth');
     expect(auth).not.toContain('qop=auth-int');
-    // The response hash must actually be computed in qop=auth mode — not RFC 2069
+    // The response hash must actually be computed in qop=auth mode - not RFC 2069
     const responseHash = auth.match(/response="([0-9a-f]{32})"/)![1];
     expect(responseHash).toBe(expectedAuthResponse(auth, 'GET', '/rw/panel/ctrlstate'));
   });
@@ -247,7 +247,7 @@ describe('HttpSession — digest qop negotiation', () => {
   });
 });
 
-describe('HttpSession — cookie handling', () => {
+describe('HttpSession - cookie handling', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let session: HttpSession;
 
@@ -326,7 +326,7 @@ describe('HttpSession — cookie handling', () => {
   });
 });
 
-describe('HttpSession — rate limiting', () => {
+describe('HttpSession - rate limiting', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -388,7 +388,7 @@ describe('HttpSession — rate limiting', () => {
   });
 });
 
-describe('HttpSession — 503 retry', () => {
+describe('HttpSession - 503 retry', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let session: HttpSession;
 
@@ -426,7 +426,7 @@ describe('HttpSession — 503 retry', () => {
   });
 });
 
-describe('HttpSession — session expiry', () => {
+describe('HttpSession - session expiry', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -467,7 +467,7 @@ describe('HttpSession — session expiry', () => {
   });
 });
 
-describe('HttpSession — network errors', () => {
+describe('HttpSession - network errors', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let session: HttpSession;
 
@@ -494,7 +494,7 @@ describe('HttpSession — network errors', () => {
   });
 });
 
-describe('HttpSession — HTTP error codes', () => {
+describe('HttpSession - HTTP error codes', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let session: HttpSession;
 

@@ -1,5 +1,5 @@
 /**
- * RwsClient — the single public class for the abb-rws-client package.
+ * RwsClient - the single public class for the abb-rws-client package.
  *
  * Assembles HttpSession, ResourceMapper, ResponseParser, and WsSubscriber into
  * a convenient typed API for ABB IRC5 robot controllers using RWS 1.0.
@@ -152,14 +152,14 @@ export class RwsClient {
    *
    * Lets adapters call any RWS endpoint without requiring this library to wrap
    * each one in a typed method. Useful for endpoints that aren't (yet) exposed
-   * as named methods — the caller handles parsing the response body.
+   * as named methods - the caller handles parsing the response body.
    *
    * Reuses the session's digest auth, cookie, queue, retry, and timeout logic.
    *
    * @param method   'GET' | 'POST' | 'PUT' | 'DELETE'
    * @param path     URL path, e.g. `/rw/cfg/MOC/ROBOT/instances?json=1`
    * @param body     Optional request body (form-encoded string for POST/PUT)
-   * @returns        `{ status: number, body: string }` — raw response
+   * @returns        `{ status: number, body: string }` - raw response
    */
   async request(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -205,7 +205,7 @@ export class RwsClient {
     // Server-side cleanup: GET /logout releases mastership, subscriptions, and frees
     // the session slot in the controller's pool. Without this, orphan mastership can
     // block subsequent clients for several minutes (until the controller times out
-    // the session by inactivity). Best-effort — ignore errors.
+    // the session by inactivity). Best-effort - ignore errors.
     try { await this.session.get('/logout'); } catch { /* ignore */ }
     this.session.clearSession();
   }
@@ -281,10 +281,10 @@ export class RwsClient {
    * Restart (or warm-start) the controller.
    *
    * **Modes:**
-   * - `restart`  — Normal restart; saves state and activates changed system parameters
-   * - `istart`   — Restart with original installation settings; discards all programs
-   * - `pstart`   — Restart preserving system parameters; removes programs
-   * - `bstart`   — Boot with last auto-saved state (crash recovery)
+   * - `restart`  - Normal restart; saves state and activates changed system parameters
+   * - `istart`   - Restart with original installation settings; discards all programs
+   * - `pstart`   - Restart preserving system parameters; removes programs
+   * - `bstart`   - Boot with last auto-saved state (crash recovery)
    *
    * @param mode - Restart mode; default 'restart'
    */
@@ -325,7 +325,7 @@ export class RwsClient {
   }
 
   /**
-   * Switch the controller's operation mode. **Virtual controllers only** — on
+   * Switch the controller's operation mode. **Virtual controllers only** - on
    * real IRC5 hardware the physical key switch on the FlexPendant is the
    * source of truth and the controller will reject this with 403.
    *
@@ -345,7 +345,7 @@ export class RwsClient {
   // ─── Speed ratio ────────────────────────────────────────────────────────────
 
   /**
-   * Read the current speed ratio (0–100).
+   * Read the current speed ratio (0-100).
    * Represents override percentage applied to all robot speeds.
    */
   async getSpeedRatio(): Promise<number> {
@@ -359,8 +359,8 @@ export class RwsClient {
   }
 
   /**
-   * Set the speed ratio override (0–100). Only valid in AUTO mode.
-   * @param ratio - Integer 0–100 (clamped automatically)
+   * Set the speed ratio override (0-100). Only valid in AUTO mode.
+   * @param ratio - Integer 0-100 (clamped automatically)
    */
   async setSpeedRatio(ratio: number): Promise<void> {
     try {
@@ -434,7 +434,7 @@ export class RwsClient {
       if (e instanceof RwsError) {
         // Map 400 "motors off" to a more descriptive code
         if (e.httpStatus === 400 && e.rwsDetail?.includes('motor')) {
-          throw new RwsError('Motors are off — enable motors before starting RAPID', 'MOTORS_OFF', e.httpStatus, e.rwsDetail);
+          throw new RwsError('Motors are off - enable motors before starting RAPID', 'MOTORS_OFF', e.httpStatus, e.rwsDetail);
         }
         throw e;
       }
@@ -593,9 +593,9 @@ export class RwsClient {
    * Get the stackurl from getActiveUiInstruction().stack.
    *
    * Common parameter names:
-   * - 'Result' — the answer value for TPReadNum, TPReadFK
-   * - 'TPFK1' … 'TPFK5' — individual function key states (0/1)
-   * - 'TPCompleted' — set to 'TRUE' when done
+   * - 'Result' - the answer value for TPReadNum, TPReadFK
+   * - 'TPFK1' … 'TPFK5' - individual function key states (0/1)
+   * - 'TPCompleted' - set to 'TRUE' when done
    *
    * @param stackurl - Stack URL from UiInstruction.stack (e.g. 'RAPID/T_ROB1/%$104')
    * @param uiparam  - Parameter name, e.g. 'Result'
@@ -697,7 +697,7 @@ export class RwsClient {
    * @param mechunit - Mechanical unit; default 'ROB_1'
    * @param tool     - Active tool frame; default 'tool0'
    * @param wobj     - Active work object; default 'wobj0'
-   * @returns RobTarget with x, y, z (mm) and q1–q4 quaternion components
+   * @returns RobTarget with x, y, z (mm) and q1-q4 quaternion components
    */
   async getCartesianPosition(mechunit?: string, tool?: string, wobj?: string): Promise<RobTarget> {
     try {
@@ -711,7 +711,7 @@ export class RwsClient {
 
   /**
    * Read the current Cartesian position including robot configuration flags.
-   * Uses /cartesian endpoint (no tool/wobj override — uses active tool/wobj).
+   * Uses /cartesian endpoint (no tool/wobj override - uses active tool/wobj).
    * Returns j1/j4/j6/jx configuration integers in addition to pose.
    *
    * @param mechunit - Default 'ROB_1'
@@ -749,7 +749,7 @@ export class RwsClient {
   /**
    * Upload a file to the controller filesystem.
    * The content is uploaded as UTF-8 bytes via PUT /fileservice/{remotePath}.
-   * Works for any file type — RAPID modules, .cfg files, plain text, etc.
+   * Works for any file type - RAPID modules, .cfg files, plain text, etc.
    *
    * @param remotePath - Controller path, e.g. '$HOME/MyMod.mod'
    * @param content    - File content as a string
@@ -765,7 +765,7 @@ export class RwsClient {
     }
   }
 
-  /** @deprecated use uploadFile() — same behavior, neutral name. Kept for backward compat. */
+  /** @deprecated use uploadFile() - same behavior, neutral name. Kept for backward compat. */
   uploadModule(remotePath: string, content: string): Promise<void> {
     return this.uploadFile(remotePath, content);
   }
@@ -1020,11 +1020,11 @@ export class RwsClient {
   /**
    * Set the controller date and time (UTC).
    * @param year  - Full year, e.g. 2024
-   * @param month - Month 1–12
-   * @param day   - Day 1–31
-   * @param hour  - Hour 0–23
-   * @param min   - Minute 0–59
-   * @param sec   - Second 0–59
+   * @param month - Month 1-12
+   * @param day   - Day 1-31
+   * @param hour  - Hour 0-23
+   * @param min   - Minute 0-59
+   * @param sec   - Second 0-59
    */
   async setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
     try {

@@ -10,7 +10,7 @@ import { RWS1Adapter } from '../src/RWS1Adapter.js';
 import { RWS2Adapter } from '../src/RWS2Adapter.js';
 import { RwsClient } from '../src/RwsClient.js';
 
-// Re-export the real fs through a plain (spyable) module object — the builtin
+// Re-export the real fs through a plain (spyable) module object - the builtin
 // namespace is frozen under vitest, so vi.spyOn(fs, ...) needs this indirection.
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -189,7 +189,7 @@ describe('RobotManager connect lifecycle', () => {
     await vi.waitFor(() => expect(fake.connect).toHaveBeenCalled());
     await mgr.disconnect();
 
-    // Same args, but the in-flight attempt was cancelled by the disconnect —
+    // Same args, but the in-flight attempt was cancelled by the disconnect -
     // coalescing onto it would resolve with the manager still disconnected.
     const p2 = mgr.connect('vc-a', 'u', 'p', 80);
     expect(p2).not.toBe(p1);

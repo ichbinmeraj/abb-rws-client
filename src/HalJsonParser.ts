@@ -1,5 +1,5 @@
 /**
- * Parser for RWS 2.0 HAL JSON responses (`application/hal+json;v=2.0`) — the
+ * Parser for RWS 2.0 HAL JSON responses (`application/hal+json;v=2.0`) - the
  * officially supported primary GET representation on OmniCore controllers.
  *
  * Live-verified 2026-07-09 on OmniCore VC RW7.21 across every GET endpoint
@@ -16,7 +16,7 @@
  * the former `<span class="X">` fields become plain JSON keys. Resources can
  * nest (e.g. `sys-options-li` holds an `options` array of typed objects,
  * `cfg-dt-instance-li` an `attrib` array of `cfg-ia-t` entries), so lookups
- * recurse — mirroring how the XHTML parser finds `<li>` anywhere in the
+ * recurse - mirroring how the XHTML parser finds `<li>` anywhere in the
  * document. Presents the same read interface as `XhtmlParser` so `RwsClient2`
  * can treat both representations alike.
  */
@@ -81,7 +81,7 @@ export class HalJsonParser {
   /**
    * Pagination link (`_links.next.href`), raw as sent. Live-verified quirk:
    * the controller XML-escapes ampersands even inside JSON strings
-   * (`"signals?start=3&amp;limit=3"`) — callers must unescape, exactly as on
+   * (`"signals?start=3&amp;limit=3"`) - callers must unescape, exactly as on
    * the XHTML `rel="next"` path.
    */
   nextHref(): string | undefined {

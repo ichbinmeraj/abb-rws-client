@@ -22,7 +22,7 @@ import type { MdnsController } from './MdnsDiscovery.js';
 
 /**
  * Listener signature for `onError`. The host (VS Code extension, CLI, etc.) can
- * decide how to surface the error — e.g. `vscode.window.showErrorMessage` with
+ * decide how to surface the error - e.g. `vscode.window.showErrorMessage` with
  * the supplied action labels, or a CLI prompt, or just logging.
  *
  * The promise resolves to the action the user chose, or `undefined` if dismissed.
@@ -41,7 +41,7 @@ export interface RobotManagerOptions {
    */
   refreshIntervalMs?: number;
   /**
-   * Verify TLS certificates on HTTPS controllers. Default false — virtual and
+   * Verify TLS certificates on HTTPS controllers. Default false - virtual and
    * real controllers alike ship self-signed certs, so verification stays off
    * unless the deployment has a CA-signed cert on the controller. Applies to
    * port probing and to the RWS 2.0 client this manager constructs.
@@ -78,7 +78,7 @@ export interface ProbeResult {
   authType: 'digest' | 'basic';
 }
 
-/** In-flight connect attempt — args plus the connectEpoch the attempt runs under. */
+/** In-flight connect attempt - args plus the connectEpoch the attempt runs under. */
 interface ConnectAttempt {
   host: string;
   username: string;
@@ -87,7 +87,7 @@ interface ConnectAttempt {
   useHttps?: boolean;
   /**
    * connectEpoch value this attempt is running under. disconnect() bumps the
-   * epoch, marking the attempt cancelled — connect() must stop coalescing onto
+   * epoch, marking the attempt cancelled - connect() must stop coalescing onto
    * it, or callers get a resolved promise while the manager ends disconnected.
    */
   epoch: number;
@@ -122,7 +122,7 @@ export class RobotManager {
   private unsubscribeFn: (() => Promise<void>) | null = null;
   /** True when WebSocket subscriptions are active (drives reduced polling interval). */
   private subscriptionActive = false;
-  /** In-flight connect promise — used to dedupe rapid-clicks so we never run two connects in parallel. */
+  /** In-flight connect promise - used to dedupe rapid-clicks so we never run two connects in parallel. */
   private connectingPromise: Promise<void> | null = null;
   /** Args of the in-flight connect, so a repeat call can tell "same target" from "new target". */
   private connectingArgs: ConnectAttempt | null = null;
@@ -145,7 +145,7 @@ export class RobotManager {
   /** The HTTPS flag matching `currentPort`. */
   get currentUseHttps(): boolean | undefined {
     if (!this.adapter || !this.adapterConfig) { return undefined; }
-    // RWS2Adapter is HTTPS, RWS1Adapter is HTTP. instanceof, not constructor.name —
+    // RWS2Adapter is HTTPS, RWS1Adapter is HTTP. instanceof, not constructor.name -
     // minified bundles rename classes, which made this persist the wrong protocol.
     return this.adapter instanceof RWS2Adapter;
   }
@@ -156,7 +156,7 @@ export class RobotManager {
    * Install an error listener. Called when the manager auto-disconnects after 3 failed
    * polls. Hosts can route to UI dialogs (vscode.window.showErrorMessage), prompts, or
    * alerting systems. The listener returns the chosen action; only 'Reconnect' is acted
-   * on internally — others are passed through for the host to handle.
+   * on internally - others are passed through for the host to handle.
    */
   onError(fn: ErrorListener) { this.errorListener = fn; }
 
@@ -174,7 +174,7 @@ export class RobotManager {
         headers: { Accept: 'application/xhtml+xml;v=2.0' },
         // rejectUnauthorized must also be per-request: hosts that swap the agent
         // (VS Code extension host, non-localhost targets) drop agent-level TLS
-        // settings — real controllers have self-signed certs (issue #2).
+        // settings - real controllers have self-signed certs (issue #2).
         // Under strictTls neither is set, so certs verify normally.
         ...(insecure ? { agent, rejectUnauthorized: false } : {}),
       };
@@ -219,13 +219,13 @@ export class RobotManager {
    * Returns every found controller with its host attached.
    *
    * If nothing is found on 127.0.0.1 via standard ports, falls back to a wide
-   * TCP scan of the local-VC port range — this catches RobotStudio VCs whose
+   * TCP scan of the local-VC port range - this catches RobotStudio VCs whose
    * ports are randomly assigned each startup.
    */
   static async discoverControllers(extraHosts: string[] = [], strictTls = false): Promise<DiscoveredController[]> {
     const hosts = [
       '127.0.0.1',      // Local virtual controllers (RobotStudio)
-      '192.168.125.1',  // ABB standard service port — both IRC5 and OmniCore real robots
+      '192.168.125.1',  // ABB standard service port - both IRC5 and OmniCore real robots
       ...extraHosts,
     ];
 
@@ -241,11 +241,11 @@ export class RobotManager {
     const results = await Promise.all(probes);
     const found = results.filter((r): r is DiscoveredController => r !== null);
 
-    // Fallback: nothing on standard ports of 127.0.0.1 — try wide scan
+    // Fallback: nothing on standard ports of 127.0.0.1 - try wide scan
     // (RobotStudio assigns random high ports to VCs each restart).
     const localHits = found.filter(c => c.host === '127.0.0.1' || c.host === 'localhost');
     if (localHits.length === 0) {
-      Logger.info(`no controllers on standard ports of 127.0.0.1 — running wide scan…`);
+      Logger.info(`no controllers on standard ports of 127.0.0.1 - running wide scan…`);
       const wide = await RobotManager.wideHostScan('127.0.0.1', strictTls);
       Logger.info(`wide scan found ${wide.length} ABB controller(s) on 127.0.0.1`);
       found.push(...wide);
@@ -255,7 +255,7 @@ export class RobotManager {
   }
 
   /**
-   * Discover controllers via mDNS/Bonjour — additive alternative to the TCP
+   * Discover controllers via mDNS/Bonjour - additive alternative to the TCP
    * probing of `discoverControllers`. Both real controllers and RobotStudio
    * VCs advertise `RobotWebServices_<systemname>` on `_http._tcp.local`
    * (VCs via the mDNSResponder service RobotStudio installs), so this finds
@@ -263,7 +263,7 @@ export class RobotManager {
    * RW7 metadata (version, GUID, ports) from the TXT records.
    *
    * `probableProtocol` is a heuristic from the advertisement (RW7 attaches
-   * TXT metadata, RW6 does not) — confirm with `probeSpecificPort` before
+   * TXT metadata, RW6 does not) - confirm with `probeSpecificPort` before
    * connecting. See MdnsDiscovery.ts for the live-verified wire details.
    */
   static async discoverControllersMdns(opts?: { timeoutMs?: number }): Promise<MdnsController[]> {
@@ -279,7 +279,7 @@ export class RobotManager {
   /**
    * Probe an exact host:port to discover its auth type and protocol.
    * Tries HTTPS first (most OmniCore VCs use it), then HTTP.
-   * Returns null only if neither responds — protects against guessing wrong
+   * Returns null only if neither responds - protects against guessing wrong
    * (e.g. RobotStudio-assigned port 5466 is HTTPS but doesn't fit any heuristic).
    */
   static async probeSpecificPort(host: string, port: number, strictTls = false): Promise<ProbeResult | null> {
@@ -309,12 +309,12 @@ export class RobotManager {
    * Uses a sliding-window worker pool to keep concurrency below the OS socket limit
    * (Windows in particular drops connections silently above ~500 concurrent sockets).
    *
-   * Heavy operation — only call when standard-port detection finds nothing.
+   * Heavy operation - only call when standard-port detection finds nothing.
    * Prefer host=127.0.0.1; scanning a remote host this aggressively is rude.
    */
   static async wideHostScan(host: string, strictTls = false): Promise<DiscoveredController[]> {
     // RobotStudio assigns RWS ports across a wide range. Observed values include
-    // 5466, 9403, 11811, 15120, 16146, 28447 — covering 4000–30000 catches them all.
+    // 5466, 9403, 11811, 15120, 16146, 28447 - covering 4000-30000 catches them all.
     const startPort = 1024;
     const endPort   = 30000;
     const concurrency = 300;       // safe on Windows; ~500 is the practical ceiling
@@ -334,7 +334,7 @@ export class RobotManager {
 
     Logger.info(`wide scan: ${tcpOpen.length} open TCP port(s) on ${host}, HTTP-probing each…`);
 
-    // HTTP-probe TCP-open ports — filter to actual ABB controllers
+    // HTTP-probe TCP-open ports - filter to actual ABB controllers
     const probes = await Promise.all(
       tcpOpen.map(port =>
         RobotManager.probeSpecificPort(host, port, strictTls)
@@ -354,11 +354,11 @@ export class RobotManager {
    *                 Required when two controllers share the same host IP.
    * @param useHttps If provided alongside port, sets the protocol explicitly.
    *
-   * Rapid duplicate calls with the SAME target are coalesced — concurrent
+   * Rapid duplicate calls with the SAME target are coalesced - concurrent
    * callers receive the same in-flight promise. Without this, fast double-clicks
    * would spawn parallel adapters/timers and overwhelm the controller's session
    * pool. A call with a DIFFERENT target instead cancels the in-flight attempt
-   * and connects fresh — otherwise the caller ends up connected, but not to
+   * and connects fresh - otherwise the caller ends up connected, but not to
    * what it asked for. Same for a SAME-target call after a disconnect() has
    * cancelled the in-flight attempt: coalescing onto it would hand the caller
    * a promise that resolves with the manager still disconnected.
@@ -392,7 +392,7 @@ export class RobotManager {
       }
       await this.doConnect(host, username, password, port, useHttps, attempt);
     })().finally(() => {
-      // Only clear if we're still the current attempt — a superseding connect
+      // Only clear if we're still the current attempt - a superseding connect
       // may have replaced these fields while we were settling.
       if (this.connectingPromise === p) {
         this.connectingPromise = null;
@@ -424,7 +424,7 @@ export class RobotManager {
     // resurrect timers or subscriptions. The attempt record mirrors the value
     // so connect() knows whether coalescing onto this attempt is still valid.
     // User cancellations additionally set attempt.cancelled, which survives
-    // this re-read — otherwise a disconnect() racing our own teardown above
+    // this re-read - otherwise a disconnect() racing our own teardown above
     // would be erased here and the connection resurrected.
     const epoch = this.connectEpoch;
     if (attempt) { attempt.epoch = epoch; }
@@ -438,14 +438,14 @@ export class RobotManager {
 
     let probe: ProbeResult;
     if (port !== undefined) {
-      // Port is pinned in config — verify it's actually reachable with the right protocol.
+      // Port is pinned in config - verify it's actually reachable with the right protocol.
       const verified = await RobotManager.probeSpecificPort(host, port, this.strictTls);
       if (verified) {
         probe = verified;
         Logger.info(`port ${port} verified: ${verified.useHttps ? 'HTTPS' : 'HTTP'}/${verified.authType}`);
       } else {
-        // Saved port didn't respond — RobotStudio reassigns VC ports each restart.
-        Logger.warn(`saved port ${port} not responding — scanning ${host} for an active controller…`);
+        // Saved port didn't respond - RobotStudio reassigns VC ports each restart.
+        Logger.warn(`saved port ${port} not responding - scanning ${host} for an active controller…`);
         const expectedAuth = (useHttps ?? (port === 443 || port === 9403)) ? 'basic' : 'digest';
 
         // Phase 1: quick scan of the standard ports
@@ -453,7 +453,7 @@ export class RobotManager {
 
         // Phase 2: if nothing on standard ports and we're scanning localhost, do a wide scan
         if (candidates.length === 0 && (host === '127.0.0.1' || host === 'localhost')) {
-          Logger.info(`standard ports empty — running wide scan 1024–30000 (this takes ~3 s)…`);
+          Logger.info(`standard ports empty - running wide scan 1024-30000 (this takes ~3 s)…`);
           const wide = await RobotManager.wideHostScan(host, this.strictTls);
           candidates = wide.map(c => ({ port: c.port, useHttps: c.useHttps, authType: c.authType }));
           Logger.info(`wide scan found ${candidates.length} ABB controller(s) on ${host}`);
@@ -464,10 +464,10 @@ export class RobotManager {
           probe = match;
           Logger.info(`recovered: ${match.useHttps ? 'HTTPS' : 'HTTP'}/${match.authType} on port ${match.port} (saved was ${port})`);
         } else {
-          // Last resort: try the saved port anyway — maybe a firewall blocks the probe but lets through auth
+          // Last resort: try the saved port anyway - maybe a firewall blocks the probe but lets through auth
           const https_ = useHttps ?? (port === 443 || port === 9403);
           probe = { port, useHttps: https_, authType: https_ ? 'basic' : 'digest' };
-          Logger.warn(`no controller found anywhere on ${host} — falling back to saved port ${port}`);
+          Logger.warn(`no controller found anywhere on ${host} - falling back to saved port ${port}`);
         }
       }
     } else {
@@ -514,7 +514,7 @@ export class RobotManager {
       throw e;
     }
     if (aborted()) {
-      Logger.info(`connect → ${host} aborted (disconnected mid-connect) — closing session`);
+      Logger.info(`connect → ${host} aborted (disconnected mid-connect) - closing session`);
       await this.adapter.disconnect().catch(() => {});
       return;
     }
@@ -549,7 +549,7 @@ export class RobotManager {
     // Single-flight guard: if a fetchAll is still running when the timer
     // fires, skip this tick. Prevents the request pile-up that caused
     // 10-second timeouts on /cartesian and /tasks during heavy motion
-    // (controller's RWS layer queues behind the motion planner — responses
+    // (controller's RWS layer queues behind the motion planner - responses
     // can take >1s when joints are moving fast). Without this, a slow poll
     // would stack against the next-second poll, causing both to timeout.
     this.timer = setInterval(() => {
@@ -567,7 +567,7 @@ export class RobotManager {
     return this.disconnectInternal();
   }
 
-  /** Teardown used by doConnect/startConnect for their own reconnect cycles — must not cancel the attempt that invoked it. */
+  /** Teardown used by doConnect/startConnect for their own reconnect cycles - must not cancel the attempt that invoked it. */
   private async disconnectInternal(): Promise<void> {
     // Bump generation FIRST so any in-flight fetchAll calls bail before they
     // can trigger another disconnect cascade. The epoch likewise cancels any
@@ -630,13 +630,13 @@ export class RobotManager {
   }
 
   /**
-   * Switch operation mode (AUTO/MANR/MANF). VC-only — real hardware respects
+   * Switch operation mode (AUTO/MANR/MANF). VC-only - real hardware respects
    * the FlexPendant key switch.
    *
    * State-machine constraints (ABB safety design):
    *   AUTO ↔ MANR: direct transition allowed.
    *   MANR ↔ MANF: direct transition allowed.
-   *   AUTO ↔ MANF: NOT allowed direct — must go through MANR.
+   *   AUTO ↔ MANF: NOT allowed direct - must go through MANR.
    *     Controller rejects with HTTP 500 "Operation failed" on the direct call.
    *     We auto-handle this by routing through MANR (two POSTs).
    *
@@ -644,7 +644,7 @@ export class RobotManager {
    *   Going TO MANR/MANF: usually works without mastership (safer direction).
    *   Going TO AUTO: requires `edit` mastership + a confirmation popup on the
    *     FlexPendant. We wrap with mastership; the popup must be approved
-   *     manually (no API path bypasses it — verified live).
+   *     manually (no API path bypasses it - verified live).
    */
   async setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
     if (!this.adapter) { throw new Error('Not connected'); }
@@ -659,7 +659,7 @@ export class RobotManager {
       Logger.info(`opmode: routing ${current} → MANR → ${mode} (direct transition not allowed)`);
       await this.setOpmodeOnce('MANR');
       // Brief pause so the controller settles the safety-chain state before the
-      // second hop — direct back-to-back POSTs sometimes get the second one
+      // second hop - direct back-to-back POSTs sometimes get the second one
       // rejected as "operation in progress."
       await new Promise(r => setTimeout(r, 600));
       await this.setOpmodeOnce(mode);
@@ -682,7 +682,7 @@ export class RobotManager {
 
   // ─── Simulation panel (virtual controllers, RWS 2.0 only) ──────────────────
   //
-  // Thin passthroughs to the RWS2 client's sim* methods — the endpoints exist
+  // Thin passthroughs to the RWS2 client's sim* methods - the endpoints exist
   // only on RW7 virtual controllers (404 on real hardware and on RW6).
 
   private simAdapter(): RWS2Adapter {
@@ -707,7 +707,7 @@ export class RobotManager {
   // (RWS 1.0 calls it 'rapid', the adapter aliases internally).
   // Live-confirmed: calling resetpp without mastership returns
   // HTTP 403 with org_code -4501 / new_code 0xc004841d which the controller
-  // misleadingly tags as "RAPID error" — but the real cause is mastership.
+  // misleadingly tags as "RAPID error" - but the real cause is mastership.
   //
   // We acquire+release per-call so the manager doesn't hold mastership
   // longer than necessary (other clients can use the controller meanwhile).
@@ -723,7 +723,7 @@ export class RobotManager {
    *
    * Mastership-only is the right default. If the op fails because RMMP is
    * actually missing, the caller's error handler can offer a Request-RMMP
-   * action — but it's a recovery path, not a precondition.
+   * action - but it's a recovery path, not a precondition.
    */
   private async withMastership<T>(fn: () => Promise<T>): Promise<T> {
     if (!this.adapter) { throw new Error('Not connected'); }
@@ -733,12 +733,12 @@ export class RobotManager {
   }
 
   // ─── Remote Mastership Privilege (RMMP) ──────────────────────────────────
-  /** Get current RMMP — 'none' / 'pending modify' / 'modify' / 'exclusive'. */
+  /** Get current RMMP - 'none' / 'pending modify' / 'modify' / 'exclusive'. */
   async getRmmpPrivilege(): Promise<string> {
     if (!this.adapter?.getRmmpPrivilege) { return 'unsupported'; }
     return this.adapter.getRmmpPrivilege();
   }
-  /** Request RMMP — triggers a FlexPendant popup that the operator must approve. */
+  /** Request RMMP - triggers a FlexPendant popup that the operator must approve. */
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
     if (!this.adapter?.requestRmmp) { throw new Error('RMMP not supported on this controller'); }
     return this.adapter.requestRmmp(level);
@@ -749,10 +749,10 @@ export class RobotManager {
    * Used by startRapid() to re-apply on next start when execstate is 'stopped'.
    * Reason: when a routine completes (e.g. has `Stop;` at end, or cycle=once),
    * PP advances past the routine's last instruction. The next Start with
-   * `execmode=continue` then does nothing visible — controller accepts the
+   * `execmode=continue` then does nothing visible - controller accepts the
    * call (HTTP 204) but there's nothing left to execute.
    * By re-applying the target on each Start-from-stopped, the user's mental
-   * model becomes "Start runs the routine I picked" — every time.
+   * model becomes "Start runs the routine I picked" - every time.
    * Cleared by resetRapid() (PP-to-Main) so the user can then run main again.
    */
   private lastPPTarget: { module: string; routine: string } | null = null;
@@ -765,7 +765,7 @@ export class RobotManager {
    * routine runs from the top each time the program has finished and is
    * idle.
    * If the program is paused mid-execution (e.g. user hit Stop in the middle
-   * of a long routine), the PP target is NOT re-applied — Start resumes
+   * of a long routine), the PP target is NOT re-applied - Start resumes
    * from where the user stopped.
    * Detection: if PP currently lives in `lastPPTarget.routine`, we assume
    * the user is in the "ran-then-stopped" state (PP at end-of-routine).
@@ -779,18 +779,18 @@ export class RobotManager {
       const stopped = this._state.execstate === 'stopped';
       if (target && stopped && this.adapter!.setProgramPointer) {
         // Best-effort: re-apply the target. If PP is still mid-routine
-        // (paused, not finished), this is still safe — it just resets PP
+        // (paused, not finished), this is still safe - it just resets PP
         // to the start of the same routine.
         await this.adapter!.setProgramPointer(this.activeTaskName(), {
           module: target.module,
           routine: target.routine,
-        }).catch(() => { /* swallow — start will surface its own error if any */ });
+        }).catch(() => { /* swallow - start will surface its own error if any */ });
       }
       await this.adapter!.startRapid();
     });
   }
 
-  /** Active task name — the task flagged active, else the first task, else T_ROB1. */
+  /** Active task name - the task flagged active, else the first task, else T_ROB1. */
   private activeTaskName(): string {
     const active = this._state.tasks.find(t => t.active);
     return active?.name ?? this._state.tasks[0]?.name ?? 'T_ROB1';
@@ -802,7 +802,7 @@ export class RobotManager {
   }
   async resetRapid(): Promise<void> {
     if (!this.adapter) { throw new Error('Not connected'); }
-    // PP-to-Main clears the routine target — Start will go to main from now on.
+    // PP-to-Main clears the routine target - Start will go to main from now on.
     this.lastPPTarget = null;
     await this.withMastership(() => this.adapter!.resetRapid());
   }
@@ -860,7 +860,7 @@ export class RobotManager {
   }
 
   /**
-   * Detailed list of loaded modules — each entry has `name` + `type` (SysMod / ProgMod).
+   * Detailed list of loaded modules - each entry has `name` + `type` (SysMod / ProgMod).
    * Used by the Modules tree to render system vs program modules differently.
    * Falls back to bare names from `listModules` if the adapter doesn't support details.
    */
@@ -887,7 +887,7 @@ export class RobotManager {
 
   /**
    * List the routines (PROCs, FUNCs, TRAPs) defined in a loaded module.
-   * Uses the controller's symbol search rather than parsing the source —
+   * Uses the controller's symbol search rather than parsing the source -
    * works even when the module file isn't on disk anymore (e.g. it was
    * loaded then the file was deleted / never persisted).
    *
@@ -968,7 +968,7 @@ export class RobotManager {
    * Create a directory on the controller filesystem.
    * If `parentPath` itself doesn't exist, recursively creates the missing
    * parents under the volume root ($HOME / HOME / BACKUP / …). This is
-   * mkdir -p semantics — friendlier than the bare ABB endpoint which
+   * mkdir -p semantics - friendlier than the bare ABB endpoint which
    * returns 404 "Path does not exist" if any intermediate is missing.
    */
   async createDirectory(parentPath: string, dirName: string): Promise<void> {
@@ -987,7 +987,7 @@ export class RobotManager {
 
   /**
    * Walk down `path` from the volume root, creating each missing segment.
-   * Volumes ($HOME, HOME, BACKUP, DATA, …) themselves are NEVER created —
+   * Volumes ($HOME, HOME, BACKUP, DATA, …) themselves are NEVER created -
    * they're controller-managed.
    */
   private async ensureDirectory(targetPath: string): Promise<void> {
@@ -995,7 +995,7 @@ export class RobotManager {
     // Strip leading slash if any; first segment is the volume name.
     const cleaned = targetPath.replace(/^\/+/, '');
     const segments = cleaned.split('/').filter(Boolean);
-    if (segments.length <= 1) { return; } // just a volume — caller can't create that
+    if (segments.length <= 1) { return; } // just a volume - caller can't create that
     // Walk: $HOME, $HOME/a, $HOME/a/b, ...
     let cursor = segments[0]; // the volume
     for (let i = 1; i < segments.length; i++) {
@@ -1003,10 +1003,10 @@ export class RobotManager {
       try {
         await this.adapter.createDirectory(cursor, seg);
       } catch (e) {
-        // 409-ish "already exists" or 200 — treat as ok. Other errors propagate.
+        // 409-ish "already exists" or 200 - treat as ok. Other errors propagate.
         const msg = e instanceof Error ? e.message : String(e);
         if (!/already exists|HTTP 200|HTTP 204|409/i.test(msg)) {
-          // Path didn't exist AND we couldn't create it — keep walking but
+          // Path didn't exist AND we couldn't create it - keep walking but
           // re-throw at the end if the final create fails. (One forgiving pass.)
           if (!/HTTP 404|Path does not exist/i.test(msg)) { throw e; }
         }
@@ -1111,11 +1111,11 @@ export class RobotManager {
    *      symbol table still references the OLD module's procedures, so
    *      `resetRapid()` afterwards reports "no main" even though the new
    *      file has one. Explicit unload + load fixes this.
-   *   3. Upload the file to $HOME (or HOME/ on RWS 2.0 — adapter rewrites).
+   *   3. Upload the file to $HOME (or HOME/ on RWS 2.0 - adapter rewrites).
    *   4. loadModule the new file.
    *   5. **If the new module declares `PROC main()`, auto-call PP-to-Main.**
    *      This restores the original v0.1 ergonomics without the destructive
-   *      behavior the earlier loadProgram had — the user can immediately
+   *      behavior the earlier loadProgram had - the user can immediately
    *      click Start. Failures during the auto-resetpp are swallowed (the
    *      module loaded fine; the user can manually click PP-to-Main if
    *      needed). Detect by regex over the file content.
@@ -1147,7 +1147,7 @@ export class RobotManager {
 
       // If the new module has a main proc, auto-resetpp so the user can Start
       // immediately. Match `PROC main(` allowing whitespace + comments above.
-      // Errors here are non-fatal — the module loaded successfully even if
+      // Errors here are non-fatal - the module loaded successfully even if
       // PP-to-Main fails (e.g. another module's main collides; user resolves manually).
       const hasMainProc = /\bPROC\s+main\s*\(/i.test(content);
       if (hasMainProc) {
@@ -1164,7 +1164,7 @@ export class RobotManager {
   /**
    * Unload a single RAPID module from a task. Useful for resolving a
    * `main`-proc collision: if two modules both define `PROC main()`, RWS
-   * refuses PP-to-Main with a semantic error — unload one and the other
+   * refuses PP-to-Main with a semantic error - unload one and the other
    * becomes the program's entry point.
    */
   async unloadModule(taskName: string, moduleName: string): Promise<void> {
@@ -1260,7 +1260,7 @@ export class RobotManager {
     return this.adapter.setActiveWobj(mechunit, wobjName);
   }
 
-  // DIPC — Distributed Inter-Process Communication. Lets RAPID and external
+  // DIPC - Distributed Inter-Process Communication. Lets RAPID and external
   // clients exchange typed messages through named queues.
   async listDipcQueues() {
     if (!this.adapter?.listDipcQueues) { return []; }
@@ -1382,7 +1382,7 @@ export class RobotManager {
 
   // ─── Jogging ──────────────────────────────────────────────────────────────────
 
-  /** Tracks whether motion mastership is currently held — avoids redundant requests on rapid jog clicks. */
+  /** Tracks whether motion mastership is currently held - avoids redundant requests on rapid jog clicks. */
   private motionMastershipHeld = false;
   private jogReleaseTimer: NodeJS.Timeout | null = null;
 
@@ -1409,19 +1409,19 @@ export class RobotManager {
       throw new Error(`Motors are off (state: ${this._state.ctrlstate}). Turn motors on before jogging.`);
     }
 
-    // Ensure RMMP (Remote Mastership Privilege) — required for ANY modify op via RWS.
+    // Ensure RMMP (Remote Mastership Privilege) - required for ANY modify op via RWS.
     // Without this, jog returns 403 "Operation not allowed for user".
     if (this.adapter.getRmmpPrivilege && this.adapter.requestRmmp) {
       const priv = await this.adapter.getRmmpPrivilege().catch(() => 'none');
       if (priv === 'none') {
         await this.adapter.requestRmmp('modify');
-        Logger.warn('RMMP requested — open FlexPendant and approve the remote-control popup, then click jog again');
+        Logger.warn('RMMP requested - open FlexPendant and approve the remote-control popup, then click jog again');
         throw new Error('Remote control not authorized yet. Open the FlexPendant and approve the popup that asks "Allow remote user to modify?", then click jog again.');
       }
       if (priv.startsWith('pending')) {
         throw new Error('Remote control approval is still pending. Open the FlexPendant and approve the popup, then click jog again.');
       }
-      // 'modify' or 'exclusive' — proceed
+      // 'modify' or 'exclusive' - proceed
     }
 
     if (!this.motionMastershipHeld) {
@@ -1477,7 +1477,7 @@ export class RobotManager {
       this.subscriptionActive = true;
     } catch (e) {
       this.subscriptionActive = false;
-      // Not an error — polling is the fallback
+      // Not an error - polling is the fallback
       console.log(
         `[RobotManager] WS subscriptions unavailable, using polling only: ${
           e instanceof Error ? e.message : String(e)
@@ -1488,13 +1488,13 @@ export class RobotManager {
 
   /**
    * Adapter reports the event stream as terminally lost (WS reconnect attempts
-   * exhausted). Drop back to the fast polling cadence so state stays fresh —
+   * exhausted). Drop back to the fast polling cadence so state stays fresh -
    * without this the manager keeps the 5× slow poll and the UI goes stale.
    */
   private handleSubscriptionLost(): void {
     if (!this.subscriptionActive) { return; }
     this.subscriptionActive = false;
-    Logger.warn('live event stream lost — resuming fast polling');
+    Logger.warn('live event stream lost - resuming fast polling');
     if (!this._state.connected || !this.timer) { return; }
     clearInterval(this.timer);
     const myGeneration = this.pollGeneration;
@@ -1536,7 +1536,7 @@ export class RobotManager {
         changed = true;
       }
     } else if (isElog) {
-      // New elog message arrived — refresh the log asynchronously
+      // New elog message arrived - refresh the log asynchronously
       this.adapter?.getEventLog(0, 'en').then(log => {
         this._state.eventLog = log;
         this.notify();
@@ -1569,7 +1569,7 @@ export class RobotManager {
         fs.renameSync(tmp, SESSION_FILE);
       } catch {
         // A concurrent writer beat us to the rename (Windows briefly locks the
-        // destination) — drop our temp file and let the other writer win; the
+        // destination) - drop our temp file and let the other writer win; the
         // cookie is re-saved on the next connect anyway.
         try { fs.unlinkSync(tmp); } catch { /* already gone */ }
       }
@@ -1579,14 +1579,14 @@ export class RobotManager {
   // ─── Polling ─────────────────────────────────────────────────────────────────
 
   private fetchCount = 0;
-  /** Consecutive poll failures — only disconnects after 3, so transient blips don't drop the connection. */
+  /** Consecutive poll failures - only disconnects after 3, so transient blips don't drop the connection. */
   private consecutiveFails = 0;
 
   private fetchInFlight = false;
 
   private async fetchAll(generation?: number): Promise<void> {
     // Bail if this fetch belongs to an old generation (we've reconnected or
-    // disconnected since). Re-checked after every await below — a disconnect
+    // disconnected since). Re-checked after every await below - a disconnect
     // mid-poll clears _state, and a late-resolving request must not resurrect
     // the stale snapshot into it.
     const stale = (): boolean => generation !== undefined && generation !== this.pollGeneration;
@@ -1607,7 +1607,7 @@ export class RobotManager {
         ]);
       if (stale()) { return; }
 
-      // Module list needs a task name — resolve it from the tasks we just
+      // Module list needs a task name - resolve it from the tasks we just
       // fetched, not a hardcoded T_ROB1 (multi-task systems and OmniCore
       // single-arm variants name their tasks differently).
       this._state.tasks = tasks;
@@ -1625,7 +1625,7 @@ export class RobotManager {
       this._state.coldetstate = coldetstate;
 
       this.fetchCount++;
-      // Identity / systemInfo / eventLog / mechunits — only refresh occasionally,
+      // Identity / systemInfo / eventLog / mechunits - only refresh occasionally,
       // BUT keep retrying every poll until they're populated (so a transient first-poll
       // failure doesn't leave the Status panel stuck on the IP fallback forever).
       const needSlowFetch =
@@ -1668,13 +1668,13 @@ export class RobotManager {
       this.consecutiveFails = 0;
       this.notify();
     } catch (e) {
-      // Stale poll (disconnect or reconnect happened mid-flight) — don't count this failure.
+      // Stale poll (disconnect or reconnect happened mid-flight) - don't count this failure.
       if (stale()) { return; }
 
       this.consecutiveFails++;
       // First failure is usually transient (controller queued behind motion).
       // Log at info-level for the first; only warn from the second onward.
-      const msg = `poll failed (${this.consecutiveFails}/3) — ${e instanceof Error ? e.message : String(e)}`;
+      const msg = `poll failed (${this.consecutiveFails}/3) - ${e instanceof Error ? e.message : String(e)}`;
       if (this.consecutiveFails >= 2) { Logger.warn(msg); }
       else                            { Logger.info(msg); }
       if (this.consecutiveFails >= 3) {
@@ -1682,7 +1682,7 @@ export class RobotManager {
         Logger.error(`disconnecting after 3 failed polls`, e);
         Logger.show();
         // Capture config BEFORE disconnect (which clears it) so the Reconnect button works.
-        // Internal variant: this tears down the DEAD connection — it must not
+        // Internal variant: this tears down the DEAD connection - it must not
         // cancel a fresh connect attempt the user may have started meanwhile.
         const cfg = this.adapterConfig;
         await this.disconnectInternal();

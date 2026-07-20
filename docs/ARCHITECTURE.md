@@ -1,4 +1,4 @@
-# abb-rws-client — Architecture
+# abb-rws-client - Architecture
 
 > Typed TypeScript/Node.js client for ABB Robot Web Services, covering **both** protocols:
 > RWS 1.0 (IRC5 / RobotWare 6.x, HTTP Digest, JSON via `?json=1`) and RWS 2.0 (OmniCore /
@@ -71,7 +71,7 @@ Deliberately **not** exported: `HttpSession`, `ResourceMapper`, `ResponseParser`
 `WsSubscriber` (internal RWS1 machinery), and the `@internal` types
 `DigestChallenge` / `HttpResponse` (`src/types.ts:316-337`).
 
-Naming trap: there are **two** `ProbeResult` shapes in the public API —
+Naming trap: there are **two** `ProbeResult` shapes in the public API -
 `RobotManager`'s `{port, useHttps, authType}` and `detect.ts`'s
 `{protocol, port, https}`, re-exported as `DetectProbeResult` (`src/index.ts:39`).
 
@@ -96,14 +96,14 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 
 | File | LOC | Responsibility | Depends on | Depended on by |
 |---|---|---|---|---|
-| `src/types.ts` | 336 | All shared types + `RwsError` class with typed `code` | — | everything |
-| `src/Logger.ts` | 54 | Pluggable logger facade; no-op default, `setLogger()` swaps backend at call time | — | HttpSession, RwsClient2, RobotManager |
-| `src/XhtmlParser.ts` | 53 | Regex parser for RWS 2.0 XHTML (`<li class>` → `<span class>` field maps, `getError()`) | — | RwsClient2 (also public export) |
+| `src/types.ts` | 336 | All shared types + `RwsError` class with typed `code` | - | everything |
+| `src/Logger.ts` | 54 | Pluggable logger facade; no-op default, `setLogger()` swaps backend at call time | - | HttpSession, RwsClient2, RobotManager |
+| `src/XhtmlParser.ts` | 53 | Regex parser for RWS 2.0 XHTML (`<li class>` → `<span class>` field maps, `getError()`) | - | RwsClient2 (also public export) |
 | `src/HttpSession.ts` | 444 | RWS 1.0 transport: RFC 2617 digest from scratch, cookie jar, serial rate-limit queue, 401/503 retry | types, Logger | RwsClient, WsSubscriber |
-| `src/ResourceMapper.ts` | 509 | Pure functions: operation → RWS 1.0 path + form body. **RWS 1.0 only** (header, L6) | — | RwsClient, WsSubscriber |
+| `src/ResourceMapper.ts` | 509 | Pure functions: operation → RWS 1.0 path + form body. **RWS 1.0 only** (header, L6) | - | RwsClient, WsSubscriber |
 | `src/ResponseParser.ts` | 710 | Pure functions: RWS 1.0 XHTML → typed objects; throws `RwsError('PARSE_ERROR')` | types | RwsClient, WsSubscriber |
 | `src/WsSubscriber.ts` | 289 | RWS 1.0 WebSocket subscriptions: POST `/subscription`, `robapi2_subscription` subprotocol, cookie auth, 3-retry backoff | HttpSession, ResourceMapper, ResponseParser, types | RwsClient |
-| `src/RwsClient.ts` | 1,150 | RWS 1.0 typed facade — ~57 endpoint methods + generic `request()` escape hatch (L164-175) | HttpSession, WsSubscriber, ResourceMapper, ResponseParser, types | RWS1Adapter, detect, RobotManager |
+| `src/RwsClient.ts` | 1,150 | RWS 1.0 typed facade - ~57 endpoint methods + generic `request()` escape hatch (L164-175) | HttpSession, WsSubscriber, ResourceMapper, ResponseParser, types | RWS1Adapter, detect, RobotManager |
 | `src/RwsClient2.ts` | 1,814 | RWS 2.0 everything: transport (Basic auth, keep-alive agents, 55 ms pacing), full endpoint surface, subscriptions, mastership/RMMP | XhtmlParser, Logger, types, `ws` (dynamic import) | RWS2Adapter, detect |
 | `src/IRWSAdapter.ts` | 415 | The unified contract: ~60 required, ~90 optional (`?`) methods | types | adapters, RobotManager, detect |
 | `src/RWS1Adapter.ts` | 865 | IRWSAdapter for RWS 1.0: delegation + ~55 extra endpoints via `?json=1` helpers + self-contained `digestPost` for FK/IK/jog | RwsClient, IRWSAdapter, types, node:http/crypto | detect, RobotManager |
@@ -117,7 +117,7 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 
 ## 4. Control / data flow traces
 
-### 4.1 `createClient({ host })` — auto-detect connect
+### 4.1 `createClient({ host })` - auto-detect connect
 
 1. `createClient` defaults `username: 'Admin'`, `password: 'robotics'`, `timeout: 5000`
    (`src/detect.ts:104-164`).
@@ -128,7 +128,7 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
    sniffs `WWW-Authenticate`: `Digest` → `'rws1'`, `Basic` → `'rws2'`; **no challenge but
    status < 500 → assumes `'rws2'`** (`src/detect.ts:64-67`).
 4. `'rws1'` → `new RwsClient({...})`; `'rws2'` → `new RwsClient2(baseUrl, user, pass)`
-   — note `opts.timeout` is dropped on the RWS 2.0 branch (`src/detect.ts:152`).
+   - note `opts.timeout` is dropped on the RWS 2.0 branch (`src/detect.ts:152`).
 5. `client.connect()`. RWS 1.0: GET controller-state through `HttpSession`, which does
    the 401 → digest handshake (`src/HttpSession.ts:184-199`). RWS 2.0: Basic header on
    first request; `Set-Cookie` captured and replayed (`src/RwsClient2.ts:107-112`).
@@ -137,12 +137,12 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
    `createAdapter` duplicates the probe logic but **omits** this fallback
    (`src/detect.ts:172-206`).
 
-### 4.2 RWS 2.0 write with mastership — `RwsClient2.setSpeedRatio(n)`
+### 4.2 RWS 2.0 write with mastership - `RwsClient2.setSpeedRatio(n)`
 
 1. `requestMastership('rapid')` → `rws2Domain()` maps `'rapid'`→`'edit'`
    (`src/RwsClient2.ts:897-908`; comment: *"'rapid' and 'cfg' both become 'edit'
    (confirmed: /rapid/request → 404)"*).
-2. POST `/rw/panel/speedratio?action=setspeedratio` with body `speed-ratio=N` — the one
+2. POST `/rw/panel/speedratio?action=setspeedratio` with body `speed-ratio=N` - the one
    endpoint where RWS 2.0 kept the legacy `?action=` form; the bare endpoint returns 400
    (`src/RwsClient2.ts:193-211`, live-verified via `scripts/probe-speedratio.js`).
 3. All requests funnel through the private `req()` (`src/RwsClient2.ts:63-153`): ≥55 ms
@@ -153,7 +153,7 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 4. `releaseMastership('rapid')` in `finally`, release errors swallowed
    (`.catch(()=>{})`) so they never mask the primary failure.
 
-### 4.3 Live state — subscriptions with polling fallback (`RobotManager`)
+### 4.3 Live state - subscriptions with polling fallback (`RobotManager`)
 
 1. `connect()` coalesces concurrent calls (`connectingPromise`,
    `src/RobotManager.ts:285-293`), probes/recovers the port, selects the adapter by
@@ -185,7 +185,7 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 ## 5. Conventions & invariants
 
 - **Zero external dependencies** except `ws`: digest auth via `node:crypto`, parsing via
-  regex only (`src/ResponseParser.ts:5` — *"no external XML libraries"*), probing via raw
+  regex only (`src/ResponseParser.ts:5` - *"no external XML libraries"*), probing via raw
   `node:http(s)`. `ws` is dynamically imported only when subscribing
   (`src/RwsClient2.ts:1450-1451`).
 - **ESM-only**: `"type": "module"`, internal imports use explicit `.js` extensions;
@@ -197,10 +197,10 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
   (`src/RwsClient.ts:201-211`, `src/RwsClient2.ts:159-166`), cookies persist to
   `~/.abb-rws-session` keyed by `host:port`, and keep-alive agents reuse TCP connections.
 - **Rate limiting**: ≥55 ms between requests on both protocols (< 20 req/s controller
-  limit) — serial promise queue in `HttpSession` (`enqueue`, L140-158), timestamp gate in
+  limit) - serial promise queue in `HttpSession` (`enqueue`, L140-158), timestamp gate in
   `RwsClient2.req()` (L71-73).
 - **Error convention**: public methods throw `RwsError` with a typed `code`
-  (`src/types.ts:284-314`) — but see §7: large parts of `RWS1Adapter` and the optional
+  (`src/types.ts:284-314`) - but see §7: large parts of `RWS1Adapter` and the optional
   endpoints throw plain `Error` or silently return defaults instead.
 - **Mastership**: package vocabulary is always the RWS 1.0 domains
   `'cfg' | 'motion' | 'rapid'` (`src/types.ts:201`); the `'edit'` rename is internal to
@@ -217,7 +217,7 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 - **Live-probe provenance**: undocumented protocol behavior is recorded in doc comments
   citing probe scripts and dates (e.g. *"Live-verified 2026-05-07 via
   scripts/probe-speedratio.js"* pattern in `RwsClient2.ts`). These comments are the
-  protocol documentation of record — preserve them when editing.
+  protocol documentation of record - preserve them when editing.
 
 ---
 
@@ -238,14 +238,14 @@ Protocol facts embedded in code comments that future work must not regress:
   org_code −4501 / 0xc004841d *"which the controller misleadingly tags as 'RAPID error'"*
   (`src/RobotManager.ts:526-533`).
 - **Token mastership** (`requestMastershipWithId`) is RWS 2.0-only; release body field is
-  `mastershipid` — no dash, *"confirmed via 400 'Invalid value' probing"*
+  `mastershipid` - no dash, *"confirmed via 400 'Invalid value' probing"*
   (`src/RwsClient2.ts:936-938`). Watchdog: RW 7.8+ requires ~1 s heartbeat pings while
   holding mastership during execution or motors go off (`src/RwsClient2.ts:947-951`).
 - **Op-mode writes**: RWS 1.0 wire values are `auto|man|manfs` (`src/RwsClient.ts:328-336`);
   RWS 2.0 wants `manf` **not** `manfs` (`src/RwsClient2.ts:238-247`). AUTO↔MANF must
   transit through MANR with a 600 ms settle pause (`src/RobotManager.ts:496-508`). Going
-  to AUTO needs edit mastership **plus a FlexPendant confirmation popup — "no API path
-  bypasses it — verified live"** (`src/RobotManager.ts:485-491`). VC-only on real
+  to AUTO needs edit mastership **plus a FlexPendant confirmation popup - "no API path
+  bypasses it - verified live"** (`src/RobotManager.ts:485-491`). VC-only on real
   hardware (key switch wins, 403).
 - **IK/FK on VCs always fails**: standard VCs lack the PC Interface (616-1) option; every
   input returns HTTP 400 `SYS_CTRL_E_POSE_OUTSIDE_REACH` (−1073436654) *"even the
@@ -258,11 +258,11 @@ Protocol facts embedded in code comments that future work must not regress:
   *"Invalid/No Query Parameter"*, `src/RwsClient.ts:870-872`); `copyFile` is
   same-directory-only (`fs-newname` must be a bare filename,
   `src/ResourceMapper.ts:412-416`); RWS 1.0 home is `$HOME` (keep the `$` literal in
-  paths — `src/ResourceMapper.ts:292-293`), RWS 2.0 home is `HOME`
+  paths - `src/ResourceMapper.ts:292-293`), RWS 2.0 home is `HOME`
   (`rws2Path()` strips `$`, `src/RwsClient2.ts:655`); RWS 2.0 upload needs the
   **versioned** content type `text/plain;v=2.0` (plain → 415, `src/RwsClient2.ts:667-668`);
   RWS 2.0 module unload is `POST .../unloadmod` (DELETE → 405, `src/RwsClient2.ts:382-384`).
-- **`loadmod replace=true` leaves a stale symbol table** — after replace, `resetRapid()`
+- **`loadmod replace=true` leaves a stale symbol table** - after replace, `resetRapid()`
   reports "no main" even though the new file has one; explicit unload + load fixes it
   (`src/RobotManager.ts:933-938`). `loadProgram` deliberately does **not** unload other
   modules (older versions destroyed e.g. OmniCore's `Module1`,
@@ -272,15 +272,15 @@ Protocol facts embedded in code comments that future work must not regress:
   Authorization/Digest** on both protocols (`src/WsSubscriber.ts:251`,
   `src/RwsClient2.ts:1434-1448`). RWS 2.0 VCs may reject the `robapi2_subscription`
   subprotocol entirely → polling fallback (README `L221`).
-- **Jog needs a monotonic `ccount`** — the controller rejects repeated values; counter is
+- **Jog needs a monotonic `ccount`** - the controller rejects repeated values; counter is
   per-instance state (`src/RWS1Adapter.ts:210`, `src/RwsClient2.ts:1561`).
 - **Controller-side typo**: the program-pointer response emits span class `modulemame`
   (sic); code checks both spellings (`src/RwsClient2.ts:1715-1725`; the same fallback in
   `src/RWS1Adapter.ts:418` is compensating for the same firmware typo).
-- **RWS 1.0 licence path is singular** `/rw/system/license` — the official doc's plural
+- **RWS 1.0 licence path is singular** `/rw/system/license` - the official doc's plural
   `/licenses` 404s on live IRC5 (`src/RWS1Adapter.ts:289-291`).
-- **Wide port scan**: RobotStudio assigns VC ports across 1024–30000 (observed: 5466,
-  9403, 11811, 15120, 16146, 28447); scan uses 300 concurrent sockets — *"~500 is the
+- **Wide port scan**: RobotStudio assigns VC ports across 1024-30000 (observed: 5466,
+  9403, 11811, 15120, 16146, 28447); scan uses 300 concurrent sockets - *"~500 is the
   practical ceiling"* on Windows before silent socket drops
   (`src/RobotManager.ts:239-244`).
 - **`getEventLog` needs `lang=en`** to get title/desc/causes/actions on RWS 2.0
@@ -295,7 +295,7 @@ Protocol facts embedded in code comments that future work must not regress:
 
 ```bash
 npm run build     # tsc → dist/ (ES2022, NodeNext, strict; tests/ NOT type-checked)
-npm test          # vitest run — 116 unit tests, offline (stubbed fetch / localhost fixtures)
+npm test          # vitest run - 116 unit tests, offline (stubbed fetch / localhost fixtures)
 npm run lint      # eslint src (flat config; tests/ and examples/ are NOT linted)
 npm publish       # prepublishOnly runs build + test automatically
 node validate.mjs # manual smoke against a live controller (hardcoded 192.168.125.1, 'Default User')
@@ -304,7 +304,7 @@ node validate.mjs # manual smoke against a live controller (hardcoded 192.168.12
 Live validation: `VALIDATION.md` (15 manual scenarios, **RWS 1.0 only**) plus the VS Code
 extension repo's `test-*.js` live suites. README's claim of "116 unit tests" is exact;
 the "339 live protocol-coverage tests" refers to the extension-side live scripts
-**(inferred — not re-counted)**.
+**(inferred - not re-counted)**.
 
 Test coverage skew (from reading every test): digest handshake, cookies, rate limiting,
 and 9/24 ResponseParser parsers are well covered; **untested**: all POST/PUT/DELETE
@@ -319,52 +319,52 @@ by design (*"protocol-level methods are exercised by … live tests"*, L5-7).
 
 | # | Discrepancy | Evidence |
 |---|---|---|
-| 1 | **Examples 05 & 06 are broken**: `new RwsClient2({host,…})` (options object) but the constructor is positional (`src/RwsClient2.ts:45-49`); `new RobotManager({adapter})` + `robot.start()`/`robot.stop()` — RobotManager has no such constructor/methods. Both examples ship in the npm tarball. | `examples/05-remote-control-rmmp.mjs:12-21`, `examples/06-pull-module-source.mjs:23-28` |
-| 2 | `types.ts` header still says *"Targets RWS 1.0 … only. v0.5.0"* — contradicts the dual-protocol package | `src/types.ts:2-3` |
-| 3 | `package.json` `exports` lists `"import"` before `"types"`; TS honors `types` only when it comes **first** — type resolution under `moduleResolution: nodenext` may fall back or fail | `package.json:25-30` |
+| 1 | **Examples 05 & 06 are broken**: `new RwsClient2({host,…})` (options object) but the constructor is positional (`src/RwsClient2.ts:45-49`); `new RobotManager({adapter})` + `robot.start()`/`robot.stop()` - RobotManager has no such constructor/methods. Both examples ship in the npm tarball. | `examples/05-remote-control-rmmp.mjs:12-21`, `examples/06-pull-module-source.mjs:23-28` |
+| 2 | `types.ts` header still says *"Targets RWS 1.0 … only. v0.5.0"* - contradicts the dual-protocol package | `src/types.ts:2-3` |
+| 3 | `package.json` `exports` lists `"import"` before `"types"`; TS honors `types` only when it comes **first** - type resolution under `moduleResolution: nodenext` may fall back or fail | `package.json:25-30` |
 | 4 | `repository`/`homepage` point to `github.com/merajsafari/abb-rws-client` but the actual git remote is `github.com/ichbinmeraj/abb-rws-client` | `package.json:17-21` vs `git remote -v` |
-| 5 | README says both clients expose "the same method names for ~140 endpoints" — false at client level (`getModuleSource` exists on `RwsClient2:1292` but not on `RwsClient`/`RWS1Adapter`); parity holds at the IRWSAdapter/RobotManager level | `README.md:78`, `examples/06:24-25` |
+| 5 | README says both clients expose "the same method names for ~140 endpoints" - false at client level (`getModuleSource` exists on `RwsClient2:1292` but not on `RwsClient`/`RWS1Adapter`); parity holds at the IRWSAdapter/RobotManager level | `README.md:78`, `examples/06:24-25` |
 | 6 | README error-code table omits `PROTOCOL_DETECT_FAILED` (added in 0.7.0 per `CHANGELOG.md:157-158`) | `README.md:459-469` |
 | 7 | Default username: README/examples say `'Admin'`; `validate.mjs:5` and `VALIDATION.md` scenario 2 use `'Default User'`. Code default is `'Admin'` (`src/RwsClient.ts:134`); `createClient` falls back to `'Default User'` on 401 | `validate.mjs:5`, `VALIDATION.md:63` |
-| 8 | `VALIDATION.md:9` requires "Node 21+ (or Node 18 with `--experimental-websocket`)" — stale; the package depends on `ws` and declares engines ≥18 | `VALIDATION.md:9` vs `package.json:38-40` |
-| 9 | CHANGELOG 0.7.0 says examples/ has "four scripts"; six exist; 0.7.2 claims to be "bit-for-bit identical to v0.7.1" — provenance of examples 05/06 unrecorded | `CHANGELOG.md:160-161, 35-37` |
-| 10 | `ResponseParser` docstrings cite li classes `rap-jointtarget`/`rap-robtarget` and path `/rw/mechunit/…`; code + fixtures (real IRC5 output) use `ms-jointtarget`/`ms-robtargets` and `/rw/motionsystem/mechunits/…` — trust the code | `src/ResponseParser.ts:195-196, 227-228` vs tests |
+| 8 | `VALIDATION.md:9` requires "Node 21+ (or Node 18 with `--experimental-websocket`)" - stale; the package depends on `ws` and declares engines ≥18 | `VALIDATION.md:9` vs `package.json:38-40` |
+| 9 | CHANGELOG 0.7.0 says examples/ has "four scripts"; six exist; 0.7.2 claims to be "bit-for-bit identical to v0.7.1" - provenance of examples 05/06 unrecorded | `CHANGELOG.md:160-161, 35-37` |
+| 10 | `ResponseParser` docstrings cite li classes `rap-jointtarget`/`rap-robtarget` and path `/rw/mechunit/…`; code + fixtures (real IRC5 output) use `ms-jointtarget`/`ms-robtargets` and `/rw/motionsystem/mechunits/…` - trust the code | `src/ResponseParser.ts:195-196, 227-228` vs tests |
 | 11 | The `\b` word-boundary class matching does **not** prevent hyphen-suffix collisions (`\b` fires at letter↔`-`); the comment claiming `'rap-task-li'` won't match `'rap-task-li-selected'` is wrong (behavior benign today) | `src/ResponseParser.ts:52-58` |
 | 12 | `detect.ts` doc claims "≥443 → https" but code checks exact ports 443/5466/9403; `opts.timeout` never reaches RWS 2.0 constructions; `createAdapter` lacks the Default-User fallback `createClient` has | `src/detect.ts:19, 120, 152, 172-206` |
 | 13 | `RwsClient.uploadModule` is `@deprecated` in favor of `uploadFile`, yet `RWS1Adapter.uploadFile` calls the deprecated alias | `src/RwsClient.ts:768-771`, `src/RWS1Adapter.ts:107` |
-| 14 | `fetchAll` hardcodes `taskName = 'T_ROB1'` for the module list despite `activeTaskName()` existing — multi-task systems poll the wrong list | `src/RobotManager.ts:1384, 615-619` |
-| 15 | `RWS1Adapter` stage-header method counts don't match bodies (e.g. "Stage 8: DIPC (6 methods)" has 5) — cosmetic drift from incremental buildout | `src/RWS1Adapter.ts:540-681` |
+| 14 | `fetchAll` hardcodes `taskName = 'T_ROB1'` for the module list despite `activeTaskName()` existing - multi-task systems poll the wrong list | `src/RobotManager.ts:1384, 615-619` |
+| 15 | `RWS1Adapter` stage-header method counts don't match bodies (e.g. "Stage 8: DIPC (6 methods)" has 5) - cosmetic drift from incremental buildout | `src/RWS1Adapter.ts:540-681` |
 | 16 | Three duplicated default-`RobotState` literals must be kept in sync when the shape grows | `src/RobotManager.ts:69-75, 430-436`; `src/MultiRobotManager.ts:49-56` |
-| 17 | `.gitignore` ignores itself (L141) — cosmetic quirk of the stock template | `.gitignore:141` |
-| 18 | `MultiRobotManager.fromConfigs` doc claims "backward compatibility for legacy single-robot settings" — no such logic exists in the method (it lives in the extension) | `src/MultiRobotManager.ts:142` |
-| 19 | `probeProtocol` resolves `'rws2'` for **any** sub-500 response lacking a `Digest`/`Basic` challenge — an unknown scheme (`Bearer …`) or a plain non-RWS web server is misdetected as an OmniCore. The Bearer fixture in `detect.test.ts` is created but never asserted | `src/detect.ts:62-66`, `tests/detect.test.ts` |
+| 17 | `.gitignore` ignores itself (L141) - cosmetic quirk of the stock template | `.gitignore:141` |
+| 18 | `MultiRobotManager.fromConfigs` doc claims "backward compatibility for legacy single-robot settings" - no such logic exists in the method (it lives in the extension) | `src/MultiRobotManager.ts:142` |
+| 19 | `probeProtocol` resolves `'rws2'` for **any** sub-500 response lacking a `Digest`/`Basic` challenge - an unknown scheme (`Bearer …`) or a plain non-RWS web server is misdetected as an OmniCore. The Bearer fixture in `detect.test.ts` is created but never asserted | `src/detect.ts:62-66`, `tests/detect.test.ts` |
 | 20 | `SESSION_EXPIRED` is declared in `RwsErrorCode` but thrown nowhere in `src/` (grep-verified); `mapHttpStatus` maps **every** 404 to `MODULE_NOT_FOUND` (missing signals/files included) | `src/types.ts:285`, `src/HttpSession.ts:429-443` |
 | 21 | `XhtmlParser` is stricter than `ResponseParser` without saying so: `<li>` matching requires `class` to be the **first** attribute with an exact value (no `\b`/multi-class), `getError()` only matches **negative** codes (`(-\d+)`), and no HTML entities are decoded. Untested limits | `src/XhtmlParser.ts:20-27,44-46` |
-| 22 | `HttpSession.storeCookies` runs only on 2xx — a `Set-Cookie` on the 401 challenge (or any error response) is dropped; `RwsClientOptions.sessionCookie` doc says "cookie **value**" but the parser expects the full Cookie header string | `src/HttpSession.ts:231,79`, `src/types.ts:261` |
+| 22 | `HttpSession.storeCookies` runs only on 2xx - a `Set-Cookie` on the 401 challenge (or any error response) is dropped; `RwsClientOptions.sessionCookie` doc says "cookie **value**" but the parser expects the full Cookie header string | `src/HttpSession.ts:231,79`, `src/types.ts:261` |
 
 ---
 
 ## 9. Open questions
 
 1. **`WsSubscriber` on Node 22+**: it prefers native `globalThis.WebSocket` but passes the
-   session Cookie via a third constructor argument only the `ws` package supports — native
+   session Cookie via a third constructor argument only the `ws` package supports - native
    undici WebSocket ignores it, so RWS 1.0 WS auth may silently fail exactly on modern
    Node (`src/WsSubscriber.ts:21-33, 246-253`). Needs a live probe on Node 22.
 2. `rap-syproppers-li` (PERS symbol li class, `src/RwsClient2.ts:440`) is missing the "m"
-   every sibling class has (`rap-sympropvar-li`…) — real controller class name or typo
+   every sibling class has (`rap-sympropvar-li`…) - real controller class name or typo
    that silently drops PERS results from symbol search?
 3. `setCfgInstance` writes to `/rw/cfg/{d}/{t}/{instance}` while reads use
-   `…/{t}/instances/{instance}` — is the write path live-verified?
+   `…/{t}/instances/{instance}` - is the write path live-verified?
    (`src/RwsClient2.ts:753, 766`). Same for `createCfgInstance` (comment/code disagree,
    L770-771) and `setActiveTool`/`setActiveWobj` bare POSTs (L841-845).
 4. Have `runCyclicBrakeCheck`, `listSafetyZones`, `listBreakpoints` (RWS 1.0 side) ever
    succeeded live? All are doc-derived with hedging comments
    (`src/RWS1Adapter.ts:621-628, 700`), and project probing found `/ctrl/safety` blocked.
 5. `removeBreakpoint` uses a different, singular path than list/set
-   (`src/RwsClient2.ts:1236`) — untested?
+   (`src/RwsClient2.ts:1236`) - untested?
 6. Does a pre-loaded `sessionCookie` let RWS 1.0 skip the digest handshake entirely on
    real firmware, or does it always bounce through one 401?
-7. Auth `qop=auth-int` is accepted but hashed as `auth` with no body hash — would fail on
+7. Auth `qop=auth-int` is accepted but hashed as `auth` with no body hash - would fail on
    a controller that actually demands auth-int (`src/HttpSession.ts:348-350`). Do any?
 8. WS reconnect reuses the same subscription URL without re-POSTing `/subscription`; if
    the controller GC'd it during the outage all 3 retries fail **silently** and events

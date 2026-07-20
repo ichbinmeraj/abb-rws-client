@@ -15,7 +15,7 @@ interface RWS1Credentials {
 }
 
 /**
- * RWS 1.0 adapter — thin wrapper around RwsClient (abb-rws-client).
+ * RWS 1.0 adapter - thin wrapper around RwsClient (abb-rws-client).
  * Every method delegates directly; zero logic change from pre-adapter behavior.
  * Targets ABB IRC5 controllers running RobotWare 6.x.
  */
@@ -83,7 +83,7 @@ export class RWS1Adapter implements IRWSAdapter {
     const units = r.states
       .map(s => ((s as Record<string, string>)['_title'] ?? (s as Record<string, string>)['name']))
       .filter(Boolean) as string[];
-    // A controller always has at least one mechunit — an empty list means the
+    // A controller always has at least one mechunit - an empty list means the
     // response shape drifted; fall back to the standard unit rather than none.
     return units.length > 0 ? units : ['ROB_1'];
   }
@@ -130,12 +130,12 @@ export class RWS1Adapter implements IRWSAdapter {
     await this.rws1Post('/rw/mastership?action=release', '');
   }
   /**
-   * RWS 1.0 doesn't expose `request-with-id` / `release-with-id` — those are
+   * RWS 1.0 doesn't expose `request-with-id` / `release-with-id` - those are
    * RWS 2.0 / RobotWare 7+ additions. The `?` in the IRWSAdapter signature
    * means we don't have to implement on this side; calls just throw.
    */
   /**
-   * RWS 1.0 doesn't expose a watchdog endpoint — heartbeat is RWS 2.0 only.
+   * RWS 1.0 doesn't expose a watchdog endpoint - heartbeat is RWS 2.0 only.
    * The optional method on IRWSAdapter is left undefined here so callers can
    * feature-detect (`if ('resetMastershipWatchdog' in adapter)`).
    */
@@ -227,7 +227,7 @@ export class RWS1Adapter implements IRWSAdapter {
     mechunit?: string;
   }): Promise<void> {
     if (!this.creds) {
-      throw new Error('Jog requires credentials — reconnect to enable');
+      throw new Error('Jog requires credentials - reconnect to enable');
     }
     const { mode, axes, speed } = params;
     const mechunit = params.mechunit ?? 'ROB_1';
@@ -244,19 +244,19 @@ export class RWS1Adapter implements IRWSAdapter {
     const { host, port, username, password } = this.creds;
     const path = `/rw/motionsystem?action=jog&json=1`;
     const result = await this.digestPost(host, port, path, bodyStr, username, password);
-    // Successful jog has no useful body — only check for error status.
+    // Successful jog has no useful body - only check for error status.
     const status = (result._embedded as { status?: { msg?: string } } | undefined)?.status;
     if (status?.msg && status.msg.length > 0 && /error|fail/i.test(status.msg)) {
       throw new Error(status.msg);
     }
   }
 
-  // ── RWS 1.0 helper — typed wrapper around client.request() with JSON parsing ──
+  // ── RWS 1.0 helper - typed wrapper around client.request() with JSON parsing ──
 
   /**
    * Generic GET that returns `_embedded._state[0]` (single resource) or [] (list).
    * Most RWS 1.0 endpoints with `?json=1` return this HAL-like envelope.
-   * Returns empty result for HTTP 204 (no content) — common on /ctrl/options etc.
+   * Returns empty result for HTTP 204 (no content) - common on /ctrl/options etc.
    */
   private async rws1Get(path: string): Promise<{ status: number; state: Record<string, unknown> | null; states: Array<Record<string, unknown>>; raw: unknown }> {
     const url = path + (path.includes('?') ? '&' : '?') + 'json=1';
@@ -297,7 +297,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getLicenseInfo(): Promise<{ entries: Array<Record<string, string>> }> {
     // RWS 1.0 path is singular `/license`. Doc 6.8 has it as plural `/licenses`
-    // but live IRC5 returns 404 for that — singular works.
+    // but live IRC5 returns 404 for that - singular works.
     const r = await this.rws1Get('/rw/system/license');
     return { entries: r.states as Array<Record<string, string>> };
   }
@@ -481,7 +481,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async getCfgInstance(domain: string, type: string, instance: string): Promise<Record<string, string>> {
     // RWS 1.0 inlines all attribute data in the instance-list response. The single-instance
     // GET also works at `/instances/{name}`. Use the list call (one HTTP request) and find
-    // by _title — also handles instance names with spaces/special chars correctly.
+    // by _title - also handles instance names with spaces/special chars correctly.
     const r = await this.rws1Get(`/rw/cfg/${domain}/${type}/instances`);
     const target = r.states.find(s => s._title === instance);
     if (!target) { return {}; }
@@ -497,7 +497,7 @@ export class RWS1Adapter implements IRWSAdapter {
         if (a._title) { out[a._title] = String(a.value ?? ''); }
       }
     }
-    // Always include direct properties (rdonly, instanceid, etc.) — useful metadata.
+    // Always include direct properties (rdonly, instanceid, etc.) - useful metadata.
     for (const [k, v] of Object.entries(target)) {
       if (k.startsWith('_') || k === 'attrib') { continue; }
       if (typeof v === 'string') { out[k] = v; }
@@ -513,7 +513,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *     partial attribute sets accepted.
    * Acquires cfg-domain mastership around the write. (The VC accepts cfg
    * writes without it, but real controllers arbitrate cfg access through
-   * mastership — and taking it when free is harmless.)
+   * mastership - and taking it when free is harmless.)
    */
   async setCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
     await this.client.requestMastership('cfg');
@@ -568,7 +568,7 @@ export class RWS1Adapter implements IRWSAdapter {
     }
   }
 
-  /** Shared ?action=set POST — plain `Attr=value` form pairs (RWS 1.0 wire shape). */
+  /** Shared ?action=set POST - plain `Attr=value` form pairs (RWS 1.0 wire shape). */
   private async postCfgSet(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
     const body = Object.entries(attrs).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
     await this.rws1Post(`/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?action=set`, body);
@@ -619,7 +619,7 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── Stage 7: Backup / Restore / Progress (5 methods) ───────────────────
 
   async createBackup(name: string): Promise<void> {
-    // Async — controller returns 202 + Location header pointing to /progress/{id}.
+    // Async - controller returns 202 + Location header pointing to /progress/{id}.
     // Caller polls getProgress() to track completion.
     await this.rws1Post('/ctrl/backup?action=backup', `backup=$BACKUP/${encodeURIComponent(name)}`);
   }
@@ -762,15 +762,15 @@ export class RWS1Adapter implements IRWSAdapter {
   /**
    * Save a loaded module's program-memory source to controller disk.
    * Live-verified 2026-07-09 on IRC5 VC RW6.16:
-   *   POST /rw/rapid/tasks/{task}?action=savemod is DEAD — 400 ARG_ERROR
+   *   POST /rw/rapid/tasks/{task}?action=savemod is DEAD - 400 ARG_ERROR
    *   (-1073445879, rws_resource_rapid_task.cpp[952]) for every body shape
    *   including the empty body, and the task resource advertises no savemod
    *   action. The working endpoint is the module-save action (same one
    *   readModuleViaSave uses):
    *     POST /rw/rapid/modules/{module}?task={task}&action=save
    *     body name=<file>&path=<dir>  → 204
-   *   The controller blindly appends '.mod' to the given name — even when it
-   *   already ends in .mod (name=save1.mod wrote $TEMP/save1.mod.mod) — so a
+   *   The controller blindly appends '.mod' to the given name - even when it
+   *   already ends in .mod (name=save1.mod wrote $TEMP/save1.mod.mod) - so a
    *   trailing .mod/.sys extension on the destination is stripped here.
    * `filepath` may be a directory ('$TEMP'), a full destination path
    * ('$HOME/backups/Copy.mod'), or a bare file name ('Copy.mod', saved under
@@ -802,7 +802,7 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   async getModuleSource(task: string, moduleName: string): Promise<string> {
-    // Program memory is the source of truth — the save round-trip reads it
+    // Program memory is the source of truth - the save round-trip reads it
     // directly (mastership-free), so it is the PRIMARY path. Reading
     // $HOME/{module}.mod first would let a stale disk file shadow unsaved
     // edits, and modules loaded from .pgf / RobotStudio / the FlexPendant
@@ -810,7 +810,7 @@ export class RWS1Adapter implements IRWSAdapter {
     try {
       return await this.readModuleViaSave(task, moduleName);
     } catch {
-      // Save endpoint failed (permissions, disk, transient) — fall back to the
+      // Save endpoint failed (permissions, disk, transient) - fall back to the
       // conventional $HOME location.
       return this.client.readFile(`$HOME/${moduleName}.mod`);
     }
@@ -821,7 +821,7 @@ export class RWS1Adapter implements IRWSAdapter {
    * Live-verified 2026-07-08 on IRC5 VC RW6.16:
    *   POST /rw/rapid/modules/{module}?task={task}&action=save  body name=<tmp>&path=$TEMP
    *   → 204, no mastership required. The controller ALWAYS appends '.mod' to
-   *   the given name (even for SysMod modules — never '.sys'), so the name is
+   *   the given name (even for SysMod modules - never '.sys'), so the name is
    *   passed without extension. Note the $-root has no trailing colon/slash,
    *   unlike RWS 2.0's 'TEMP:'.
    */
@@ -850,7 +850,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async listBreakpoints(task: string): Promise<Array<{ module: string; row: number; col?: number }>> {
     try {
-      // Per official doc: CCRapidBreakPointResource — exact path varies by RW version.
+      // Per official doc: CCRapidBreakPointResource - exact path varies by RW version.
       const r = await this.rws1Get(`/rw/rapid/tasks/${task}/breakpoints`);
       return r.states.map(b => ({
         module: (b.module ?? b.modulename ?? '') as string,
@@ -927,7 +927,7 @@ export class RWS1Adapter implements IRWSAdapter {
     mechunit = 'ROB_1',
   ): Promise<JointTarget> {
     if (!this.creds) {
-      throw new Error('IK requires credentials — reconnect to enable');
+      throw new Error('IK requires credentials - reconnect to enable');
     }
     const { host, port, username, password } = this.creds;
     const seed = seedJoints
