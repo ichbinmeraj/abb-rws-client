@@ -335,6 +335,7 @@ by design (*"protocol-level methods are exercised by … live tests"*, L5-7).
 | 14 | `fetchAll` hardcodes `taskName = 'T_ROB1'` for the module list despite `activeTaskName()` existing — multi-task systems poll the wrong list | `src/RobotManager.ts:1384, 615-619` |
 | 15 | `RWS1Adapter` stage-header method counts don't match bodies (e.g. "Stage 8: DIPC (6 methods)" has 5) — cosmetic drift from incremental buildout | `src/RWS1Adapter.ts:540-681` |
 | 16 | Three duplicated default-`RobotState` literals must be kept in sync when the shape grows | `src/RobotManager.ts:69-75, 430-436`; `src/MultiRobotManager.ts:49-56` |
+| 17 | `.gitignore` ignores itself (L141) — cosmetic quirk of the stock template | `.gitignore:141` |
 | 18 | `MultiRobotManager.fromConfigs` doc claims "backward compatibility for legacy single-robot settings" — no such logic exists in the method (it lives in the extension) | `src/MultiRobotManager.ts:142` |
 | 19 | `probeProtocol` resolves `'rws2'` for **any** sub-500 response lacking a `Digest`/`Basic` challenge — an unknown scheme (`Bearer …`) or a plain non-RWS web server is misdetected as an OmniCore. The Bearer fixture in `detect.test.ts` is created but never asserted | `src/detect.ts:62-66`, `tests/detect.test.ts` |
 | 20 | `SESSION_EXPIRED` is declared in `RwsErrorCode` but thrown nowhere in `src/` (grep-verified); `mapHttpStatus` maps **every** 404 to `MODULE_NOT_FOUND` (missing signals/files included) | `src/types.ts:285`, `src/HttpSession.ts:429-443` |
