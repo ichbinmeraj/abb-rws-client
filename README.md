@@ -536,7 +536,7 @@ OmniCore-specific limits aren't fully documented by ABB; what the lib observes e
 | RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) |
 | Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` |
 
-**Live-tested matrix** as of v0.7.1: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 116 unit tests + 339 live protocol-coverage tests pass against both.
+**Live-tested matrix** as of v1.0.0: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 370 unit tests + 339 live protocol-coverage tests pass against both.
 
 ---
 
