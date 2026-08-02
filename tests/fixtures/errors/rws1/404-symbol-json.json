@@ -1,0 +1,13 @@
+{
+  "protocol": "rws1",
+  "scenario": "404-symbol-json",
+  "request": {
+    "method": "GET",
+    "path": "/rw/rapid/symbol/data/RAPID/T_ROB1/NoMod/noSym?json=1"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073414146, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_rapid\\\\rws_resource_rapid_symbol_data.cpp[286] Symbol not found code:-1073414146 icode:-1\"}, \"_state\":[  ] }}"
+  }
+}

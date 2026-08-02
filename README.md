@@ -255,6 +255,22 @@ You can also create a `RobotManager` directly if you only have one robot.
 
 Every method returns `Promise<...>` and throws `RwsError` on failure.
 
+### Connection quality
+
+`RobotState.quality` reports connection health as
+`'live' | 'polling' | 'reconnecting' | 'stale' | 'disconnected'`, with a
+human-readable `state.qualityReason`:
+
+- `live` - WebSocket events streaming; polling runs at the slow cadence
+- `polling` - no WebSocket (unavailable or terminally lost); fast polling covers all state
+- `reconnecting` - a connect attempt is in flight
+- `stale` - 1-2 consecutive polls failed; data may be outdated (heals on the next success)
+- `disconnected` - not connected (initial, user disconnect, or auto-disconnect after 3 failed polls)
+
+`MultiRobotManager.onRobotChanged(id => ...)` tells fleet consumers WHICH robot
+changed, so a dashboard updates one row instead of diffing every robot's state.
+The zero-arg `onDidChange` keeps working unchanged.
+
 ---
 
 ## Logging
@@ -459,12 +475,15 @@ await unsubscribe();
 
 `SubscriptionEvent`: `{ resource: string, value: string, timestamp: Date }`
 
-The stream self-heals on both protocol generations. Heartbeat pings detect half-open
-connections, drops reconnect with capped exponential backoff (1 s doubling to 30 s,
-6 attempts by default), and a controller restart triggers a fresh registration on the
-same session. Tune it or hook the lifecycle via the third argument:
+The stream self-heals on both protocol generations. Heartbeats detect half-open
+connections, drops reconnect with capped exponential backoff (defaults: RWS 1.0
+starts at 1 s, RWS 2.0 at 500 ms, both doubling to a 30 s cap over 6 attempts),
+and a controller restart triggers a fresh registration - on RWS 1.0 riding the
+same session, on RWS 2.0 adopting the fresh session the restart forces. Tune it
+or hook the lifecycle via the options:
 
 ```ts
+// RWS 1.0 (RwsClient): options are the third argument
 const unsubscribe = await client.subscribe(resources, handler, {
   onRestored: () => resyncState(),   // reconnected - events may have been missed
   onLost:     () => usePolling(),    // reconnect budget exhausted, stream is gone
@@ -473,6 +492,12 @@ const unsubscribe = await client.subscribe(resources, handler, {
   reconnectCapMs: 30000,
   pingIntervalMs: 10000,
   openTimeoutMs: 8000,
+});
+
+// RWS 2.0 (RwsClient2): callbacks are positional, tuning is the fifth argument
+const unsub2 = await client2.subscribe(resources, handler, onLost, onRestored, {
+  reconnectBaseMs: 500,
+  pingIntervalMs: 25000,
 });
 ```
 
@@ -487,15 +512,25 @@ All public methods throw `RwsError` - never a plain `Error`.
 
 | Code | Meaning |
 |------|---------|
-| `'AUTH_FAILED'` | Wrong credentials or session rejected |
+| `'AUTH_FAILED'` | Wrong credentials (auth handshake failed) - never used for permission errors |
+| `'MASTERSHIP_REQUIRED'` | Write needs mastership, or another client holds it |
+| `'GRANT_DENIED'` | Controller rejected the operation - RMMP not granted or UAS grant missing |
+| `'WRONG_MODE'` | Operation not allowed in the current controller state / op-mode |
+| `'RESOURCE_NOT_FOUND'` | Signal / file / symbol / path does not exist on the controller |
+| `'MODULE_NOT_FOUND'` | RAPID module not loaded on the controller |
 | `'SESSION_EXPIRED'` | Session timed out |
 | `'MOTORS_OFF'` | Action requires motors on |
-| `'MODULE_NOT_FOUND'` | Module file not found on controller |
 | `'CONTROLLER_BUSY'` | Controller returned 503 - retry later |
 | `'RATE_LIMITED'` | Too many requests (429) |
 | `'NETWORK_ERROR'` | TCP / timeout / WebSocket error |
 | `'PARSE_ERROR'` | Unexpected XML response format |
 | `'UNKNOWN'` | Unmapped error - check `httpStatus` and `rwsDetail` |
+
+4xx responses are classified by the controller's own error body, not the HTTP
+status: `RwsError.controllerCode` / `controllerMsg` carry the native status
+(e.g. `-1073445862` "held by someone else") and the message says what to do
+about it. Every mapping is backed by payloads captured from live controllers
+(`tests/fixtures/errors/`).
 
 ```ts
 try {
@@ -556,7 +591,7 @@ OmniCore-specific limits aren't fully documented by ABB; what the lib observes e
 | RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) |
 | Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` |
 
-**Live-tested matrix** as of v1.0.0: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 370 unit tests + 339 live protocol-coverage tests pass against both.
+**Live-tested matrix** as of v1.1.0: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 440+ unit tests + 339 live protocol-coverage tests + chaos-proxy resilience suites pass against both.
 
 ---
 

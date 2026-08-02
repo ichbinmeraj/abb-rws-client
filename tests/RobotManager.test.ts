@@ -423,6 +423,162 @@ describe('RobotManager subscription loss fallback', () => {
   });
 });
 
+describe('RobotManager connection quality', () => {
+  let mgr: RobotManager | null = null;
+
+  afterEach(async () => {
+    await mgr?.disconnect().catch(() => {});
+    mgr = null;
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  function setup(subscribeBehavior: 'ok' | 'fail' = 'ok') {
+    mgr = new RobotManager({ refreshIntervalMs: 400 });
+    const fake = makeFakeAdapter();
+    const callbacks: { onLost?: () => void; onRestored?: () => void } = {};
+    if (subscribeBehavior === 'ok') {
+      fake.subscribe = vi.fn(async (
+        _r: unknown, _h: unknown, lost?: () => void, restored?: () => void,
+      ) => {
+        callbacks.onLost = lost;
+        callbacks.onRestored = restored;
+        return async () => {};
+      }) as any;
+    }
+    (mgr as any).adapter = fake;
+    (mgr as any).adapterConfig = { host: 'vc-a', username: 'u', password: 'p', port: 80 };
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(DIGEST_PROBE);
+    return { fake, callbacks };
+  }
+
+  it('starts disconnected before any connect', () => {
+    mgr = new RobotManager();
+    expect(mgr.state.quality).toBe('disconnected');
+    expect(mgr.state.qualityReason.length).toBeGreaterThan(0);
+  });
+
+  it('is live when subscriptions are active, with a human-readable reason', async () => {
+    setup('ok');
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    expect(mgr!.state.quality).toBe('live');
+    expect(mgr!.state.qualityReason.length).toBeGreaterThan(0);
+  });
+
+  it('passes through reconnecting while a connect attempt is in flight', async () => {
+    setup('ok');
+    const seen: string[] = [];
+    mgr!.onDidChange(() => { seen.push(mgr!.state.quality); });
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    expect(seen).toContain('reconnecting');
+    expect(seen[seen.length - 1]).toBe('live');
+  });
+
+  it('is polling when subscriptions are unavailable', async () => {
+    setup('fail');   // default fake adapter subscribe throws
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    expect(mgr!.state.quality).toBe('polling');
+  });
+
+  it('drops from live to polling when the stream is terminally lost', async () => {
+    const { callbacks } = setup('ok');
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    expect(mgr!.state.quality).toBe('live');
+    callbacks.onLost!();
+    expect(mgr!.state.quality).toBe('polling');
+  });
+
+  it('stays live across a restore, notifies, and triggers a resync poll', async () => {
+    const { fake, callbacks } = setup('ok');
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    let notified = 0;
+    mgr!.onDidChange(() => { notified++; });
+    const pollsBefore = fake.getControllerState.mock.calls.length;
+
+    callbacks.onRestored!();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(mgr!.state.quality).toBe('live');
+    expect(notified).toBeGreaterThan(0);                                  // reason change notified
+    expect(fake.getControllerState.mock.calls.length).toBe(pollsBefore + 1); // immediate resync ran
+  });
+
+  it('survives a throwing onDidChange consumer without counting it as a poll failure', async () => {
+    vi.useFakeTimers();
+    const { fake } = setup('fail');   // polling cadence 400 ms
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    mgr!.onDidChange(() => { throw new Error('consumer bug'); });
+
+    await vi.advanceTimersByTimeAsync(3 * 400 + 100);
+    // Three poll cycles with a throwing consumer: still connected, not stale
+    expect(mgr!.state.connected).toBe(true);
+    expect(mgr!.state.quality).toBe('polling');
+    expect(fake.getControllerState.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('degrades to stale on consecutive poll failures and recovers on success', async () => {
+    vi.useFakeTimers();
+    const { fake } = setup('ok');
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    expect(mgr!.state.quality).toBe('live');
+
+    // Live cadence is 5 × 400 ms = 2000 ms: one failing poll → stale
+    // (not disconnected until the third consecutive failure)
+    fake.getControllerState.mockRejectedValue(new Error('controller busy'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mgr!.state.quality).toBe('stale');
+    expect(mgr!.state.qualityReason).toContain('poll');
+
+    // A successful poll heals back to the subscription-appropriate quality
+    fake.getControllerState.mockResolvedValue('motoron');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mgr!.state.quality).toBe('live');
+  });
+
+  it('is disconnected with a reason after three failed polls', async () => {
+    vi.useFakeTimers();
+    const { fake } = setup('fail');   // polling cadence: 400 ms
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    expect(mgr!.state.quality).toBe('polling');
+
+    fake.getControllerState.mockRejectedValue(new Error('gone'));
+    await vi.advanceTimersByTimeAsync(3 * 400 + 100);
+    expect(mgr!.state.quality).toBe('disconnected');
+    expect(mgr!.state.qualityReason).toContain('3');
+  });
+
+  it('is disconnected after a user disconnect', async () => {
+    setup('ok');
+    await mgr!.connect('vc-a', 'u', 'p', 80);
+    await mgr!.disconnect();
+    expect(mgr!.state.quality).toBe('disconnected');
+  });
+});
+
+describe('MultiRobotManager per-robot notifications', () => {
+  it('reports WHICH robot changed without breaking zero-arg handlers', async () => {
+    const multi = new MultiRobotManager();
+    const ids: string[] = [];
+    let zeroArg = 0;
+    multi.onDidChange(() => { zeroArg++; });
+    multi.onRobotChanged(id => { ids.push(id); });
+
+    multi.addRobot({ id: 'a', name: 'A', host: 'vc-a' } as any);
+    multi.addRobot({ id: 'b', name: 'B', host: 'vc-b' } as any);
+    expect(ids).toEqual(['a', 'b']);
+
+    // A state change inside robot b's manager surfaces b's id
+    const before = ids.length;
+    const mgrB = (multi as any).managers.get('b') as RobotManager;
+    (mgrB as any).notify();
+    expect(ids.slice(before)).toEqual(['b']);
+    expect(zeroArg).toBeGreaterThan(0);
+
+    multi.removeRobot('a');
+    expect(ids[ids.length - 1]).toBe('a');
+  });
+});
+
 describe('RobotManager.currentUseHttps', () => {
   it('survives class-name mangling (minified bundles rename classes)', () => {
     const mgr = new RobotManager();

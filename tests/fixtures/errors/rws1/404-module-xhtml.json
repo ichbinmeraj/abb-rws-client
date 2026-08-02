@@ -1,0 +1,13 @@
+{
+  "protocol": "rws1",
+  "scenario": "404-module-xhtml",
+  "request": {
+    "method": "GET",
+    "path": "/rw/rapid/tasks/T_ROB1/modules/NoSuchModule"
+  },
+  "response": {
+    "status": 404,
+    "contentType": "application/xhtml+xml",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>rw</title><base href=\"http://127.0.0.1:50/\"/></head><body><div class=\"status\"><span class=\"code\">-1073414146</span><span class=\"msg\">C:\\BUILDAGENTS\\SEABB-IS-13906.1\\_work\\71\\s\\RW\\Areas\\RobApi2\\Components\\rws_services\\rws_services.cpp[129] Resource not found code:-1073414146 icode:-1</span></div></body></html>"
+  }
+}

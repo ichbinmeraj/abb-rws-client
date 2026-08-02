@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-exec-start-blocked-haljson",
+  "request": {
+    "method": "POST",
+    "path": "/rw/rapid/execution/start",
+    "body": "regain=continue&execmode=continue&cycle=forever&condition=none&stopatbp=disabled&alltaskbytsp=false"
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073445862, \"msg\":\"rws_resource_rapid_execution.cpp[1543] Requested resource is held by someone else code:-1073445862 icode:-13\"}}"
+  }
+}

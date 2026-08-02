@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-signal-write-no-rmmp-haljson",
+  "request": {
+    "method": "POST",
+    "path": "/rw/iosystem/signals/SC_Feedback_Net/SC_Feedback_Dev/SafetyEnable/set-value",
+    "body": "lvalue=1"
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073445881, \"msg\":\"rws_resource_iosystem.cpp[3156] Rejected code:-1073445881 icode:-2\"}}"
+  }
+}

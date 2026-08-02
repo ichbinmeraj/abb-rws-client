@@ -4,7 +4,7 @@ import type {
   FileEntry, SystemInfo, ControllerIdentity, CollisionDetectionState,
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
   UiInstruction, RestartMode, Signal, IoNetwork, IoDevice,
-  SubscriptionEvent,
+  SubscriptionEvent, ConnectionQuality,
 } from './types.js';
 import { RwsError } from './types.js';
 import * as https from 'https';
@@ -51,6 +51,9 @@ export interface RobotManagerOptions {
 
 export interface RobotState {
   connected: boolean;
+  /** Connection health; `qualityReason` explains it in human terms. */
+  quality: ConnectionQuality;
+  qualityReason: string;
   host: string;
   ctrlstate: string | null;
   opmode: string | null;
@@ -109,7 +112,8 @@ export class RobotManager {
   private adapterConfig: { host: string; username: string; password: string; port: number } | null = null;
   private errorListener: ErrorListener | null = null;
   private _state: RobotState = {
-    connected: false, host: '', ctrlstate: null, opmode: null,
+    connected: false, quality: 'disconnected', qualityReason: 'not connected',
+    host: '', ctrlstate: null, opmode: null,
     execstate: null, execCycle: null, speedRatio: null, coldetstate: null,
     tasks: [], modules: [], mechunits: [], joints: null,
     cartesian: null, cartesianFull: null, identity: null, systemInfo: null,
@@ -150,7 +154,31 @@ export class RobotManager {
     return this.adapter instanceof RWS2Adapter;
   }
   onDidChange(fn: ChangeHandler) { this.handlers.push(fn); }
-  private notify() { this.handlers.forEach(h => h()); }
+  /**
+   * Consumer callbacks must never throw into manager internals: an exception
+   * escaping here inside fetchAll would be counted as a poll failure and could
+   * cascade to a false stale/auto-disconnect.
+   */
+  private notify() {
+    for (const h of this.handlers) {
+      try { h(); } catch (e) {
+        Logger.warn(`onDidChange handler threw: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  /**
+   * Central connection-quality transition point: updates quality + reason and
+   * notifies consumers, but only when something actually changed (poll loops
+   * hit this every cycle).
+   */
+  private setQuality(quality: ConnectionQuality, reason: string): void {
+    if (this._state.quality === quality && this._state.qualityReason === reason) { return; }
+    this._state.quality = quality;
+    this._state.qualityReason = reason;
+    Logger.trace?.('quality', `${quality}: ${reason}`);
+    this.notify();
+  }
 
   /**
    * Install an error listener. Called when the manager auto-disconnects after 3 failed
@@ -390,7 +418,22 @@ export class RobotManager {
         attempt.epoch = this.connectEpoch; // our own cancel of the old attempt doesn't invalidate this one
         await supersedes.catch(() => {});  // let it finish unwinding before we start fresh
       }
-      await this.doConnect(host, username, password, port, useHttps, attempt);
+      this.setQuality('reconnecting', `connecting to ${host}${port !== undefined ? ':' + port : ''}`);
+      try {
+        await this.doConnect(host, username, password, port, useHttps, attempt);
+      } catch (e) {
+        this.setQuality('disconnected', `connect failed: ${e instanceof Error ? e.message : String(e)}`);
+        throw e;
+      }
+      // Superseded/cancelled attempts leave quality to their successor
+      if (this._state.connected) {
+        this.setQuality(
+          this.subscriptionActive ? 'live' : 'polling',
+          this.subscriptionActive
+            ? 'WebSocket events streaming'
+            : 'WebSocket unavailable - fast polling',
+        );
+      }
     })().finally(() => {
       // Only clear if we're still the current attempt - a superseding connect
       // may have replaced these fields while we were settling.
@@ -585,7 +628,8 @@ export class RobotManager {
     this.subscriptionActive = false;
     if (this.adapter) { await this.adapter.disconnect().catch(() => {}); }
     this._state = {
-      connected: false, host: '', ctrlstate: null, opmode: null,
+      connected: false, quality: 'disconnected', qualityReason: 'disconnected',
+      host: '', ctrlstate: null, opmode: null,
       execstate: null, execCycle: null, speedRatio: null, coldetstate: null,
       tasks: [], modules: [], mechunits: [], joints: null,
       cartesian: null, cartesianFull: null, identity: null, systemInfo: null,
@@ -594,7 +638,12 @@ export class RobotManager {
     this.notify();
   }
 
-  async refresh(): Promise<void> { await this.fetchAll(); }
+  /**
+   * Pinned to the current poll generation: an unpinned fetch would bypass the
+   * staleness guard and could resurrect state (and quality) after a
+   * disconnect/reconnect that raced it.
+   */
+  async refresh(): Promise<void> { await this.fetchAll(this.pollGeneration); }
 
   // ─── Panel control ──────────────────────────────────────────────────────────
 
@@ -1496,7 +1545,10 @@ export class RobotManager {
     if (!this.subscriptionActive) { return; }
     this.subscriptionActive = false;
     Logger.warn('live event stream lost - resuming fast polling');
+    // Quality only changes while still connected: a loss racing a teardown
+    // must not overwrite the 'disconnected' state the teardown set.
     if (!this._state.connected || !this.timer) { return; }
+    this.setQuality('polling', 'live event stream lost - fast polling');
     clearInterval(this.timer);
     const myGeneration = this.pollGeneration;
     this.timer = setInterval(() => {
@@ -1513,6 +1565,7 @@ export class RobotManager {
   private handleSubscriptionRestored(): void {
     if (!this.subscriptionActive || !this._state.connected) { return; }
     Logger.info('live event stream restored - resyncing state');
+    this.setQuality('live', 'live event stream restored');
     if (this.fetchInFlight) { return; }
     void this.fetchAll(this.pollGeneration);
   }
@@ -1679,6 +1732,13 @@ export class RobotManager {
 
       if (stale()) { return; }
       this.consecutiveFails = 0;
+      // A successful poll heals a stale connection back to its real quality
+      if (this._state.quality === 'stale') {
+        this.setQuality(
+          this.subscriptionActive ? 'live' : 'polling',
+          'poll succeeded - connection recovered',
+        );
+      }
       this.notify();
     } catch (e) {
       // Stale poll (disconnect or reconnect happened mid-flight) - don't count this failure.
@@ -1690,6 +1750,9 @@ export class RobotManager {
       const msg = `poll failed (${this.consecutiveFails}/3) - ${e instanceof Error ? e.message : String(e)}`;
       if (this.consecutiveFails >= 2) { Logger.warn(msg); }
       else                            { Logger.info(msg); }
+      if (this.consecutiveFails < 3) {
+        this.setQuality('stale', `${this.consecutiveFails} consecutive poll failure${this.consecutiveFails > 1 ? 's' : ''} - data may be outdated`);
+      }
       if (this.consecutiveFails >= 3) {
         const reason = e instanceof Error ? e.message : String(e);
         Logger.error(`disconnecting after 3 failed polls`, e);
@@ -1699,6 +1762,7 @@ export class RobotManager {
         // cancel a fresh connect attempt the user may have started meanwhile.
         const cfg = this.adapterConfig;
         await this.disconnectInternal();
+        this.setQuality('disconnected', `auto-disconnected after 3 failed polls: ${reason}`);
         // Hand off to the host's error listener (VS Code extension, CLI, etc.).
         // If no listener is installed, the failure is silent beyond the log lines above.
         if (this.errorListener) {

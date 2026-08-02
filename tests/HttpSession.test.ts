@@ -509,12 +509,28 @@ describe('HttpSession - HTTP error codes', () => {
     vi.unstubAllGlobals();
   });
 
-  it('maps 404 to MODULE_NOT_FOUND', async () => {
+  it('maps a body-less 403 on an authed request to GRANT_DENIED, not AUTH_FAILED', async () => {
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))
+      .mockResolvedValueOnce(makeResponse(403, ''));
+
+    await expect(session.post('/rw/something', 'x=1')).rejects.toMatchObject({ code: 'GRANT_DENIED' });
+  });
+
+  it('maps a generic 404 to RESOURCE_NOT_FOUND', async () => {
     fetchMock
       .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))
       .mockResolvedValueOnce(makeResponse(404, 'not found'));
 
-    await expect(session.get('/path')).rejects.toMatchObject({ code: 'MODULE_NOT_FOUND' });
+    await expect(session.get('/path')).rejects.toMatchObject({ code: 'RESOURCE_NOT_FOUND' });
+  });
+
+  it('maps a module-path 404 to MODULE_NOT_FOUND', async () => {
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))
+      .mockResolvedValueOnce(makeResponse(404, 'not found'));
+
+    await expect(session.get('/rw/rapid/tasks/T_ROB1/modules/Gone')).rejects.toMatchObject({ code: 'MODULE_NOT_FOUND' });
   });
 
   it('maps 429 to RATE_LIMITED', async () => {

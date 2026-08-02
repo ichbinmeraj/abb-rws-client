@@ -1,0 +1,14 @@
+{
+  "protocol": "rws1",
+  "scenario": "400-exec-start-wrong-state-json",
+  "request": {
+    "method": "POST",
+    "path": "/rw/rapid/execution?action=start&json=1",
+    "body": "regain=continue&execmode=continue&cycle=forever&condition=none&stopatbp=disabled&alltaskbytsp=false"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073442809, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_rapid\\\\rws_resource_rapid_execution.cpp[1128] ERROR: C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi\\\\Components\\\\RobDomainHooks\\\\rdh_rapid.cpp[6544]: org_code: -508 new_code: 0xc0049007;  code:-1073442809 icode:-1073442809\"}, \"_state\":[  ] }}"
+  }
+}

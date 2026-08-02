@@ -4,6 +4,8 @@ import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
 import { Logger } from './Logger.js';
 import { RwsError, type RwsErrorCode } from './types.js';
+import { classifyControllerError } from './ControllerError.js';
+import type { WsSubscribeOptions } from './WsSubscriber.js';
 import type {
   ControllerState, OperationMode, ExecutionState, ExecutionCycle,
   ExecutionInfo, CollisionDetectionState, RapidTask, JointTarget,
@@ -165,10 +167,14 @@ export class RwsClient2 {
     return new Promise((resolve, reject) => {
       const transport = this.isHttps ? https : http;
       const req = (transport as typeof https).request(options as https.RequestOptions, res => {
-        // Capture session cookie on first response (controller assigns it on first auth).
-        // Without this we leak one session per request → controller pool fills in seconds.
+        // Adopt the session cookie from EVERY response that carries one. First
+        // response: without this we leak one session per request (pool fills in
+        // seconds). Later responses: a controller restart kills the session and
+        // Basic-authed requests mint a fresh cookie - keeping the stale one
+        // makes every WS upgrade 401 forever (live-observed on RW7.21
+        // 2026-08-02 across a warm restart).
         const setCookies = res.headers['set-cookie'];
-        if (setCookies && setCookies.length > 0 && !this.sessionCookie) {
+        if (setCookies && setCookies.length > 0) {
           this.sessionCookie = setCookies.map(c => c.split(';')[0]).join('; ');
         }
 
@@ -204,14 +210,21 @@ export class RwsClient2 {
           if (status >= 400) {
             const err = RwsClient2.extractError(raw);
             Logger.trace?.('http.err', `RWS2 ${method} ${path} → ${status}`, { protocol: 'rws2', method, path, status, durationMs, errCode: err?.code, errMsg: err?.msg, bodyPreview: raw.slice(0, 300) });
-            const code: RwsErrorCode =
+            const fallback: RwsErrorCode =
               status === 401 ? 'AUTH_FAILED' :
               status === 503 ? 'CONTROLLER_BUSY' :
-              status === 429 ? 'RATE_LIMITED' : 'UNKNOWN';
+              status === 429 ? 'RATE_LIMITED' :
+              status === 403 ? 'GRANT_DENIED' : 'UNKNOWN';
+            // Classify by the controller's own error body (mastership vs RMMP
+            // vs wrong mode vs missing resource) - status alone can't tell.
+            const info = classifyControllerError({ httpStatus: status, body: raw, method, path, fallback });
             reject(new RwsError(
-              `RWS2 ${method} ${path}: HTTP ${status}` +
-              (err ? ` - ${err.msg}` : ''),
-              code, status, err?.msg
+              status === 401 ? `RWS2 ${method} ${path}: HTTP 401` : info.message,
+              status === 401 ? 'AUTH_FAILED' : info.code,
+              status,
+              err?.msg,
+              info.controllerCode ?? undefined,
+              info.controllerMsg ?? undefined,
             ));
             return;
           }
@@ -649,8 +662,25 @@ export class RwsClient2 {
     }).then(() => {});
   }
 
-  restartController(mode: RestartMode = 'restart'): Promise<void> {
-    return this.req('POST', '/ctrl/restart', { 'restart-mode': mode }).then(() => {});
+  /**
+   * Restart the controller. Requires `edit` mastership - live-verified
+   * 2026-08-02 on OmniCore VC RW7.21: bare POST /ctrl/restart → 403
+   * "Restart failed for given restart mode -1073445859"; the same POST with
+   * edit mastership held is accepted. Acquired internally; no release
+   * afterwards - the controller is going down and takes the session with it.
+   */
+  async restartController(mode: RestartMode = 'restart'): Promise<void> {
+    await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
+    try {
+      await this.req('POST', '/ctrl/restart', { 'restart-mode': mode });
+      // Success: no release - the controller is going down and takes the
+      // session (and its mastership) with it.
+    } catch (e) {
+      // Refused restart (wrong mode, busy, ...): keeping edit mastership here
+      // would block every other client until this session times out.
+      await this.releaseMastership('rapid').catch(() => {});
+      throw e;
+    }
   }
 
   // ─── Event log ───────────────────────────────────────────────────────────────
@@ -1555,10 +1585,14 @@ export class RwsClient2 {
 
   /** First reconnect delay after a dropped subscription WebSocket (doubles per attempt). */
   private static readonly WS_RECONNECT_BASE_MS = 500;
+  /** Upper bound for the reconnect delay. */
+  private static readonly WS_RECONNECT_CAP_MS = 30000;
   /** Give up re-subscribing after this many consecutive failed attempts. */
   private static readonly WS_RECONNECT_MAX_ATTEMPTS = 6;
   /** How long to wait for the WebSocket upgrade to complete before treating the attempt as failed. */
   private static readonly WS_OPEN_TIMEOUT_MS = 8000;
+  /** App-level PING cadence; the controller closes the WS after 30 s without activity. */
+  private static readonly WS_PING_INTERVAL_MS = 25000;
 
   /**
    * POST /subscription - accept HTTP 201 (Created).
@@ -1599,6 +1633,10 @@ export class RwsClient2 {
       const req = (transport as typeof https).request(options as https.RequestOptions, res => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
+        // A response that never completes (connection cut mid-body - a
+        // controller restart does this) must NOT hang the reconnect loop
+        res.on('aborted', () => reject(new Error('RWS2 subscribe POST aborted mid-response')));
+        res.on('error', (e: Error) => reject(e));
         res.on('end', () => {
           if (res.statusCode !== 201) {
             reject(new Error(`RWS2 subscribe POST returned ${res.statusCode}`));
@@ -1625,11 +1663,13 @@ export class RwsClient2 {
             ?? '';
           const deleteUrl = groupId ? `/subscription/${groupId}` : '';
 
-          // Capture the session cookie if this POST minted one (first-ever request
-          // on this client) - same capture rule as req(). The WebSocket authenticates
-          // with Cookie, NOT Authorization.
+          // Adopt the cookie whenever this POST carries one - same rule as
+          // req(). Normally the POST rides the existing session (201, no
+          // Set-Cookie); after a controller restart the old session is dead and
+          // this POST mints a fresh one - the WS MUST present the fresh cookie
+          // or the upgrade is rejected 401 (live-observed on RW7.21 2026-08-02).
           const setCookies = (res.headers['set-cookie'] ?? []) as string[];
-          if (setCookies.length > 0 && !this.sessionCookie) {
+          if (setCookies.length > 0) {
             this.sessionCookie = setCookies.map((c: string) => c.split(';')[0]).join('; ');
           }
           const cookieStr = this.sessionCookie ?? '';
@@ -1639,6 +1679,12 @@ export class RwsClient2 {
         });
       });
       req.on('error', reject);
+      // Without a timeout a half-open network stalls the reconnect loop
+      // forever (no onLost, no further attempts)
+      req.setTimeout(this.timeoutMs, () => {
+        req.destroy();
+        reject(new Error(`RWS2 subscribe POST timed out after ${this.timeoutMs} ms`));
+      });
       req.write(encoded);
       req.end();
     });
@@ -1649,7 +1695,14 @@ export class RwsClient2 {
     handler: (event: SubscriptionEvent) => void,
     onLost?: () => void,
     onRestored?: () => void,
+    opts?: Omit<WsSubscribeOptions, 'onLost' | 'onRestored'>,
   ): Promise<() => Promise<void>> {
+    // Effective tuning: per-call opts win over the class defaults.
+    const reconnectBaseMs = opts?.reconnectBaseMs ?? RwsClient2.WS_RECONNECT_BASE_MS;
+    const reconnectCapMs = opts?.reconnectCapMs ?? RwsClient2.WS_RECONNECT_CAP_MS;
+    const maxReconnectAttempts = opts?.maxReconnectAttempts ?? RwsClient2.WS_RECONNECT_MAX_ATTEMPTS;
+    const pingIntervalMs = opts?.pingIntervalMs ?? RwsClient2.WS_PING_INTERVAL_MS;
+    const openTimeoutMs = opts?.openTimeoutMs ?? RwsClient2.WS_OPEN_TIMEOUT_MS;
     // 1. Build subscription body
     const paths = resources.map(r => RwsClient2.rws2ResourcePath(r)).filter(Boolean) as string[];
     if (paths.length === 0) { return async () => {}; }
@@ -1695,8 +1748,22 @@ export class RwsClient2 {
         await dropGroup(conn.deleteUrl);
         conn.deleteUrl = '';
       }
-      const { wsUrl, deleteUrl, cookieStr } = await this.createSubscription(bodyStr);
+      const { wsUrl: advertisedUrl, deleteUrl, cookieStr } = await this.createSubscription(bodyStr);
       conn.deleteUrl = deleteUrl;
+
+      // The Location header carries the controller's OWN authority. Keep the
+      // advertised path but connect through the base URL this client was
+      // configured with, so subscriptions work across NAT/port-forwarding
+      // (parity with the RWS 1.0 subscriber; scheme follows the base URL).
+      let wsUrl = advertisedUrl;
+      try {
+        const u = new URL(advertisedUrl);
+        const base = new URL(this.baseUrl);
+        u.protocol = this.isHttps ? 'wss:' : 'ws:';
+        u.hostname = base.hostname;
+        u.port = base.port;
+        wsUrl = u.toString();
+      } catch { /* keep the advertised URL - worst case matches the old behavior */ }
 
       // 2. Open WebSocket and wait for confirmation it actually connected.
       //    Auth: Cookie from subscription response (NOT Authorization header).
@@ -1717,8 +1784,8 @@ export class RwsClient2 {
           settled = true;
           ws.terminate();
           dropGroup(deleteUrl);
-          reject(new Error(`WebSocket connection timed out after ${RwsClient2.WS_OPEN_TIMEOUT_MS} ms`));
-        }, RwsClient2.WS_OPEN_TIMEOUT_MS);
+          reject(new Error(`WebSocket connection timed out after ${openTimeoutMs} ms`));
+        }, openTimeoutMs);
 
         ws.on('open', () => {
           if (settled) { return; }
@@ -1727,20 +1794,27 @@ export class RwsClient2 {
           resolve();
         });
 
-        // unexpected-response fires when the HTTP upgrade is rejected (e.g. 400)
+        // unexpected-response fires when the HTTP upgrade is rejected (e.g. 400).
+        // The open-timeout stays armed until the promise actually settles: a
+        // rejection response whose body never completes (controller restart
+        // cuts the connection mid-body) would otherwise hang the reconnect
+        // loop forever - no onLost, no further attempts.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ws.on('unexpected-response', (_req: unknown, res: any) => {
-          clearTimeout(timer);
           const chunks: Buffer[] = [];
-          res.on('data', (c: Buffer) => chunks.push(c));
-          res.on('end', () => {
+          const settleRejected = (bodyText: string): void => {
             if (settled) { return; }
             settled = true;
-            const body = (Buffer.concat(chunks).toString().trim() || '').slice(0, 120);
+            clearTimeout(timer);
             ws.terminate();
             dropGroup(deleteUrl);
-            reject(new Error(`RWS2 WebSocket upgrade rejected (HTTP ${res.statusCode}): ${body}`));
-          });
+            reject(new Error(`RWS2 WebSocket upgrade rejected (HTTP ${res.statusCode}): ${bodyText}`));
+          };
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => settleRejected((Buffer.concat(chunks).toString().trim() || '').slice(0, 120)));
+          res.on('aborted', () => settleRejected('(response aborted)'));
+          res.on('error', () => settleRejected('(response error)'));
+          res.on('close', () => settleRejected('(connection closed mid-response)'));
         });
 
         ws.on('error', (err: Error) => {
@@ -1760,29 +1834,48 @@ export class RwsClient2 {
       }
       conn.ws = ws;
 
-      // 3. Ping every 25 s (controller closes if no activity within 30 s)
+      // 3. Heartbeat: PING each interval (controller closes an idle WS at
+      //    30 s), and treat a PING still unanswered at the next tick as a
+      //    half-open connection - terminate so the close event drives the
+      //    reconnect path. Any inbound frame counts as proof of life, so a
+      //    busy event stream can never be killed by a delayed PONG.
+      let awaitingPong = false;
       conn.pingTimer = setInterval(() => {
-        if ((ws as { readyState: number }).readyState === 1 /* OPEN */) { ws.send('PING'); }
-      }, 25000);
-
-      // 4. Parse incoming events (same approach as abb-rws-client WsSubscriber)
-      ws.on('message', (data: Buffer | string) => {
-        const raw = data.toString();
-        if (raw === 'PONG') { return; }
-
-        const liPat = /<li[^>]*>([\s\S]*?)<\/li>/gi;
-        let m: RegExpExecArray | null;
-        while ((m = liPat.exec(raw)) !== null) {
-          const block = m[1];
-          const hrefM = block.match(/<a[^>]*href="([^"]+)"/i);
-          const spanM = block.match(/<span[^>]*>([\s\S]*?)<\/span>/i);
-          if (!hrefM || !spanM) { continue; }
-          handler({
-            resource:  RwsClient2.resourcePathToName(hrefM[1]),
-            value:     spanM[1].trim(),
-            timestamp: new Date(),
-          });
+        if ((ws as { readyState: number }).readyState !== 1 /* OPEN */) { return; }
+        if (awaitingPong) {
+          Logger.warn('RWS2 heartbeat missed - terminating half-open WebSocket');
+          if (conn.pingTimer) { clearInterval(conn.pingTimer); conn.pingTimer = null; }
+          ws.terminate();
+          return;
         }
+        awaitingPong = true;
+        ws.send('PING');
+      }, pingIntervalMs);
+
+      // 4. Parse incoming events (same approach as abb-rws-client WsSubscriber).
+      //    The whole dispatch is guarded: a throwing consumer handler must
+      //    never propagate into the ws emitter (process crash) or kill the
+      //    heartbeat/reconnect state machine.
+      ws.on('message', (data: Buffer | string) => {
+        awaitingPong = false;
+        try {
+          const raw = data.toString();
+          if (raw === 'PONG') { return; }
+
+          const liPat = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+          let m: RegExpExecArray | null;
+          while ((m = liPat.exec(raw)) !== null) {
+            const block = m[1];
+            const hrefM = block.match(/<a[^>]*href="([^"]+)"/i);
+            const spanM = block.match(/<span[^>]*>([\s\S]*?)<\/span>/i);
+            if (!hrefM || !spanM) { continue; }
+            handler({
+              resource:  RwsClient2.resourcePathToName(hrefM[1]),
+              value:     spanM[1].trim(),
+              timestamp: new Date(),
+            });
+          }
+        } catch { /* consumer callback or malformed frame - never let it break us */ }
       });
 
       // Non-fatal error after open - the matching 'close' event drives cleanup/reconnect.
@@ -1801,7 +1894,7 @@ export class RwsClient2 {
       // flight lands here through its .catch - without this guard it would
       // keep retrying (and eventually fire onLost) after the consumer left.
       if (conn.closed) { return; }
-      if (conn.attempts >= RwsClient2.WS_RECONNECT_MAX_ATTEMPTS) {
+      if (conn.attempts >= maxReconnectAttempts) {
         const msg = `RWS2 subscription lost - giving up after ${conn.attempts} reconnect attempts`;
         Logger.error(msg);
         void dropGroup(conn.deleteUrl);
@@ -1812,7 +1905,7 @@ export class RwsClient2 {
         }
         return;
       }
-      const delay = RwsClient2.WS_RECONNECT_BASE_MS * 2 ** conn.attempts;
+      const delay = Math.min(reconnectBaseMs * 2 ** conn.attempts, reconnectCapMs);
       conn.attempts++;
       Logger.trace?.('subscription', `RWS2 WebSocket dropped - reconnect attempt ${conn.attempts} in ${delay} ms`);
       conn.reconnectTimer = setTimeout(() => {

@@ -3,6 +3,8 @@ import { createServer } from 'node:http';
 import type { Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { RwsClient } from '../src/RwsClient.js';
 import { RwsError } from '../src/types.js';
 
@@ -339,6 +341,52 @@ describe('RwsClient - request shaping against a mock controller', () => {
     });
 
     await expect(client.getActiveUiInstruction()).resolves.toBeNull();
+  });
+});
+
+describe('RwsClient - controller-level error taxonomy', () => {
+  it('classifies a mastership-held 403 instead of blaming credentials', async () => {
+    const mock = await startMockController();
+    const client = makeClient(mock.port);
+    try {
+      const fixture = JSON.parse(fs.readFileSync(
+        path.join(__dirname, 'fixtures', 'errors', 'rws1', '403-mastership-held-xhtml.json'), 'utf8'));
+      mock.routes.set('POST /rw/mastership/rapid?action=request', (res) => {
+        res.writeHead(403, { 'Content-Type': fixture.response.contentType });
+        res.end(fixture.response.body);
+      });
+
+      const err = await client.requestMastership('rapid').then(() => null, (e: unknown) => e as RwsError);
+      expect(err).toBeInstanceOf(RwsError);
+      expect(err!.code).toBe('MASTERSHIP_REQUIRED');
+      expect(err!.controllerCode).toBe(-1073445862);
+      expect(err!.message.toLowerCase()).toContain('mastership');
+      expect(err!.message.toLowerCase()).not.toContain('password');
+    } finally {
+      await client.disconnect().catch(() => undefined);
+      await mock.close();
+    }
+  });
+
+  it('classifies a missing signal as RESOURCE_NOT_FOUND, not MODULE_NOT_FOUND', async () => {
+    const mock = await startMockController();
+    const client = makeClient(mock.port);
+    try {
+      const fixture = JSON.parse(fs.readFileSync(
+        path.join(__dirname, 'fixtures', 'errors', 'rws1', '404-signal-json.json'), 'utf8'));
+      mock.routes.set('GET /rw/iosystem/signals/NoNet/NoDev/NoSig', (res) => {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(fixture.response.body);
+      });
+
+      const err = await client.readSignal('NoNet', 'NoDev', 'NoSig').then(() => null, (e: unknown) => e as RwsError);
+      expect(err).toBeInstanceOf(RwsError);
+      expect(err!.code).toBe('RESOURCE_NOT_FOUND');
+      expect(err!.controllerCode).toBe(-1073445866);
+    } finally {
+      await client.disconnect().catch(() => undefined);
+      await mock.close();
+    }
   });
 });
 

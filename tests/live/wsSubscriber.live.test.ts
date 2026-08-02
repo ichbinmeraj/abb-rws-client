@@ -253,10 +253,12 @@ describe.skipIf(!HOST)('RWS 1.0 subscriber resilience (RW6 VC via chaos proxy)',
 
   it.skipIf(!ALLOW_RESTART)('survives a real warm restart of the VC', async () => {
     await subscribeSpeed({
-      // Restart takes ~30-60 s: give the budget real room (cap keeps delay sane)
-      maxReconnectAttempts: 30,
+      // VC restart timing varies with host load (observed 1-6 min end to end
+      // across the rig) - budget generously; real IRC5 hardware reboots are
+      // in the same range.
+      maxReconnectAttempts: 90,
       reconnectBaseMs: 1000,
-      reconnectCapMs: 5000,
+      reconnectCapMs: 10000,
     });
     await expectSpeedEvent(68);
 
@@ -265,15 +267,15 @@ describe.skipIf(!HOST)('RWS 1.0 subscriber resilience (RW6 VC via chaos proxy)',
     // The VC re-binds RWS to a new dynamic port on restart (real IRC5 keeps
     // :80). Chase the port and retarget the proxy so the client sees one
     // stable address throughout - the client itself must recover unaided.
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + 480000;
     while (restored < 1 && Date.now() < deadline) {
       const port = await findLiveRwsPort();
       if (port) { proxy.setTarget('127.0.0.1', port); }
       await wait(3000);
     }
-    expect(restored, 'stream was not restored within 3 min of the warm restart').toBeGreaterThanOrEqual(1);
+    expect(restored, 'stream was not restored within 8 min of the warm restart').toBeGreaterThanOrEqual(1);
 
-    await expectSpeedEvent(69, 15000);
+    await expectSpeedEvent(69, 30000);
     expect(lost).toBe(0);
-  }, 240000);
+  }, 560000);
 }, 120000);

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import type { AddressInfo } from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
 import { RwsClient2 } from '../src/RwsClient2.js';
 import { RwsError } from '../src/types.js';
 import { TEST_TLS_KEY, TEST_TLS_CERT } from './TlsFixture.js';
@@ -212,6 +214,60 @@ describe('RwsClient2 (unit)', () => {
         await client.removeCfgInstance('SYS', 'CAB_TASKS', 'ZZ_NEW');
         expect(requests[0].method).toBe('DELETE');
         expect(requests[0].url).toBe('/rw/cfg/SYS/CAB_TASKS/instances/ZZ_NEW');
+      } finally { server.close(); }
+    });
+  });
+
+  describe('restartController mastership handling', () => {
+    it('acquires edit mastership, and releases it when the restart POST is refused', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if ((req.url ?? '').includes('/ctrl/restart')) { res.writeHead(403); res.end(); return; }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await expect(client.restartController('restart')).rejects.toBeInstanceOf(RwsError);
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toContain('POST /rw/mastership/edit/request');
+        expect(urls).toContain('POST /ctrl/restart');
+        // A refused restart must NOT leak edit mastership
+        expect(urls).toContain('POST /rw/mastership/edit/release');
+      } finally { server.close(); }
+    });
+
+    it('does not release mastership when the restart is accepted (session dies with the controller)', async () => {
+      const { server, port, requests } = await startServer((_req, res) => { res.writeHead(204); res.end(); });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.restartController('restart');
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toContain('POST /ctrl/restart');
+        expect(urls).not.toContain('POST /rw/mastership/edit/release');
+      } finally { server.close(); }
+    });
+  });
+
+  describe('controller-level error taxonomy', () => {
+    it('classifies a mastership-missing 403 with the controller code, not AUTH-flavored UNKNOWN', async () => {
+      const fixture = JSON.parse(fs.readFileSync(
+        path.join(__dirname, 'fixtures', 'errors', 'rws2', '403-speedratio-no-mastership-haljson.json'), 'utf8'));
+      const { server, port } = await startServer((req, res) => {
+        if ((req.url ?? '').includes('/rw/mastership/')) { res.writeHead(204); res.end(); return; }
+        res.writeHead(403, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end(fixture.response.body);
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        // Bypass the internal mastership wrap so the 403 comes from the write itself
+        const err = await (client as unknown as {
+          req(m: string, p: string, b?: Record<string, string>): Promise<string>;
+        }).req('POST', '/rw/panel/speedratio?action=setspeedratio', { 'speed-ratio': '50' })
+          .then(() => null, (e: unknown) => e as RwsError);
+        expect(err).toBeInstanceOf(RwsError);
+        expect(err!.code).toBe('MASTERSHIP_REQUIRED');
+        expect(err!.controllerCode).toBe(-1073445859);
+        expect(err!.message.toLowerCase()).toContain('mastership');
+        expect(err!.message.toLowerCase()).not.toContain('password');
       } finally { server.close(); }
     });
   });

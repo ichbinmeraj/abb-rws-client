@@ -15,6 +15,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { RwsError } from './types.js';
 import { Logger } from './Logger.js';
+import { classifyControllerError } from './ControllerError.js';
 import type { DigestChallenge, HttpResponse } from './types.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -215,11 +216,20 @@ export class HttpSession {
         durationMs: Date.now() - startedAt,
         bodyPreview: bodyText.slice(0, 300),
       });
+      // Classify by the controller's OWN error body, not the HTTP status alone -
+      // a 403 can mean held mastership, missing RMMP, or a wrong mode, and only
+      // a failed auth handshake (handled above) is a credential problem.
+      const info = classifyControllerError({
+        httpStatus: response.status, body: bodyText, method, path,
+        fallback: this.mapHttpStatus(response.status),
+      });
       throw new RwsError(
-        `HTTP ${response.status} from ${method} ${path}`,
-        this.mapHttpStatus(response.status),
+        info.message,
+        info.code,
         response.status,
         bodyText,
+        info.controllerCode ?? undefined,
+        info.controllerMsg ?? undefined,
       );
     }
     Logger.trace?.('http.res', `RWS1 ${method} ${path} → ${response.status}`, {
@@ -442,13 +452,19 @@ export class HttpSession {
     return status >= 200 && status < 300;
   }
 
+  /**
+   * Status-only fallback used when the error body carries no controller code.
+   * 403 is NOT auth here: credential failures throw AUTH_FAILED from the digest
+   * handshake path; a body-less 403 on an authed request is a permission issue.
+   */
   private mapHttpStatus(status: number): RwsError['code'] {
     switch (status) {
       case 401:
-      case 403:
         return 'AUTH_FAILED';
+      case 403:
+        return 'GRANT_DENIED';
       case 404:
-        return 'MODULE_NOT_FOUND';
+        return 'RESOURCE_NOT_FOUND';
       case 429:
         return 'RATE_LIMITED';
       case 503:

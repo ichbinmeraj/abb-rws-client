@@ -1,0 +1,14 @@
+{
+  "protocol": "rws1",
+  "scenario": "400-cfg-write-invalid-json",
+  "request": {
+    "method": "POST",
+    "path": "/rw/cfg/EIO/EIO_SIGNAL/instances/ES1?action=set&json=1",
+    "body": "Access=All"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073445879, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_cfg\\\\rws_resource_cfg.cpp[2107] Error set attribute code:-1073445879 icode:-1073437691\"}, \"_state\":[  ] }}"
+  }
+}

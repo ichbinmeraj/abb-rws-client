@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "404-file-haljson",
+  "request": {
+    "method": "GET",
+    "path": "/fileservice/HOME/no-such-file-xyz.modx"
+  },
+  "response": {
+    "status": 404,
+    "contentType": "text/html",
+    "body": "{ \"_links\" : { \"base\" : { \"href\" : \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073438713, \"msg\": \"rapi_file_service.cpp[218] Path does not exist -1073438713 -1\"}}"
+  }
+}

@@ -32,6 +32,16 @@ async function startSubscriptionServer(opts: {
   failSubscribes?: () => boolean;
   /** When true, the server accepts the upgrade socket but never answers (handshake hang). */
   hangUpgrade?: boolean;
+  /** Answer app-level 'PING' text with 'PONG' like a real controller (default true). */
+  answerPings?: boolean;
+  /** Advertise this port in the Location header instead of the real one (NAT simulation). */
+  advertisePort?: number;
+  /**
+   * Controller-restart simulation: each POST /subscription mints a NEW session
+   * cookie (ABBCX=cx-{n}) and WS upgrades presenting any older cookie are
+   * rejected 401 - matches live RW7.21 behavior across a warm restart.
+   */
+  rotateCookies?: boolean;
 } = {}): Promise<{
   close: () => void;
   port: number;
@@ -57,13 +67,15 @@ async function startSubscriptionServer(opts: {
         if (opts.failSubscribes?.()) { res.writeHead(500); res.end(); return; }
         posts.push(body);
         groupId++;
+        const advertised = opts.advertisePort ?? port;
+        const cookie = opts.rotateCookies ? `ABBCX=cx-${groupId}` : 'ABBCX=test-cx';
         res.writeHead(201, {
-          Location: `${wsScheme}://127.0.0.1:${port}/poll/${groupId}`,
-          'Set-Cookie': 'ABBCX=test-cx; path=/',
+          Location: `${wsScheme}://127.0.0.1:${advertised}/poll/${groupId}`,
+          'Set-Cookie': `${cookie}; path=/`,
           'Content-Type': 'application/xhtml+xml;v=2.0',
         });
         res.end(`<html><body><div class="state"><a href="subscription/${groupId}" rel="group"></a>`
-          + `<a href="${wsScheme}://127.0.0.1:${port}/poll/${groupId}" rel="self"></a></div></body></html>`);
+          + `<a href="${wsScheme}://127.0.0.1:${advertised}/poll/${groupId}" rel="self"></a></div></body></html>`);
         return;
       }
       if (req.method === 'DELETE') { res.writeHead(200); res.end(); return; }
@@ -86,8 +98,19 @@ async function startSubscriptionServer(opts: {
         protocolsSeen.push([...protocols]);
         return [...protocols][0] ?? false;
       },
+      // Restart simulation: only the LATEST minted cookie may open a WS
+      // (older sessions are dead; upgrade → 401 like live RW7.21)
+      ...(opts.rotateCookies ? {
+        verifyClient: (info: { req: http.IncomingMessage }): boolean =>
+          ((info.req.headers.cookie ?? '') as string).includes(`ABBCX=cx-${groupId}`),
+      } : {}),
     });
-    wss.on('connection', ws => sockets.push(ws));
+    wss.on('connection', ws => {
+      sockets.push(ws);
+      if (opts.answerPings !== false) {
+        ws.on('message', d => { if (d.toString() === 'PING') { ws.send('PONG'); } });
+      }
+    });
   }
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   port = (server.address() as AddressInfo).port;
@@ -174,6 +197,30 @@ describe('RWS 2.0 subscription reconnect', () => {
     } finally { s.close(); }
   }, 15000);
 
+  it('adopts a re-issued session cookie so recovery works after a controller restart', async () => {
+    // Live-observed on RW7.21 (2026-08-02): a warm restart kills the session;
+    // the re-POST /subscription succeeds via Basic auth and mints a NEW cookie,
+    // and the WS upgrade rejects the old one with 401. A client that keeps the
+    // stale cookie loops 401 forever and never recovers.
+    const s = await startSubscriptionServer({ rotateCookies: true });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      let restored = 0;
+      const unsubscribe = await client.subscribe(
+        ['speedratio'], () => {}, undefined, () => { restored++; },
+      );
+      await until(() => s.sockets.length >= 1);
+
+      // "Restart": drop the socket; the next subscription mints cx-2 and the
+      // WS layer only accepts cx-2.
+      s.sockets[0].terminate();
+      await until(() => restored >= 1, 8000);
+      expect(s.posts.length).toBeGreaterThanOrEqual(2);
+      expect(s.sockets.length).toBeGreaterThanOrEqual(2);
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 15000);
+
   it('fires onRestored after each successful re-subscribe, never on the initial one', async () => {
     const s = await startSubscriptionServer();
     try {
@@ -202,6 +249,99 @@ describe('RWS 2.0 subscription reconnect', () => {
       await unsubscribe();
     } finally { s.close(); }
   }, 15000);
+
+  it('detects a half-open connection via missed PONGs and re-subscribes', async () => {
+    // A controller that stops answering app-level PINGs is half-open (frozen
+    // NAT, yanked cable). The client must terminate the socket and reconnect
+    // within ~2 ping intervals - parity with the RWS 1.0 heartbeat.
+    const s = await startSubscriptionServer({ answerPings: false });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      let restored = 0;
+      const unsubscribe = await client.subscribe(
+        ['speedratio'], () => {}, undefined, () => { restored++; },
+        { pingIntervalMs: 150, reconnectBaseMs: 30 },
+      );
+      await until(() => s.sockets.length >= 1);
+
+      // No pong ever arrives → detection ≤ 2 ticks → reconnect re-POSTs
+      await until(() => s.posts.length >= 2, 5000);
+      await until(() => restored >= 1, 5000);
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 10000);
+
+  it('keeps a healthy connection open when PONGs are answered', async () => {
+    const s = await startSubscriptionServer({ answerPings: true });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      // Generous interval: the deadline only trips if a PONG takes longer than
+      // a full interval, so CI load can't falsely kill the healthy stream
+      const unsubscribe = await client.subscribe(
+        ['speedratio'], () => {}, undefined, undefined,
+        { pingIntervalMs: 400 },
+      );
+      await until(() => s.sockets.length >= 1);
+      await new Promise(r => setTimeout(r, 1500));
+      // Several ping cycles passed; a healthy stream must not have reconnected
+      expect(s.posts.length).toBe(1);
+      expect(s.sockets.length).toBe(1);
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 10000);
+
+  it('connects the WebSocket via the configured base URL, not the advertised authority', async () => {
+    // NAT/port-forward simulation: the controller advertises its own (wrong
+    // from the client's viewpoint) port in the Location header. The client
+    // must keep the advertised path but connect through the address it was
+    // configured with - parity with the RWS 1.0 subscriber.
+    const s = await startSubscriptionServer({ advertisePort: 9 });
+    try {
+      const events: string[] = [];
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      const unsubscribe = await client.subscribe(
+        ['speedratio'], (e: SubscriptionEvent) => events.push(e.value),
+      );
+      await until(() => s.sockets.length >= 1, 5000);
+      s.sockets[0].send(
+        '<li class="ios-signal-li"><a href="/rw/panel/speedratio" rel="self"></a><span class="lvalue">55</span></li>',
+      );
+      await until(() => events.length >= 1);
+      expect(events[0]).toBe('55');
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 10000);
+
+  it('honors reconnect tuning options and fires onLost after the configured budget', async () => {
+    let failing = false;
+    const s = await startSubscriptionServer({ failSubscribes: () => failing });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      let lostCount = 0;
+      const unsubscribe = await client.subscribe(
+        ['speedratio'], () => {}, () => { lostCount++; }, undefined,
+        { reconnectBaseMs: 50, reconnectCapMs: 60, maxReconnectAttempts: 4 },
+      );
+      await until(() => s.sockets.length >= 1);
+      failing = true;
+      const postsBefore = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').length;
+      const t0 = Date.now();
+      s.sockets[0].terminate();
+
+      await until(() => lostCount >= 1, 5000);
+      const elapsed = Date.now() - t0;
+      // Exactly maxReconnectAttempts re-POSTs were attempted
+      const postsAfter = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').length;
+      expect(postsAfter - postsBefore).toBe(4);
+      // Capped schedule 50/60/60/60 ms ≈ 230 ms of delays. WITHOUT the cap it
+      // would be 50/100/200/400 ≈ 750 ms, and with the DEFAULT tuning (500 ms
+      // base, 6 attempts) multiple seconds - the bound pins base, cap, and
+      // attempt count together.
+      expect(elapsed).toBeLessThan(600);
+      expect(lostCount).toBe(1);
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 10000);
 
   it('does not reconnect after unsubscribe', async () => {
     const s = await startSubscriptionServer();

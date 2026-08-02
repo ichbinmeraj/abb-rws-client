@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "400-module-missing-xhtml",
+  "request": {
+    "method": "GET",
+    "path": "/rw/rapid/tasks/T_ROB1/modules/NoSuchModule"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/xhtml+xml;v=2.0",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><base href=\"https://127.0.0.1:5466/\"/></head><body><div class=\"status\"><span class=\"code\">-1073442813</span><span class=\"msg\">rws_resource_rapid_module.cpp[1233] ERROR: da_rapid_modules.cpp[267]: org_code: -507 new_code: 0xc004ffff;  module name/parameter is invalid or missing code:-1073442813 icode:-1</span></div></body></html>"
+  }
+}

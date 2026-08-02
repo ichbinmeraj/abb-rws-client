@@ -4,9 +4,40 @@ All notable changes to `abb-rws-client` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-08-02
+
+Structural-fixes round: the event stream self-heals on both protocol
+generations, connection health is first-class state, and controller errors
+carry the controller's own diagnosis. Everything below was driven by live
+probing against the RW6.16 IRC5 VC and RW7.21 OmniCore VC through a chaos
+proxy (drops, freezes, blocked ports, real warm restarts).
 
 ### Added
+
+- **Connection quality as first-class state** - `RobotState.quality`
+  (`live` / `polling` / `reconnecting` / `stale` / `disconnected`) with a
+  human-readable `qualityReason`, driven by the manager's existing signals:
+  subscriptions up, stream lost/restored, consecutive poll failures, connect
+  lifecycle. `MultiRobotManager.onRobotChanged(id => ...)` reports which robot
+  changed so fleet consumers stop diffing every state; the zero-arg
+  `onDidChange` is untouched.
+- **Controller-level error taxonomy** - new `RwsError` codes
+  `MASTERSHIP_REQUIRED`, `GRANT_DENIED`, `WRONG_MODE`, `RESOURCE_NOT_FOUND`,
+  plus `controllerCode`/`controllerMsg` parsed from the controller's own error
+  body (RWS 1.0 `?json=1`, RWS 2.0 hal+json, and XHTML status blocks). 4xx
+  responses are classified by body content, never by HTTP status alone, and
+  messages say what to do (acquire mastership, request RMMP and approve on the
+  FlexPendant, check the op-mode). Every mapping is backed by raw payloads
+  captured from live controllers (`tests/fixtures/errors/`).
+- **RWS 2.0 subscriber parity with RWS 1.0** - the OmniCore stream gained the
+  pieces the IRC5 stream got in this round:
+  - Half-open detection: a `PING` still unanswered at the next tick terminates
+    the socket so recovery runs (any inbound frame counts as proof of life).
+  - The WebSocket connects via the configured base URL instead of the
+    authority the controller advertises, so subscriptions survive NAT and
+    port forwarding.
+  - Reconnect tuning (base/cap/attempts, ping interval, open timeout) is
+    configurable per subscription; backoff is now capped.
 
 - **RWS 1.0 subscriber parity with RWS 2.0** - the IRC5 event stream now
   survives everything the OmniCore stream survives:
@@ -28,6 +59,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RobotManager` resyncs automatically: one immediate full poll whenever a
   subscription stream is restored; fast polling on terminal loss (as before).
 
+### Changed
+
+- **4xx classification changed on existing paths** (the point of the error
+  taxonomy): a 403 that used to throw `AUTH_FAILED` now throws
+  `MASTERSHIP_REQUIRED`, `GRANT_DENIED`, or `WRONG_MODE` depending on the
+  controller's error body; a generic 404 now throws `RESOURCE_NOT_FOUND`
+  (`MODULE_NOT_FOUND` stays for module paths). Code that matched on the old
+  codes for these cases needs updating. Error messages keep the
+  `HTTP <status> from <method> <path>` phrase for compatibility with
+  message-matching consumers.
+- `RobotState` gained two required fields (`quality`, `qualityReason`) -
+  additive for readers, but code constructing complete `RobotState` literals
+  must add them.
+
 ### Fixed
 
 - A dropped RWS 1.0 WebSocket used to give up silently after ~7 s: no
@@ -46,6 +91,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwarding.
 - Stray `console.*` calls in `RobotManager` and `RwsClient2` now go through
   `Logger`.
+- **RWS 2.0 subscriptions could never recover from a controller restart**: the
+  client adopted the session cookie only on the first response, so after a
+  restart killed the session, the re-POST minted a fresh cookie the client
+  ignored and every WebSocket upgrade was rejected 401 forever (live-observed
+  on RW7.21 across a warm restart). Set-Cookie is now adopted from every
+  response that carries one.
+- `RwsClient2.restartController()` acquires `edit` mastership internally - the
+  bare POST is refused with 403 (live-verified on RW7.21). If the restart POST
+  itself is refused, the mastership is released again instead of leaking.
+- The RWS 2.0 subscription POST and the upgrade-rejection path both settle on
+  connection loss now (timeout on the POST; abort/error/close handling on the
+  rejection response) - a connection cut mid-handshake used to hang the
+  reconnect loop forever with no `onLost`.
+- Consumer callbacks (event handlers, `onDidChange`) are guarded everywhere:
+  a throwing consumer can no longer crash the process from inside the RWS 2.0
+  message listener or be miscounted as a poll failure by `RobotManager`.
 
 ## [1.0.0] - 2026-07-09
 

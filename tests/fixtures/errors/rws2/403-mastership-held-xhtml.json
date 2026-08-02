@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-mastership-held-xhtml",
+  "request": {
+    "method": "POST",
+    "path": "/rw/mastership/edit/request",
+    "body": ""
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/xhtml+xml;v=2.0",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><base href=\"https://127.0.0.1:5466/\"/></head><body><div class=\"status\"><span class=\"code\">-1073445862</span><span class=\"msg\">rws_resource_mastership.cpp[593] Requested resource is held by someone else code:-1073445862 icode:-1</span></div></body></html>"
+  }
+}

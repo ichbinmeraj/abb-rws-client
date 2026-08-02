@@ -796,7 +796,9 @@ export class RwsClient {
    *
    * @param taskName   - RAPID task name, e.g. 'T_ROB1'
    * @param modulePath - Controller path to the module file, e.g. '$HOME/MyMod.mod'
-   * @throws {RwsError} code='MODULE_NOT_FOUND' if the module file does not exist
+   * @throws {RwsError} code='RESOURCE_NOT_FOUND' if the module FILE does not
+   *   exist (it is a filesystem miss, not a loaded-module miss - the loadmod
+   *   path has no /modules/ segment, so the module-specific code doesn't apply)
    */
   async loadModule(taskName: string, modulePath: string, replace = false): Promise<void> {
     try {

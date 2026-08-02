@@ -24,6 +24,7 @@ export class MultiRobotManager {
   private configMap = new Map<string, RobotConfig>();
   private _activeId: string | null = null;
   private handlers: Array<() => void> = [];
+  private robotHandlers: Array<(id: string) => void> = [];
   private errorListener: ErrorListener | null = null;
 
   /** Options forwarded to every RobotManager this instance creates (current and future). */
@@ -51,7 +52,8 @@ export class MultiRobotManager {
 
   get state(): RobotState {
     return this.active?.state ?? {
-      connected: false, host: '', ctrlstate: null, opmode: null,
+      connected: false, quality: 'disconnected', qualityReason: 'not connected',
+      host: '', ctrlstate: null, opmode: null,
       execstate: null, execCycle: null, speedRatio: null, coldetstate: null,
       tasks: [], modules: [], mechunits: [], joints: null, cartesian: null,
       cartesianFull: null, identity: null, systemInfo: null, eventLog: [], ioSignals: [],
@@ -59,6 +61,14 @@ export class MultiRobotManager {
   }
 
   onDidChange(fn: () => void): void { this.handlers.push(fn); }
+
+  /**
+   * Like onDidChange, but tells the consumer WHICH robot changed - fleet UIs
+   * can update one row instead of diffing every robot's state. Fires with the
+   * robot's id on state changes inside its manager and on add/remove. The
+   * zero-arg onDidChange keeps firing exactly as before.
+   */
+  onRobotChanged(fn: (id: string) => void): void { this.robotHandlers.push(fn); }
 
   /**
    * Install an error listener that gets attached to every current AND future
@@ -81,12 +91,13 @@ export class MultiRobotManager {
 
   addRobot(config: RobotConfig): void {
     const mgr = new RobotManager(this.managerOptions);
-    mgr.onDidChange(() => this.notify());
+    mgr.onDidChange(() => { this.notify(); this.notifyRobot(config.id); });
     if (this.errorListener) { mgr.onError(this.errorListener); }
     this.managers.set(config.id, mgr);
     this.configMap.set(config.id, config);
     if (!this._activeId) { this._activeId = config.id; }
     this.notify();
+    this.notifyRobot(config.id);
   }
 
   updateConfig(id: string, patch: Partial<Omit<RobotConfig, 'id'>>): void {
@@ -105,6 +116,7 @@ export class MultiRobotManager {
       this._activeId = [...this.managers.keys()][0] ?? null;
     }
     this.notify();
+    this.notifyRobot(id);
   }
 
   setActive(id: string): void {
@@ -155,5 +167,14 @@ export class MultiRobotManager {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  private notify(): void { this.handlers.forEach(h => h()); }
+  /** Guarded like RobotManager.notify: a throwing zero-arg handler must not
+   *  starve the per-robot handlers registered after it. */
+  private notify(): void {
+    for (const h of this.handlers) {
+      try { h(); } catch { /* consumer callback - never let it break us */ }
+    }
+  }
+  private notifyRobot(id: string): void {
+    this.robotHandlers.forEach(h => { try { h(id); } catch { /* consumer callback */ } });
+  }
 }

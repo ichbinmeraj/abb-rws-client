@@ -1,0 +1,14 @@
+{
+  "protocol": "rws1",
+  "scenario": "403-mastership-held-xhtml",
+  "request": {
+    "method": "POST",
+    "path": "/rw/mastership/rapid?action=request",
+    "body": ""
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/xhtml+xml",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>rw</title><base href=\"http://127.0.0.1:50/\"/></head><body><div class=\"status\"><span class=\"code\">-1073445862</span><span class=\"msg\">C:\\BUILDAGENTS\\SEABB-IS-13906.1\\_work\\71\\s\\RW\\Areas\\RobApi2\\Components\\rws_mastership\\rws_resource_mastership.cpp[547] Requested resource is held by someone else code:-1073445862 icode:-1</span></div></body></html>"
+  }
+}

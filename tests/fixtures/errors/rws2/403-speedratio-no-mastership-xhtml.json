@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-speedratio-no-mastership-xhtml",
+  "request": {
+    "method": "POST",
+    "path": "/rw/panel/speedratio?action=setspeedratio",
+    "body": "speed-ratio=100"
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/xhtml+xml;v=2.0",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><base href=\"https://127.0.0.1:5466/\"/></head><body><div class=\"status\"><span class=\"code\">-1073445859</span><span class=\"msg\">rws_resource_panel.cpp[1688] The user does not have required mastership for the operation. code:-1073445859 icode:-1</span></div></body></html>"
+  }
+}

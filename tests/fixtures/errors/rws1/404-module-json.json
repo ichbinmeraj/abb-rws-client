@@ -1,0 +1,13 @@
+{
+  "protocol": "rws1",
+  "scenario": "404-module-json",
+  "request": {
+    "method": "GET",
+    "path": "/rw/rapid/tasks/T_ROB1/modules/NoSuchModule?json=1"
+  },
+  "response": {
+    "status": 404,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073414146, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_services\\\\rws_services.cpp[129] Resource not found code:-1073414146 icode:-1\"}, \"_state\":[  ] }}"
+  }
+}

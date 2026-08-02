@@ -1,0 +1,13 @@
+{
+  "protocol": "rws1",
+  "scenario": "404-signal-json",
+  "request": {
+    "method": "GET",
+    "path": "/rw/iosystem/signals/NoSuchNet/NoSuchDev/NoSuchSig?json=1"
+  },
+  "response": {
+    "status": 404,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073445866, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_iosystem\\\\rws_resource_iosystem.cpp[1986] ERROR: C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_iosystem\\\\rws_component_iosystem.cpp[435]: code: 0xc0048416 eio_signal_open_by_name failed status -60.;  code:-1073445866 icode:-1\"}, \"_state\":[  ] }}"
+  }
+}

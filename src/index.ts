@@ -55,6 +55,7 @@ export { RwsError } from './types.js';
 export type {
   RwsClientOptions,
   RwsErrorCode,
+  ConnectionQuality,
   ControllerState,
   OperationMode,
   ExecutionState,

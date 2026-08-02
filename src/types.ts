@@ -281,11 +281,26 @@ export interface SubscriptionEvent {
   timestamp: Date;
 }
 
+/**
+ * How healthy the connection to a controller currently is:
+ * - 'live'          - WebSocket subscriptions streaming; polling at slow cadence
+ * - 'polling'       - no WebSocket (unavailable or lost); fast polling covers state
+ * - 'reconnecting'  - a connect attempt is in flight
+ * - 'stale'         - 1-2 consecutive polls failed; data may be outdated
+ * - 'disconnected'  - not connected (never, by user, or after repeated failures)
+ * The accompanying `qualityReason` on RobotState says why in human terms.
+ */
+export type ConnectionQuality = 'live' | 'polling' | 'reconnecting' | 'stale' | 'disconnected';
+
 export type RwsErrorCode =
   | 'SESSION_EXPIRED'
-  | 'AUTH_FAILED'
+  | 'AUTH_FAILED'          // credential/handshake failure ONLY - other 403s get the codes below
   | 'MOTORS_OFF'
   | 'MODULE_NOT_FOUND'
+  | 'RESOURCE_NOT_FOUND'   // 404-family: signal/file/symbol/path does not exist
+  | 'MASTERSHIP_REQUIRED'  // write needs mastership, or another client holds it
+  | 'GRANT_DENIED'         // controller rejected the operation (RMMP not granted / UAS grant missing)
+  | 'WRONG_MODE'           // operation not allowed in the current controller state or op-mode
   | 'RATE_LIMITED'
   | 'CONTROLLER_BUSY'
   | 'NETWORK_ERROR'
@@ -301,13 +316,22 @@ export class RwsError extends Error {
   readonly code: RwsErrorCode;
   readonly httpStatus?: number;
   readonly rwsDetail?: string;
+  /** Controller-native status code from the error body (e.g. -1073445862), when present. */
+  readonly controllerCode?: number;
+  /** Controller-native message from the error body, cleaned of build-path noise. */
+  readonly controllerMsg?: string;
 
-  constructor(message: string, code: RwsErrorCode, httpStatus?: number, rwsDetail?: string) {
+  constructor(
+    message: string, code: RwsErrorCode, httpStatus?: number, rwsDetail?: string,
+    controllerCode?: number, controllerMsg?: string,
+  ) {
     super(message);
     this.name = 'RwsError';
     this.code = code;
     this.httpStatus = httpStatus;
     this.rwsDetail = rwsDetail;
+    this.controllerCode = controllerCode;
+    this.controllerMsg = controllerMsg;
     // Restore prototype chain so instanceof checks work correctly when targeting ES2022
     Object.setPrototypeOf(this, new.target.prototype);
   }

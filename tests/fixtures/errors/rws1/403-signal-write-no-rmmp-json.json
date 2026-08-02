@@ -1,0 +1,14 @@
+{
+  "protocol": "rws1",
+  "scenario": "403-signal-write-no-rmmp-json",
+  "request": {
+    "method": "POST",
+    "path": "/rw/iosystem/signals/DRV1TESTE2?action=set&json=1",
+    "body": "lvalue=1"
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073445881, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_iosystem\\\\rws_resource_iosystem.cpp[3554] Rejected code:-1073445881 icode:-2\"}, \"_state\":[  ] }}"
+  }
+}

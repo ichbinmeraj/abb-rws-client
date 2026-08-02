@@ -1,0 +1,14 @@
+{
+  "protocol": "rws1",
+  "scenario": "400-jog-invalid-input-json",
+  "request": {
+    "method": "POST",
+    "path": "/rw/motionsystem/mechunits/ROB_1?action=jog&json=1",
+    "body": "jog-data=0,0,0,0,0,0&ccount=1&inc-mode=Small&token=1"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"_links\":{\"base\": { \"href\": \"http://127.0.0.1:50/\" }},\"_embedded\" :{ \"status\" : {\"code\":-1073445879, \"msg\": \"C:\\\\BUILDAGENTS\\\\SEABB-IS-13906.1\\\\_work\\\\71\\\\s\\\\RW\\\\Areas\\\\RobApi2\\\\Components\\\\rws_motionsystem\\\\rws_resource_motionsystem.cpp[3594] Invalid action parameter value code:-1073445879 icode:-1\"}, \"_state\":[  ] }}"
+  }
+}

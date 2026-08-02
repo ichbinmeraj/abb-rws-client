@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "404-signal-haljson",
+  "request": {
+    "method": "GET",
+    "path": "/rw/iosystem/signals/NoSuchNet/NoSuchDev/NoSuchSig"
+  },
+  "response": {
+    "status": 404,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073445866, \"msg\":\"rws_resource_iosystem.cpp[2500] Invalid IO signal name passed in the uri code:-1073445866 icode:-1\"}}"
+  }
+}
