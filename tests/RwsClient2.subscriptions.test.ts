@@ -174,6 +174,35 @@ describe('RWS 2.0 subscription reconnect', () => {
     } finally { s.close(); }
   }, 15000);
 
+  it('fires onRestored after each successful re-subscribe, never on the initial one', async () => {
+    const s = await startSubscriptionServer();
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      let restored = 0;
+      const unsubscribe = await client.subscribe(
+        ['speedratio'],
+        () => {},
+        undefined,
+        () => { restored++; },
+      );
+      await until(() => s.sockets.length >= 1);
+      expect(restored).toBe(0);
+
+      s.sockets[0].terminate();
+      await until(() => s.sockets.length >= 2, 8000);
+      await until(() => restored >= 1, 8000);
+      expect(restored).toBe(1);
+
+      // A second drop proves the attempt counter was reset by the first recovery.
+      s.sockets[1].terminate();
+      await until(() => s.sockets.length >= 3, 8000);
+      await until(() => restored >= 2, 8000);
+      expect(restored).toBe(2);
+
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 15000);
+
   it('does not reconnect after unsubscribe', async () => {
     const s = await startSubscriptionServer();
     try {

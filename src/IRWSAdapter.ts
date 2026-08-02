@@ -412,11 +412,16 @@ export interface IRWSAdapter {
    * attempts have all failed. Callers should treat it as "events stopped
    * flowing; switch to polling or reconnect". Adapters without reconnect
    * logic may ignore it.
+   *
+   * `onRestored` (optional) is invoked after every successful reconnect of a
+   * previously-dropped stream. Events may have been missed during the gap, so
+   * callers should resync (e.g. run one immediate full poll).
    */
   subscribe(
     resources: SubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
     onLost?: () => void,
+    onRestored?: () => void,
   ): Promise<() => Promise<void>>;
 }
 

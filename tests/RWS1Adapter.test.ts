@@ -156,4 +156,21 @@ describe('RWS1Adapter.subscribe', () => {
     expect(typeof unsub).toBe('function');
     await unsub();
   });
+
+  it('forwards onLost and onRestored to the client subscription options', async () => {
+    const captured: Array<{ onLost?: () => void; onRestored?: () => void }> = [];
+    const fake = {
+      subscribe: async (
+        _r: unknown, _h: unknown, opts?: { onLost?: () => void; onRestored?: () => void },
+      ) => { captured.push(opts ?? {}); return async () => {}; },
+    };
+    const adapter = new RWS1Adapter(fake as unknown as RwsClient);
+    const onLost = (): void => {};
+    const onRestored = (): void => {};
+
+    await adapter.subscribe(['speedratio'], () => {}, onLost, onRestored);
+
+    expect(captured[0]?.onLost).toBe(onLost);
+    expect(captured[0]?.onRestored).toBe(onRestored);
+  });
 });

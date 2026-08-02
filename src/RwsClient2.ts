@@ -1648,6 +1648,7 @@ export class RwsClient2 {
     resources: SubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
     onLost?: () => void,
+    onRestored?: () => void,
   ): Promise<() => Promise<void>> {
     // 1. Build subscription body
     const paths = resources.map(r => RwsClient2.rws2ResourcePath(r)).filter(Boolean) as string[];
@@ -1786,7 +1787,7 @@ export class RwsClient2 {
 
       // Non-fatal error after open - the matching 'close' event drives cleanup/reconnect.
       ws.on('error', (err: Error) => {
-        console.warn('[RWS2] WebSocket error:', err.message);
+        Logger.warn(`RWS2 WebSocket error: ${err.message}`);
       });
 
       ws.on('close', () => {
@@ -1803,7 +1804,6 @@ export class RwsClient2 {
       if (conn.attempts >= RwsClient2.WS_RECONNECT_MAX_ATTEMPTS) {
         const msg = `RWS2 subscription lost - giving up after ${conn.attempts} reconnect attempts`;
         Logger.error(msg);
-        console.error(`[RWS2] ${msg}`);
         void dropGroup(conn.deleteUrl);
         conn.deleteUrl = '';
         if (!conn.lostNotified) {
@@ -1828,6 +1828,9 @@ export class RwsClient2 {
               return;
             }
             conn.attempts = 0;
+            // Events may have been missed while the stream was down - tell the
+            // consumer to resync (RobotManager runs one immediate full poll).
+            try { onRestored?.(); } catch { /* consumer callback - never let it break us */ }
           })
           .catch(e => {
             Logger.warn(`RWS2 subscription reconnect failed: ${e instanceof Error ? e.message : String(e)}`);

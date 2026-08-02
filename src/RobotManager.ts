@@ -1473,13 +1473,14 @@ export class RobotManager {
         ],
         event => this.handleSubscriptionEvent(event),
         () => this.handleSubscriptionLost(),
+        () => this.handleSubscriptionRestored(),
       );
       this.subscriptionActive = true;
     } catch (e) {
       this.subscriptionActive = false;
       // Not an error - polling is the fallback
-      console.log(
-        `[RobotManager] WS subscriptions unavailable, using polling only: ${
+      Logger.info(
+        `WS subscriptions unavailable, using polling only: ${
           e instanceof Error ? e.message : String(e)
         }`
       );
@@ -1502,6 +1503,18 @@ export class RobotManager {
       if (this.fetchInFlight) { return; }
       this.fetchAll(myGeneration);
     }, this.refreshIntervalMs);
+  }
+
+  /**
+   * Adapter reports the event stream reconnected after a gap. State changes
+   * during the gap produced no events, so run one immediate full poll to
+   * resync; the slow subscription cadence stays in place.
+   */
+  private handleSubscriptionRestored(): void {
+    if (!this.subscriptionActive || !this._state.connected) { return; }
+    Logger.info('live event stream restored - resyncing state');
+    if (this.fetchInFlight) { return; }
+    void this.fetchAll(this.pollGeneration);
   }
 
   private handleSubscriptionEvent(event: SubscriptionEvent): void {

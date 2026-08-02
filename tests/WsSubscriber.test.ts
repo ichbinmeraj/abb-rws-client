@@ -10,14 +10,23 @@ import type { HttpSession } from '../src/HttpSession.js';
 const COOKIE = 'ABBCX=abc123; -http-session-=xyz789';
 const LOCATION = 'http://127.0.0.1:1/subscription/42';
 
-/** Minimal HttpSession stand-in: POST /subscription → 201 + Location, records DELETEs */
-function makeFakeSession(location = LOCATION): { session: HttpSession; deletes: string[] } {
+/**
+ * Minimal HttpSession stand-in: POST /subscription → 201 + Location, records DELETEs.
+ * Pass an array of locations to script successive POSTs (last entry repeats).
+ */
+function makeFakeSession(location: string | string[] = LOCATION): {
+  session: HttpSession; deletes: string[]; posts: { count: number };
+} {
   const deletes: string[] = [];
+  const posts = { count: 0 };
+  const locations = Array.isArray(location) ? [...location] : [location];
   const session = {
     post: async () => ({
       status: 201,
       body: '',
-      headers: new Headers({ location }),
+      headers: new Headers({
+        location: locations.length > 1 ? locations.shift()! : locations[0],
+      }),
     }),
     delete: async (url: string) => {
       deletes.push(url);
@@ -25,7 +34,12 @@ function makeFakeSession(location = LOCATION): { session: HttpSession; deletes: 
     },
     getCookieHeader: () => COOKIE,
   } as unknown as HttpSession;
-  return { session, deletes };
+  const post = session.post.bind(session);
+  (session as unknown as { post: typeof post }).post = async (...args: Parameters<typeof post>) => {
+    posts.count++;
+    return post(...args);
+  };
+  return { session, deletes, posts };
 }
 
 interface CapturedCtorArgs {
@@ -68,6 +82,82 @@ function makeFakeWs(behavior: 'open' | 'fail') {
   }
   return { FakeWs: FakeWs as unknown as typeof WebSocket, captured, state };
 }
+
+/**
+ * Scripted fake WebSocket: each construction consumes the next behavior from the
+ * script ('open' or 'fail'); when the script is exhausted the last entry repeats.
+ * Exposes the ws-package surface the subscriber relies on for heartbeat/reconnect
+ * (ping/terminate/EventEmitter-style pong listener) plus test triggers.
+ */
+function makeScriptedWs(script: Array<'open' | 'fail'>, opts: { autoPong?: boolean } = {}) {
+  const instances: ScriptedInstance[] = [];
+  const pending = [...script];
+  const autoPong = opts.autoPong ?? true;
+
+  class ScriptedInstance implements FakeHandlers {
+    onopen: (() => void) | null = null;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: ((e: { wasClean?: boolean }) => void) | null = null;
+    url: string;
+    opened = false;
+    pings = 0;
+    terminated = false;
+    private pongListeners: Array<() => void> = [];
+
+    constructor(url: string, _protocols: string[], _options: { headers: Record<string, string> }) {
+      this.url = url;
+      instances.push(this);
+      const behavior = pending.length > 1 ? pending.shift()! : pending[0];
+      setTimeout(() => {
+        if (behavior === 'open') {
+          this.opened = true;
+          this.onopen?.();
+        } else {
+          this.onerror?.();
+          this.onclose?.({ wasClean: false });
+        }
+      }, 1);
+    }
+
+    on(event: string, cb: () => void): void {
+      if (event === 'pong') { this.pongListeners.push(cb); }
+    }
+
+    ping(): void {
+      this.pings++;
+      if (autoPong) { setTimeout(() => this.pongListeners.forEach(cb => cb()), 0); }
+    }
+
+    /** Test trigger: answer the outstanding ping manually. */
+    emitPong(): void {
+      this.pongListeners.forEach(cb => cb());
+    }
+
+    terminate(): void {
+      this.terminated = true;
+      this.onclose?.({ wasClean: false });
+    }
+
+    close(): void {
+      this.onclose?.({ wasClean: true });
+    }
+
+    /** Test trigger: unclean drop initiated by the "controller". */
+    serverClose(): void {
+      this.onclose?.({ wasClean: false });
+    }
+
+    /** Test trigger: deliver an event frame. */
+    serverMessage(data: string): void {
+      this.onmessage?.({ data });
+    }
+  }
+
+  return { FakeWs: ScriptedInstance as unknown as typeof WebSocket, instances };
+}
+
+const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -135,6 +225,24 @@ describe('WsSubscriber - transport selection', () => {
 
     await unsubscribe();
   });
+
+  it('passes a handshake timeout to the WebSocket constructor so half-open upgrades cannot hang', async () => {
+    const { session } = makeFakeSession();
+    const { FakeWs, captured } = makeFakeWs('open');
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+
+    const unsubscribe = await subscriber.subscribe(['execution'], () => undefined);
+    const options = captured[0].options as { handshakeTimeout?: number };
+    expect(options.handshakeTimeout).toBe(8000);
+    await unsubscribe();
+
+    const unsubscribe2 = await subscriber.subscribe(['execution'], () => undefined, {
+      openTimeoutMs: 1234,
+    });
+    const options2 = captured[1].options as { handshakeTimeout?: number };
+    expect(options2.handshakeTimeout).toBe(1234);
+    await unsubscribe2();
+  });
 });
 
 describe('WsSubscriber - subscribe awaits the WebSocket open', () => {
@@ -166,6 +274,189 @@ describe('WsSubscriber - subscribe awaits the WebSocket open', () => {
 
     await subscriber.subscribe(['execution'], () => undefined).catch(() => undefined);
 
-    expect(deletes).toContain(LOCATION);
+    // Must be a PATH: HttpSession prepends its base URL, so an absolute delete
+    // URL would concatenate into garbage and the DELETE would silently fail,
+    // leaking the controller-side registration.
+    expect(deletes).toContain('/subscription/42');
+  });
+});
+
+describe('WsSubscriber - reconnect give-up', () => {
+  it('fires onLost exactly once when reconnect attempts are exhausted', async () => {
+    const { session } = makeFakeSession();
+    // First socket opens; every later construction fails before opening.
+    const { FakeWs, instances } = makeScriptedWs(['open', 'fail']);
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const onLost = vi.fn();
+
+    await subscriber.subscribe(['execution'], () => undefined, {
+      onLost,
+      maxReconnectAttempts: 2,
+      reconnectBaseMs: 5,
+    });
+
+    (instances[0] as { serverClose(): void }).serverClose();
+    await wait(200);
+
+    expect(onLost).toHaveBeenCalledTimes(1);
+
+    // Give-up is terminal: no further reconnect constructions after onLost.
+    const countAtGiveUp = instances.length;
+    await wait(100);
+    expect(instances.length).toBe(countAtGiveUp);
+  });
+});
+
+describe('WsSubscriber - poll-URL Location (live RW6.16 form)', () => {
+  it('streams from the advertised poll path but DELETEs /subscription/{id}', async () => {
+    // Live RW6.16 returns Location: ws://host:vcport/poll/{id}. The poll URL is
+    // NOT a deletable resource (DELETE → 404); cleanup must target
+    // /subscription/{id}. The WS must also reconnect via the configured
+    // host:port, not the advertised authority.
+    const { session, deletes } = makeFakeSession('ws://127.0.0.1:9999/poll/7');
+    const { FakeWs, instances } = makeScriptedWs(['open']);
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+
+    const unsubscribe = await subscriber.subscribe(['execution'], () => undefined);
+
+    expect((instances[0] as { url: string }).url).toBe('ws://127.0.0.1:1/poll/7');
+    await unsubscribe();
+    expect(deletes).toContain('/subscription/7');
+  });
+});
+
+describe('WsSubscriber - dead-registration recovery', () => {
+  it('re-registers a fresh subscription when the stored poll URL is dead and resumes events', async () => {
+    // Controller restarted: the old /subscription/42 registration is gone, so the
+    // reconnect to its URL fails; the subscriber must POST a fresh registration
+    // (Location → /subscription/99) and stream from the new URL.
+    const { session, deletes, posts } = makeFakeSession([
+      'http://127.0.0.1:1/subscription/42',
+      'http://127.0.0.1:1/subscription/99',
+    ]);
+    const { FakeWs, instances } = makeScriptedWs(['open', 'fail', 'open']);
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const received: string[] = [];
+
+    await subscriber.subscribe(['execution'], e => { received.push(e.value); }, {
+      reconnectBaseMs: 5,
+    });
+
+    (instances[0] as { serverClose(): void }).serverClose();
+    await wait(100);
+
+    expect(posts.count).toBe(2);
+    expect(instances).toHaveLength(3);
+    expect((instances[2] as { url: string }).url).toBe('ws://127.0.0.1:1/subscription/99');
+    expect(deletes).toContain('/subscription/42');
+
+    (instances[2] as { serverMessage(d: string): void }).serverMessage(
+      '<li><a href="/rw/rapid/execution;ctrlexecstate">x</a><span>running</span></li>',
+    );
+    expect(received).toEqual(['running']);
+  });
+});
+
+describe('WsSubscriber - onRestored', () => {
+  it('fires onRestored after each successful reconnect, never on initial subscribe', async () => {
+    const { session } = makeFakeSession();
+    const { FakeWs, instances } = makeScriptedWs(['open']);
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const onRestored = vi.fn();
+    const onLost = vi.fn();
+
+    await subscriber.subscribe(['execution'], () => undefined, {
+      onRestored,
+      onLost,
+      reconnectBaseMs: 5,
+    });
+    expect(onRestored).not.toHaveBeenCalled();
+
+    // First drop → reconnect succeeds → restored once
+    (instances[0] as { serverClose(): void }).serverClose();
+    await wait(50);
+    expect(onRestored).toHaveBeenCalledTimes(1);
+
+    // Second drop → reconnect succeeds again → restored twice.
+    // Also proves the attempt budget was reset by the first successful reconnect.
+    (instances[1] as { serverClose(): void }).serverClose();
+    await wait(50);
+    expect(onRestored).toHaveBeenCalledTimes(2);
+    expect(onLost).not.toHaveBeenCalled();
+  });
+});
+
+describe('WsSubscriber - backoff schedule', () => {
+  it('doubles from the base and caps at the ceiling', async () => {
+    const { backoffDelay } = await import('../src/WsSubscriber.js');
+    expect(backoffDelay(0)).toBe(1000);
+    expect(backoffDelay(1)).toBe(2000);
+    expect(backoffDelay(4)).toBe(16000);
+    expect(backoffDelay(5)).toBe(30000);  // 32000 capped
+    expect(backoffDelay(9)).toBe(30000);  // stays capped
+    expect(backoffDelay(2, 5, 100)).toBe(20);
+    expect(backoffDelay(6, 5, 100)).toBe(100);
+  });
+});
+
+describe('WsSubscriber - unsubscribe during reconnect', () => {
+  it('cancels a pending backoff timer so no further sockets are opened', async () => {
+    const { session } = makeFakeSession();
+    const { FakeWs, instances } = makeScriptedWs(['open', 'fail']);
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+
+    const unsubscribe = await subscriber.subscribe(['execution'], () => undefined, {
+      reconnectBaseMs: 30,
+    });
+
+    (instances[0] as { serverClose(): void }).serverClose();
+    // Backoff timer (30 ms) is now pending; unsubscribe before it fires
+    await unsubscribe();
+    await wait(80);
+
+    expect(instances).toHaveLength(1);
+  });
+});
+
+describe('WsSubscriber - heartbeat', () => {
+  it('terminates a half-open connection when pongs stop and recovers via reconnect', async () => {
+    const { session } = makeFakeSession();
+    // autoPong: false = frozen connection; pings go out, nothing comes back
+    const { FakeWs, instances } = makeScriptedWs(['open'], { autoPong: false });
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const onRestored = vi.fn();
+
+    const unsubscribe = await subscriber.subscribe(['execution'], () => undefined, {
+      onRestored,
+      pingIntervalMs: 10,
+      reconnectBaseMs: 5,
+    });
+
+    await wait(120);
+
+    const first = instances[0] as { pings: number; terminated: boolean };
+    expect(first.pings).toBeGreaterThan(0);
+    expect(first.terminated).toBe(true);       // heartbeat killed the frozen socket
+    expect(instances.length).toBeGreaterThan(1); // and the reconnect path ran
+    expect(onRestored).toHaveBeenCalled();
+    await unsubscribe();
+  });
+
+  it('keeps a healthy connection alive when pongs are answered', async () => {
+    const { session } = makeFakeSession();
+    const { FakeWs, instances } = makeScriptedWs(['open'], { autoPong: true });
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+
+    const unsubscribe = await subscriber.subscribe(['execution'], () => undefined, {
+      pingIntervalMs: 10,
+    });
+
+    await wait(80);
+
+    const first = instances[0] as { pings: number; terminated: boolean };
+    expect(first.pings).toBeGreaterThanOrEqual(2);
+    expect(first.terminated).toBe(false);
+    expect(instances).toHaveLength(1);
+    await unsubscribe();
   });
 });

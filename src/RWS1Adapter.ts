@@ -209,10 +209,13 @@ export class RWS1Adapter implements IRWSAdapter {
     };
   }
 
-  subscribe(resources: SubscriptionResource[], handler: (event: SubscriptionEvent) => void, _onLost?: () => void) {
-    // _onLost accepted for IRWSAdapter parity; RWS 1.0's WsSubscriber handles
-    // its own reconnects and has no terminal give-up signal to forward yet.
-    return this.client.subscribe(resources, handler);
+  subscribe(
+    resources: SubscriptionResource[],
+    handler: (event: SubscriptionEvent) => void,
+    onLost?: () => void,
+    onRestored?: () => void,
+  ) {
+    return this.client.subscribe(resources, handler, { onLost, onRestored });
   }
 
   // ── Jogging ─────────────────────────────────────────────────────────────

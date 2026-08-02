@@ -4,6 +4,49 @@ All notable changes to `abb-rws-client` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **RWS 1.0 subscriber parity with RWS 2.0** - the IRC5 event stream now
+  survives everything the OmniCore stream survives:
+  - Heartbeat: WebSocket protocol pings every 10 s; an unanswered ping marks
+    the connection half-open and force-closes it so recovery runs (a frozen
+    NAT or yanked cable is detected within about 2 ping intervals).
+  - Reconnect with capped exponential backoff (1 s doubling to 30 s, 6
+    attempts before giving up, about 61 s total by default) instead of the old
+    three quick retries.
+  - Dead-registration recovery: when the controller restarts, the stored poll
+    URL is gone; the subscriber re-registers a fresh subscription on the same
+    HTTP session (no session slot leaks) and resumes.
+  - `subscribe()` accepts a new options argument (`WsSubscribeOptions`):
+    `onLost` fires exactly once when the reconnect budget is exhausted,
+    `onRestored` fires after every successful recovery so consumers can
+    resync, plus tuning for backoff, heartbeat, and handshake timeout.
+- `onRestored` on RWS 2.0 subscriptions too: `RwsClient2.subscribe()` takes an
+  optional fourth callback invoked after each successful re-subscribe.
+- `RobotManager` resyncs automatically: one immediate full poll whenever a
+  subscription stream is restored; fast polling on terminal loss (as before).
+
+### Fixed
+
+- A dropped RWS 1.0 WebSocket used to give up silently after ~7 s: no
+  heartbeat, no terminal signal, and the adapter swallowed the loss callback.
+  A controller reboot (minutes) therefore permanently killed IRC5 live events
+  until manual reconnect.
+- RWS 1.0 subscription cleanup never actually worked against live IRC5: the
+  DELETE targeted the poll URL from the Location header, which the controller
+  answers with 404 (the deletable resource is `/subscription/{id}`, same as
+  RWS 2.0 - live-verified on RW 6.16). Unsubscribe also passed an absolute
+  URL where `HttpSession` expects a path, so the request could not even be
+  built. Registrations leaked for the life of the session; both are fixed.
+- The subscription WebSocket now connects via the host and port the client
+  was configured with instead of the authority the controller advertises in
+  the Location header, so RWS 1.0 subscriptions work across NAT and port
+  forwarding.
+- Stray `console.*` calls in `RobotManager` and `RwsClient2` now go through
+  `Logger`.
+
 ## [1.0.0] - 2026-07-09
 
 The library is feature-complete for both controller generations and every wire

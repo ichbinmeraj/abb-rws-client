@@ -341,3 +341,22 @@ describe('RwsClient - request shaping against a mock controller', () => {
     await expect(client.getActiveUiInstruction()).resolves.toBeNull();
   });
 });
+
+describe('RwsClient.subscribe - option pass-through', () => {
+  it('forwards subscription options to the WsSubscriber', async () => {
+    const client = makeClient(1);
+    const captured: Array<{ onLost?: () => void; onRestored?: () => void } | undefined> = [];
+    (client as unknown as { subscriber: unknown }).subscriber = {
+      subscribe: async (
+        _r: unknown, _h: unknown, opts?: { onLost?: () => void; onRestored?: () => void },
+      ) => { captured.push(opts); return async () => {}; },
+    };
+    const onLost = (): void => {};
+    const onRestored = (): void => {};
+
+    await client.subscribe(['execution'], () => {}, { onLost, onRestored });
+
+    expect(captured[0]?.onLost).toBe(onLost);
+    expect(captured[0]?.onRestored).toBe(onRestored);
+  });
+});

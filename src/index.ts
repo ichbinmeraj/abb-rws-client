@@ -21,6 +21,7 @@
 
 // Protocol clients
 export { RwsClient } from './RwsClient.js';
+export type { WsSubscribeOptions } from './WsSubscriber.js';
 export { RwsClient2 } from './RwsClient2.js';
 
 // Unified-interface adapters

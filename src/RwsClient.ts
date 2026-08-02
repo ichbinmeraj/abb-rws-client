@@ -18,6 +18,7 @@
 import { HttpSession } from './HttpSession.js';
 import type { HttpSessionOptions } from './HttpSession.js';
 import { WsSubscriber } from './WsSubscriber.js';
+import type { WsSubscribeOptions } from './WsSubscriber.js';
 import { RwsError } from './types.js';
 import type {
   RwsClientOptions,
@@ -1123,15 +1124,22 @@ export class RwsClient {
   /**
    * Subscribe to one or more RWS resource events via WebSocket.
    *
+   * The stream self-heals: heartbeat pings detect half-open connections, drops
+   * reconnect with capped exponential backoff, and a controller restart triggers
+   * a fresh registration. `opts.onRestored` fires after every successful
+   * recovery (resync your state - events may have been missed); `opts.onLost`
+   * fires exactly once if the reconnect budget is exhausted.
+   *
    * @param resources - Resources to subscribe to (execution, controllerstate, signal, etc.)
    * @param handler   - Called with each SubscriptionEvent as it arrives
+   * @param opts      - Lifecycle callbacks and reconnect/heartbeat tuning
    * @returns         - Async unsubscribe function; call to cancel and clean up
    *
    * @example
    * ```ts
    * const unsubscribe = await client.subscribe(['execution'], (event) => {
    *   console.log(event.resource, event.value);
-   * });
+   * }, { onLost: () => console.log('stream gone - fall back to polling') });
    * // later...
    * await unsubscribe();
    * ```
@@ -1139,9 +1147,10 @@ export class RwsClient {
   async subscribe(
     resources: SubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
+    opts?: WsSubscribeOptions,
   ): Promise<() => Promise<void>> {
     try {
-      return await this.subscriber.subscribe(resources, handler);
+      return await this.subscriber.subscribe(resources, handler, opts);
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`subscribe failed: ${String(e)}`, 'UNKNOWN');

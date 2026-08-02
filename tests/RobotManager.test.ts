@@ -392,6 +392,35 @@ describe('RobotManager subscription loss fallback', () => {
     await vi.advanceTimersByTimeAsync(400);
     expect(fake.getControllerState.mock.calls.length).toBe(after + 1);
   });
+
+  it('runs one immediate full poll when the event stream is restored', async () => {
+    vi.useFakeTimers();
+    mgr = new RobotManager({ refreshIntervalMs: 400 });
+    const fake = makeFakeAdapter();
+    let onRestored: (() => void) | undefined;
+    fake.subscribe = vi.fn(async (
+      _resources: unknown, _handler: unknown, _lost?: () => void, restored?: () => void,
+    ) => {
+      onRestored = restored;
+      return async () => {};
+    }) as any;
+    (mgr as any).adapter = fake;
+    (mgr as any).adapterConfig = { host: 'vc-a', username: 'u', password: 'p', port: 80 };
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(DIGEST_PROBE);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(typeof onRestored).toBe('function');
+
+    // Events may have been missed while the stream was down - a restore must
+    // trigger one immediate full poll without waiting for the slow cadence.
+    const before = fake.getControllerState.mock.calls.length;
+    onRestored!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.getControllerState.mock.calls.length).toBe(before + 1);
+
+    // The subscription itself stayed up - cadence must remain slow (5 × 400 ms).
+    expect((mgr as any).subscriptionActive).toBe(true);
+  });
 });
 
 describe('RobotManager.currentUseHttps', () => {

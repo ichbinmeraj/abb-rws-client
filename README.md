@@ -459,6 +459,26 @@ await unsubscribe();
 
 `SubscriptionEvent`: `{ resource: string, value: string, timestamp: Date }`
 
+The stream self-heals on both protocol generations. Heartbeat pings detect half-open
+connections, drops reconnect with capped exponential backoff (1 s doubling to 30 s,
+6 attempts by default), and a controller restart triggers a fresh registration on the
+same session. Tune it or hook the lifecycle via the third argument:
+
+```ts
+const unsubscribe = await client.subscribe(resources, handler, {
+  onRestored: () => resyncState(),   // reconnected - events may have been missed
+  onLost:     () => usePolling(),    // reconnect budget exhausted, stream is gone
+  maxReconnectAttempts: 6,
+  reconnectBaseMs: 1000,
+  reconnectCapMs: 30000,
+  pingIntervalMs: 10000,
+  openTimeoutMs: 8000,
+});
+```
+
+`RobotManager` wires this automatically: it resyncs with a full poll on restore and
+falls back to fast polling on loss.
+
 ---
 
 ### Error Handling
