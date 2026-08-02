@@ -39,7 +39,7 @@ Prefer a GUI? The companion VS Code extension gives you live status, motion data
 npm install abb-rws-client
 ```
 
-**Requirements:** Node.js 18+.
+**Requirements:** Node.js 20+.
 
 ---
 
