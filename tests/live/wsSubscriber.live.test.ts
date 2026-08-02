@@ -252,6 +252,12 @@ describe.skipIf(!HOST)('RWS 1.0 subscriber resilience (RW6 VC via chaos proxy)',
   });
 
   it.skipIf(!ALLOW_RESTART)('survives a real warm restart of the VC', async () => {
+    // RIG CAVEAT (2026-08-03): the RobotStudio IRC5 VC does not reliably
+    // survive an RWS-initiated warm restart - observed dying (RobVC process
+    // gone, never re-listens) on 2 of 3 attempts in one night. When that
+    // happens this test fails on the 8-min window and the VC needs a manual
+    // start in RobotStudio. The recovery logic itself passed this test live
+    // (2026-08-02) and is also covered by the dead-registration test above.
     await subscribeSpeed({
       // VC restart timing varies with host load (observed 1-6 min end to end
       // across the rig) - budget generously; real IRC5 hardware reboots are
