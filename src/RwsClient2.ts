@@ -942,11 +942,16 @@ export class RwsClient2 {
   }
 
   async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'replace'): Promise<void> {
-    await this.req('POST', '/rw/cfg', { 'action-type': action, filepath });
+    // Official RWS 2.0 endpoint is /rw/cfg/load (was posting to /rw/cfg, which
+    // is the collection resource). Cross-checked vs 3HAC073675-001 Rev L.
+    await this.req('POST', '/rw/cfg/load', { 'action-type': action, filepath });
   }
 
   async saveCfgFile(domain: string, filepath: string): Promise<void> {
-    await this.req('POST', `/rw/cfg/${domain}/save`, { filepath });
+    // /rw/cfg/{domain}/save returns 405 on the controller; the real endpoint is
+    // /saveas (live-verified 2026-08-03 on RW7.21 VC - the controller confirms
+    // the body param is `filepath`).
+    await this.req('POST', `/rw/cfg/${domain}/saveas`, { filepath });
   }
 
   // ─── Backup / Restore `/ctrl/backup` ────────────────────────────────────────
@@ -1045,9 +1050,11 @@ export class RwsClient2 {
 
   async readDipcMessage(queue: string, timeoutMs = 0): Promise<{ payload: string; type: string } | null> {
     try {
-      const p = RwsClient2.parse(await this.req('POST', `/rw/dipc/${encodeURIComponent(queue)}/read`, {
-        'dipc-timeout': String(timeoutMs),
-      }));
+      // Reading a DIPC message is a GET on the queue with a dipc-timeout query
+      // param. Our old POST /{queue}/read 404s; live-verified 2026-08-03 that
+      // GET /rw/dipc/{queue}?dipc-timeout=N returns the message.
+      const p = RwsClient2.parse(await this.req(
+        'GET', `/rw/dipc/${encodeURIComponent(queue)}?dipc-timeout=${timeoutMs}`));
       const d = p.getState('dipc-message');
       if (!d['dipc-data']) { return null; }
       return { payload: d['dipc-data'], type: d['dipc-msgtype'] ?? 'string' };
