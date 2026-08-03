@@ -146,7 +146,10 @@ function makeClient(port: number, extra: Record<string, unknown> = {}): RwsClien
     username: USER,
     password: PASS,
     requestIntervalMs: 0,
-    timeout: 3000,
+    // Generous hang guard only. The full suite runs many workers in parallel and
+    // CPU contention can stall a worker past a tight timeout, which surfaced as a
+    // flaky NETWORK_ERROR here; tests that exercise timeouts pass their own value.
+    timeout: 15000,
     ...extra,
   });
 }
@@ -311,7 +314,7 @@ describe('RwsClient - request shaping against a mock controller', () => {
       port: mock.port,
       username: USER,
       password: PASS,
-      timeout: 3000,
+      timeout: 15000,
     });
     await client.connect();
 

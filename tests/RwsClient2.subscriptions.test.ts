@@ -18,7 +18,7 @@ function collectBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-interface RecordedRequest { method: string; url: string; body: string; cookie: string }
+interface RecordedRequest { method: string; url: string; body: string; cookie: string; at: number }
 
 /**
  * HTTP(S) + WebSocket server mimicking the RWS 2.0 subscription flow:
@@ -62,6 +62,7 @@ async function startSubscriptionServer(opts: {
       requests.push({
         method: req.method ?? '', url: req.url ?? '', body,
         cookie: (req.headers['cookie'] ?? '') as string,
+        at: Date.now(),
       });
       if (req.method === 'POST' && req.url === '/subscription') {
         if (opts.failSubscribes?.()) { res.writeHead(500); res.end(); return; }
@@ -175,6 +176,12 @@ describe('RWS 2.0 subscription reconnect', () => {
       const unsubscribe = await client.subscribe(
         ['speedratio'],
         (e: SubscriptionEvent) => events.push({ resource: e.resource, value: e.value }),
+        undefined, undefined,
+        // Fast tuning: this test proves the re-POST happens and events still
+        // flow, not the default schedule. With the default 500 ms exponential
+        // base, a couple of slow WS opens under parallel-suite CPU load pushed
+        // recovery past the until() budget and flaked.
+        { reconnectBaseMs: 50, reconnectCapMs: 100 },
       );
       expect(s.posts.length).toBe(1);
       await until(() => s.sockets.length >= 1);
@@ -325,19 +332,20 @@ describe('RWS 2.0 subscription reconnect', () => {
       await until(() => s.sockets.length >= 1);
       failing = true;
       const postsBefore = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').length;
-      const t0 = Date.now();
       s.sockets[0].terminate();
 
       await until(() => lostCount >= 1, 5000);
-      const elapsed = Date.now() - t0;
       // Exactly maxReconnectAttempts re-POSTs were attempted
-      const postsAfter = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').length;
-      expect(postsAfter - postsBefore).toBe(4);
-      // Capped schedule 50/60/60/60 ms ≈ 230 ms of delays. WITHOUT the cap it
-      // would be 50/100/200/400 ≈ 750 ms, and with the DEFAULT tuning (500 ms
-      // base, 6 attempts) multiple seconds - the bound pins base, cap, and
-      // attempt count together.
-      expect(elapsed).toBeLessThan(600);
+      const rePosts = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').slice(postsBefore);
+      expect(rePosts.length).toBe(4);
+      // The cap is proven by the SCHEDULE, not the wall clock: gaps between
+      // failing re-POSTs follow the capped 60 ms delay. Without the cap the
+      // 3rd gap alone is >= 400 ms (50/100/200/400 exponential) and with the
+      // default tuning >= 1 s. A whole-sequence wall-clock bound flaked under
+      // parallel-suite CPU load; per-gap bounds keep the discrimination with
+      // 4x the noise margin.
+      const gaps = rePosts.slice(1).map((r, i) => r.at - rePosts[i].at);
+      for (const gap of gaps) { expect(gap).toBeLessThan(300); }
       expect(lostCount).toBe(1);
       await unsubscribe();
     } finally { s.close(); }
