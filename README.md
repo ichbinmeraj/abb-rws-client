@@ -329,6 +329,7 @@ new RwsClient(options: RwsClientOptions)
 | `getControllerState()` | `ControllerState` | Motor state: motoron / motoroff / guardstop / emergencystop / … |
 | `setControllerState(state)` | `void` | Set motor state - requires mastership |
 | `getOperationMode()` | `OperationMode` | AUTO / MANR / MANF |
+| `acknowledgeOperationMode(mode)` | `void` | Confirm a pending mode switch, RWS 2.0 |
 | `lockOperationMode(pin, permanent?)` | `void` | Lock FlexPendant key switch with PIN |
 | `unlockOperationMode()` | `void` | Unlock FlexPendant key switch |
 | `getSpeedRatio()` | `number` | Speed override 0-100 |
@@ -339,6 +340,8 @@ new RwsClient(options: RwsClientOptions)
 | `getSystemInfo()` | `SystemInfo` | RobotWare version, options, system ID |
 | `getControllerClock()` | `ControllerClock` | Current date/time (UTC) |
 | `setControllerClock(y,mo,d,h,mi,s)` | `void` | Set controller date/time (UTC) |
+| `getRestartCount()` | `number` | Times the controller has restarted, RWS 2.0 |
+| `listProgress()` / `getProgress(id)` | - | Track async operations (backup, log dump) |
 
 ---
 
@@ -350,6 +353,7 @@ new RwsClient(options: RwsClientOptions)
 | `getRapidExecutionInfo()` | `ExecutionInfo` | State + current cycle mode |
 | `getRapidTasks()` | `RapidTask[]` | All tasks with name, type, state, active flag |
 | `startRapid()` | `void` | Start execution (AUTO + motors on required) |
+| `startProductionEntry()` | `void` | Start from the production entry point |
 | `stopRapid()` | `void` | Stop execution |
 | `resetRapid()` | `void` | Reset program pointer to Main |
 | `setExecutionCycle(cycle)` | `void` | `'once'` \| `'forever'` \| `'asis'` |
@@ -381,6 +385,9 @@ new RwsClient(options: RwsClientOptions)
 | `listModules(taskName)` | `string[]` | Names of all loaded modules in a task |
 | `loadModule(task, modulePath, replace?)` | `void` | Load module from controller filesystem into task |
 | `unloadModule(task, moduleName)` | `void` | Unload module from task (RAPID must be stopped) |
+| `saveModule(task, moduleName, filepath)` | `void` | Save a module's source to a controller volume |
+| `loadProgram(task, progpath, loadmode?)` | `void` | Load a full RAPID program (.pgf), RWS 2.0 |
+| `saveProgram(task, destination)` | `void` | Save the loaded program to disk, RWS 2.0 |
 
 ---
 
@@ -389,7 +396,8 @@ new RwsClient(options: RwsClientOptions)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `getJointPositions(mechunit?)` | `JointTarget` | rax_1-rax_6 in degrees (default mechunit: ROB_1) |
-| `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion |
+| `getRobTarget(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion for a chosen tool/wobj |
+| `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | RWS 1.0 name for `getRobTarget` |
 | `getCartesianFull(mechunit?)` | `CartesianFull` | TCP pose + j1/j4/j6/jx configuration flags |
 
 ---
@@ -428,6 +436,7 @@ new RwsClient(options: RwsClientOptions)
 | `getEventLog(domain?, lang?)` | `ElogMessage[]` | Read log messages (domain 0 = main, newest first) |
 | `clearEventLog(domain?)` | `void` | Clear messages in one domain |
 | `clearAllEventLogs()` | `void` | Clear all domains |
+| `saveEventLogRaw(destination)` | `void` | Dump the full log to a file in system-dump format, RWS 2.0 |
 
 ---
 
