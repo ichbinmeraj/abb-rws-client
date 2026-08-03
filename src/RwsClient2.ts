@@ -2,6 +2,7 @@ import * as https from 'https';
 import * as http from 'http';
 import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
+import * as R2 from './ResourceMapper2.js';
 import { Logger } from './Logger.js';
 import { RwsError, type RwsErrorCode } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
@@ -264,21 +265,22 @@ export class RwsClient2 {
   // ─── Panel ─────────────────────────────────────────────────────────────────
 
   async getControllerState(): Promise<ControllerState> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/ctrl-state'));
+    const p = RwsClient2.parse(await this.req('GET', R2.controllerState()));
     return (p.getState('pnl-ctrlstate')['ctrlstate'] ?? 'init') as ControllerState;
   }
 
   setControllerState(state: 'motoron' | 'motoroff'): Promise<void> {
-    return this.req('POST', '/rw/panel/ctrl-state', { 'ctrl-state': state }).then(() => {});
+    const { path, body } = R2.setControllerState(state);
+    return this.req('POST', path, body).then(() => {});
   }
 
   async getOperationMode(): Promise<OperationMode> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/opmode'));
+    const p = RwsClient2.parse(await this.req('GET', R2.operationMode()));
     return (p.getState('pnl-opmode')['opmode'] ?? 'MANR') as OperationMode;
   }
 
   async getSpeedRatio(): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/speedratio'));
+    const p = RwsClient2.parse(await this.req('GET', R2.speedRatio()));
     return Number(p.getState('pnl-speedratio')['speedratio'] ?? 100);
   }
 
@@ -295,30 +297,29 @@ export class RwsClient2 {
    * Acquires `edit` mastership internally and releases it after.
    */
   async setSpeedRatio(ratio: number): Promise<void> {
-    const v = Math.round(Math.max(0, Math.min(100, ratio)));
     await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
     try {
-      await this.req('POST', '/rw/panel/speedratio?action=setspeedratio', { 'speed-ratio': String(v) });
+      const { path, body } = R2.setSpeedRatio(ratio);
+      await this.req('POST', path, body);
     } finally {
       await this.releaseMastership('rapid').catch(() => {});
     }
   }
 
   async getCollisionDetectionState(): Promise<CollisionDetectionState> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/coldetstate'));
+    const p = RwsClient2.parse(await this.req('GET', R2.collisionDetectionState()));
     return (p.getState('pnl-coldetstate')['coldetstate'] ?? 'INIT') as CollisionDetectionState;
   }
 
   lockOperationMode(pin: string, permanent = false): Promise<void> {
     // POST /rw/panel/opmode/lock with pin and permanent flag
-    return this.req('POST', '/rw/panel/opmode/lock', {
-      pin,
-      permanent: permanent ? '1' : '0',
-    }).then(() => {});
+    const { path, body } = R2.lockOperationMode(pin, permanent);
+    return this.req('POST', path, body).then(() => {});
   }
 
   unlockOperationMode(): Promise<void> {
-    return this.req('POST', '/rw/panel/opmode/unlock').then(() => {});
+    const { path } = R2.unlockOperationMode();
+    return this.req('POST', path).then(() => {});
   }
 
   /**
@@ -353,12 +354,12 @@ export class RwsClient2 {
   // ─── RAPID execution ────────────────────────────────────────────────────────
 
   async getRapidExecutionState(): Promise<ExecutionState> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/execution'));
+    const p = RwsClient2.parse(await this.req('GET', R2.rapidExecution()));
     return (p.getState('rap-execution')['ctrlexecstate'] ?? 'stopped') as ExecutionState;
   }
 
   async getRapidExecutionInfo(): Promise<ExecutionInfo> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/execution'));
+    const p = RwsClient2.parse(await this.req('GET', R2.rapidExecution()));
     // Live: <li class="rap-execution"><span class="ctrlexecstate">stopped</span><span class="cycle">forever</span>
     const d = p.getState('rap-execution');
     return {
@@ -368,22 +369,23 @@ export class RwsClient2 {
   }
 
   startRapid(): Promise<void> {
-    return this.req('POST', '/rw/rapid/execution/start', {
-      regain: 'continue', execmode: 'continue', cycle: 'asis',
-      condition: 'none', stopatbp: 'disabled', alltaskbytsp: 'false',
-    }).then(() => {});
+    const { path, body } = R2.startRapid();
+    return this.req('POST', path, body).then(() => {});
   }
 
   stopRapid(): Promise<void> {
-    return this.req('POST', '/rw/rapid/execution/stop', { stopmode: 'stop' }).then(() => {});
+    const { path, body } = R2.stopRapid();
+    return this.req('POST', path, body).then(() => {});
   }
 
   resetRapid(): Promise<void> {
-    return this.req('POST', '/rw/rapid/execution/resetpp').then(() => {});
+    const { path } = R2.resetRapid();
+    return this.req('POST', path).then(() => {});
   }
 
   setExecutionCycle(cycle: ExecutionCycle): Promise<void> {
-    return this.req('POST', '/rw/rapid/execution/cycle', { cycle }).then(() => {});
+    const { path, body } = R2.setExecutionCycle(cycle);
+    return this.req('POST', path, body).then(() => {});
   }
 
   async getRapidTasks(): Promise<RapidTask[]> {
@@ -687,7 +689,7 @@ export class RwsClient2 {
 
   async getEventLog(domain = 0): Promise<ElogMessage[]> {
     // lang=en required to get title/desc/causes/actions (confirmed by live probe)
-    const p = RwsClient2.parse(await this.req('GET', `/rw/elog/${domain}?lang=en`));
+    const p = RwsClient2.parse(await this.req('GET', R2.elogMessages(domain)));
     return p.getAllStates('elog-message-li').map(m => {
       const parts = (m['_title'] ?? '').split('/');
       return {
@@ -706,12 +708,14 @@ export class RwsClient2 {
   }
 
   clearEventLog(domain = 0): Promise<void> {
-    return this.req('POST', `/rw/elog/${domain}/clear`).then(() => {});
+    const { path } = R2.clearElogDomain(domain);
+    return this.req('POST', path).then(() => {});
   }
 
   clearAllEventLogs(): Promise<void> {
     // Live confirmed: POST /rw/elog/clearall → 204
-    return this.req('POST', '/rw/elog/clearall').then(() => {});
+    const { path } = R2.clearAllElogs();
+    return this.req('POST', path).then(() => {});
   }
 
   // ─── I/O signals ─────────────────────────────────────────────────────────────
@@ -745,7 +749,8 @@ export class RwsClient2 {
       }
       n = c.n; d = c.d;
     }
-    return this.req('POST', `/rw/iosystem/signals/${n}/${d}/${name}/set-value`, { lvalue: value }).then(() => {});
+    const { path, body } = R2.setSignalValue(n, d, name, value);
+    return this.req('POST', path, body).then(() => {});
   }
 
   async listNetworks(): Promise<IoNetwork[]> {
@@ -944,14 +949,16 @@ export class RwsClient2 {
   async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'replace'): Promise<void> {
     // Official RWS 2.0 endpoint is /rw/cfg/load (was posting to /rw/cfg, which
     // is the collection resource). Cross-checked vs 3HAC073675-001 Rev L.
-    await this.req('POST', '/rw/cfg/load', { 'action-type': action, filepath });
+    const { path, body } = R2.loadCfgFile(filepath, action);
+    await this.req('POST', path, body);
   }
 
   async saveCfgFile(domain: string, filepath: string): Promise<void> {
     // /rw/cfg/{domain}/save returns 405 on the controller; the real endpoint is
     // /saveas (live-verified 2026-08-03 on RW7.21 VC - the controller confirms
     // the body param is `filepath`).
-    await this.req('POST', `/rw/cfg/${domain}/saveas`, { filepath });
+    const { path, body } = R2.saveCfgFile(domain, filepath);
+    await this.req('POST', path, body);
   }
 
   // ─── Backup / Restore `/ctrl/backup` ────────────────────────────────────────
@@ -968,11 +975,13 @@ export class RwsClient2 {
   }
 
   async createBackup(name: string): Promise<void> {
-    await this.req('POST', '/ctrl/backup/create', { 'backup': `BACKUP/${name}` });
+    const { path, body } = R2.createBackup(name);
+    await this.req('POST', path, body);
   }
 
   async restoreBackup(name: string): Promise<void> {
-    await this.req('POST', '/ctrl/backup/restore', { 'backup': `BACKUP/${name}` });
+    const { path, body } = R2.restoreBackup(name);
+    await this.req('POST', path, body);
   }
 
   async getBackupStatus(): Promise<{ active: boolean; progress?: number; phase?: string }> {
@@ -1033,36 +1042,34 @@ export class RwsClient2 {
   }
 
   async createDipcQueue(name: string, options: { maxsize?: number; maxmessages?: number } = {}): Promise<void> {
-    const body: Record<string, string> = { 'dipc-queue-name': name };
-    if (options.maxsize)     { body['dipc-max-size']    = String(options.maxsize); }
-    if (options.maxmessages) { body['dipc-max-number-of-messages'] = String(options.maxmessages); }
-    await this.req('POST', '/rw/dipc', body);
+    const { path, body } = R2.createDipcQueue(name, options);
+    await this.req('POST', path, body);
   }
 
   async sendDipcMessage(queue: string, payload: string, type: 'string' | 'num' | 'dnum' | 'bool' = 'string'): Promise<void> {
-    await this.req('POST', `/rw/dipc/${encodeURIComponent(queue)}`, {
-      'dipc-src-queue-name': queue,
-      'dipc-cmd': '111',  // SEND
-      'dipc-data': payload,
-      'dipc-msgtype': type === 'string' ? '0' : type === 'num' ? '1' : type === 'dnum' ? '2' : '3',
-    });
+    const msgtype = type === 'string' ? '0' : type === 'num' ? '1' : type === 'dnum' ? '2' : '3';
+    const { path, body } = R2.sendDipcMessage(queue, payload, msgtype);
+    await this.req('POST', path, body);
   }
 
   async readDipcMessage(queue: string, timeoutMs = 0): Promise<{ payload: string; type: string } | null> {
     try {
       // Reading a DIPC message is a GET on the queue with a dipc-timeout query
       // param. Our old POST /{queue}/read 404s; live-verified 2026-08-03 that
-      // GET /rw/dipc/{queue}?dipc-timeout=N returns the message.
-      const p = RwsClient2.parse(await this.req(
-        'GET', `/rw/dipc/${encodeURIComponent(queue)}?dipc-timeout=${timeoutMs}`));
-      const d = p.getState('dipc-message');
+      // GET /rw/dipc/{queue}?dipc-timeout=N returns the message in a
+      // <li class="dipc-read"> element (data in dipc-data), consumed on read.
+      // (The message class is `dipc-read`, not `dipc-message` - the old name
+      // never matched, so every read returned null.)
+      const p = RwsClient2.parse(await this.req('GET', R2.readDipcMessage(queue, timeoutMs)));
+      const d = p.getState('dipc-read');
       if (!d['dipc-data']) { return null; }
       return { payload: d['dipc-data'], type: d['dipc-msgtype'] ?? 'string' };
     } catch { return null; }
   }
 
   async removeDipcQueue(name: string): Promise<void> {
-    await this.req('DELETE', `/rw/dipc/${encodeURIComponent(name)}`);
+    const { path } = R2.removeDipcQueue(name);
+    await this.req('DELETE', path);
   }
 
   // ─── Mastership ───────────────────────────────────────────────────────────────
@@ -1073,21 +1080,25 @@ export class RwsClient2 {
   }
 
   requestMastership(domain: MastershipDomain): Promise<void> {
-    return this.req('POST', `/rw/mastership/${this.rws2Domain(domain)}/request`).then(() => {});
+    const { path } = R2.requestMastership(this.rws2Domain(domain));
+    return this.req('POST', path).then(() => {});
   }
 
   releaseMastership(domain: MastershipDomain): Promise<void> {
-    return this.req('POST', `/rw/mastership/${this.rws2Domain(domain)}/release`).then(() => {});
+    const { path } = R2.releaseMastership(this.rws2Domain(domain));
+    return this.req('POST', path).then(() => {});
   }
 
   /** Request mastership on ALL domains at once (RWS 2.0). Cheaper than calling per-domain. */
   requestMastershipAll(): Promise<void> {
-    return this.req('POST', '/rw/mastership/request').then(() => {});
+    const { path } = R2.requestMastershipAll();
+    return this.req('POST', path).then(() => {});
   }
 
   /** Release mastership on ALL domains at once (RWS 2.0). */
   releaseMastershipAll(): Promise<void> {
-    return this.req('POST', '/rw/mastership/release').then(() => {});
+    const { path } = R2.releaseMastershipAll();
+    return this.req('POST', path).then(() => {});
   }
 
   /**
@@ -1123,7 +1134,8 @@ export class RwsClient2 {
    * RAPID run. No-op on RW6.x and on configurations with `Select=false`.
    */
   resetMastershipWatchdog(): Promise<void> {
-    return this.req('POST', '/rw/mastership/watchdog').then(() => {});
+    const { path } = R2.mastershipWatchdog();
+    return this.req('POST', path).then(() => {});
   }
 
   /** Read mastership status for one domain - returns 'nomaster' | 'remote' | 'local' | similar. */

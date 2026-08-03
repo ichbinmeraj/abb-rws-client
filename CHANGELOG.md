@@ -6,8 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **RWS 2.0 DIPC was fully broken; now works end to end.** Verified against an
+  OmniCore VC RW7.21 by round-tripping create, send, and read.
+  - `createDipcQueue` sent `dipc-max-size` / `dipc-max-number-of-messages`, which
+    the controller rejects (HTTP 400). The accepted fields are `dipc-queue-size`
+    (max message count) and `dipc-max-msg-size` (max bytes per message).
+  - `sendDipcMessage` omitted the required `dipc-userdef` field, so every send
+    returned HTTP 400. It is now included.
+  - `readDipcMessage` parsed the wrong element class (`dipc-message`), so it
+    always returned null. The message arrives as `dipc-read`; the payload is now
+    returned and the message is consumed on read as expected.
+
 ### Changed
 
+- RWS 2.0 control and write endpoints (panel, RAPID execution, mastership, IO
+  set, event log, CFG load/save, DIPC, backup) are now centralized in
+  `ResourceMapper2`, mirroring the RWS 1.0 `ResourceMapper`. Behavior is
+  unchanged for the endpoints that already worked; the map documents the wire
+  forms the controller actually accepts (verified via OPTIONS), which differ
+  from the published spec in a few places.
 - Minimum supported Node.js is now 20 (was 18). Node 18 reached end-of-life in
   April 2025 and the build toolchain already requires Node 20.19+. CI runs on
   Node 20, 22, and 24.
