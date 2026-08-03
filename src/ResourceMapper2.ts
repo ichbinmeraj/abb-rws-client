@@ -143,6 +143,20 @@ export function saveProgram(task: string, destination: string): Rws2Write {
   return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}/program/save`, body: { path: destination } };
 }
 
+/**
+ * Save one module's source to a file on a controller volume. Body `name` (no
+ * extension; the controller ALWAYS appends '.modx', even for SysMods) + `path`
+ * (a volume root in colon form, e.g. 'TEMP:' or 'HOME:'). Live-verified
+ * 2026-08-04 (RW7.21): both literal 'TEMP:' and percent-encoded 'TEMP%3A' are
+ * accepted; subdirectories ('TEMP:/sub') are rejected with 400, volume roots only.
+ */
+export function saveModuleAs(task: string, module: string, name: string, volume: string): Rws2Write {
+  return {
+    path: `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/save`,
+    body: { name, path: volume },
+  };
+}
+
 // ─── Mastership Service (/rw/mastership) ─────────────────────────────────────
 // `domain` is the RWS 2.0 wire domain ('edit' | 'motion'); callers map
 // 'cfg'|'rapid' -> 'edit' before calling (RwsClient2.rws2Domain).

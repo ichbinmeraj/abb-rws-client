@@ -367,4 +367,45 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
   });
+
+  describe('coverage additions (batch 3, progress + module save)', () => {
+    it('saveModule normalizes volume forms to colon form and strips the extension', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.saveModule('T_ROB1', 'MyMod', 'HOME/MyMod.mod');
+        await client.saveModule('T_ROB1', 'MyMod', '$TEMP');
+        await client.saveModule('T_ROB1', 'MyMod', 'TEMP:');
+        const posts = requests.filter(r => r.method === 'POST');
+        expect(posts[0].url).toBe('/rw/rapid/tasks/T_ROB1/modules/MyMod/save');
+        expect(posts[0].body).toBe('name=MyMod&path=HOME%3A');
+        expect(posts[1].body).toBe('name=MyMod&path=TEMP%3A');
+        expect(posts[2].body).toBe('name=MyMod&path=TEMP%3A');
+      } finally { server.close(); }
+    });
+
+    it('listProgress extracts the id from the self href and keeps the operation title', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/progress/"}},"_embedded":{"resources":[{"_links":{"self":{"href":"/progress/6"}},"_type":"progress-li","_title":"save-elog-raw"}]}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.listProgress()).toEqual([{ id: '6', state: '', operation: 'save-elog-raw' }]);
+      } finally { server.close(); }
+    });
+
+    it('getProgress parses state and code from the progress detail', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/progress/6/"}},"state":[{"_links":{},"_type":"progress","_title":"save-elog-raw","state":"pending","code":"-1"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const p = await client.getProgress('6');
+        expect(p?.state).toBe('pending');
+        expect(p?.details?.['code']).toBe('-1');
+      } finally { server.close(); }
+    });
+  });
 });

@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (controller restart counter), `getDipcQueueInfo` (queue depth, max message size,
   slot id), and `getRobTarget` (Cartesian pose relative to a chosen tool and work
   object, complementing `getCartesianFull`).
+- RWS 2.0 parity with the RWS 1.0 adapter, live-verified on the VC: `saveModule`
+  (save a module's source to a controller volume; the controller always writes
+  `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
+  and `getProgress` (track asynchronous operations such as backups and event-log
+  dumps).
 
 ### Fixed
 

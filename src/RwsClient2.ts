@@ -1021,6 +1021,34 @@ export class RwsClient2 {
     await this.req('POST', path, body);
   }
 
+  /**
+   * List asynchronous long-running operations (backup, saveraw, ...). Each entry
+   * is one /progress/{id} resource. GET /progress, live-verified 2026-08-04
+   * (RW7.21): list items are class progress-li with the id in the self href and
+   * the operation name as the title; state is only in the detail resource.
+   */
+  async listProgress(): Promise<Array<{ id: string; state: string; operation?: string }>> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', '/progress'));
+      return p.getAllStates('progress-li').map(e => ({
+        id:        (e['_href'] ?? '').split('/').filter(Boolean).pop() ?? e['_title'] ?? '',
+        state:     e['state'] ?? '',
+        operation: e['_title'],
+      }));
+    } catch { return []; }
+  }
+
+  /** Poll one long-running operation. GET /progress/{id}, live-verified 2026-08-04
+   *  (RW7.21): class progress with spans state (e.g. 'pending') and code. */
+  async getProgress(id: string): Promise<{ state: string; details?: Record<string, string> } | null> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', `/progress/${encodeURIComponent(id)}`));
+      const d = p.getState('progress') || p.getState('progress-ev');
+      if (!Object.keys(d).length) { return null; }
+      return { state: d['state'] ?? '', details: d };
+    } catch { return null; }
+  }
+
   async getBackupStatus(): Promise<{ active: boolean; progress?: number; phase?: string }> {
     const p = RwsClient2.parse(await this.req('GET', '/ctrl/backup'));
     const d = p.getState('ctrl-backup-info-li') || p.getState('ctrl-backup-info');
@@ -1586,17 +1614,41 @@ export class RwsClient2 {
    */
   private async readModuleViaSave(task: string, moduleName: string): Promise<string> {
     const tmp = `${moduleName}_${Date.now().toString(36)}${Math.floor(Math.random() * 0xffff).toString(36)}`;
-    await this.req(
-      'POST',
-      `/rw/rapid/tasks/${task}/modules/${encodeURIComponent(moduleName)}/save`,
-      undefined,
-      `name=${tmp}&path=TEMP:`,
-    );
+    const { path, body } = R2.saveModuleAs(task, moduleName, tmp, 'TEMP:');
+    await this.req('POST', path, body);
     try {
       return await this.readFile(`TEMP/${tmp}.modx`);
     } finally {
       await this.deleteFile(`TEMP/${tmp}.modx`).catch(() => {});
     }
+  }
+
+  /**
+   * Save a module's source to a file on a controller volume. Mirrors the RWS 1.0
+   * adapter's saveModule(task, module, filepath). The controller always writes
+   * `{name}.modx` (never .sysx) into the VOLUME ROOT: subdirectories are rejected
+   * with 400 (live-verified 2026-08-04, RW7.21), so any directory part beyond the
+   * volume is invalid. Accepts 'TEMP/My.mod', 'HOME:', '$HOME/My', etc.
+   */
+  async saveModule(task: string, moduleName: string, filepath: string): Promise<void> {
+    const clean = filepath.replace(/\/+$/, '');
+    const ext = /\.(modx?|sysx?)$/i;
+    const slash = clean.lastIndexOf('/');
+    const last = clean.slice(slash + 1);
+    let dir: string;
+    let name: string;
+    if (ext.test(last)) {
+      dir = slash >= 0 ? clean.slice(0, slash) : 'TEMP';
+      name = last.replace(ext, '');
+    } else {
+      dir = clean || 'TEMP';
+      name = moduleName.replace(ext, '');
+    }
+    // Normalize the volume to the colon form the save action expects:
+    // '$HOME' | 'HOME' | 'HOME:' all become 'HOME:'.
+    const volume = `${dir.replace(/^\$/, '').replace(/:$/, '')}:`;
+    const { path, body } = R2.saveModuleAs(task, moduleName, name, volume);
+    await this.req('POST', path, body);
   }
 
   async getModuleInfo(task: string, moduleName: string): Promise<Record<string, string>> {
