@@ -322,6 +322,13 @@ export class RwsClient2 {
     return this.req('POST', path).then(() => {});
   }
 
+  /** Acknowledge a pending operation-mode switch (after the mode selector is turned).
+   *  OPTIONS-verified 2026-08-04 (RW7.21). @param wireMode target mode, e.g. 'auto'. */
+  acknowledgeOperationMode(wireMode: string): Promise<void> {
+    const { path, body } = R2.acknowledgeOperationMode(wireMode);
+    return this.req('POST', path, body).then(() => {});
+  }
+
   /**
    * Switch the controller's operation mode. **Virtual controllers only** -
    * real hardware respects the FlexPendant key switch.
@@ -385,6 +392,26 @@ export class RwsClient2 {
 
   setExecutionCycle(cycle: ExecutionCycle): Promise<void> {
     const { path, body } = R2.setExecutionCycle(cycle);
+    return this.req('POST', path, body).then(() => {});
+  }
+
+  /** Start RAPID execution from the production entry point (task list main).
+   *  OPTIONS-verified 2026-08-04 (RW7.21): POST, no body. */
+  startProductionEntry(): Promise<void> {
+    const { path } = R2.startProductionEntry();
+    return this.req('POST', path).then(() => {});
+  }
+
+  /** Load a full RAPID program (.pgf + modules) into a task from disk. Distinct
+   *  from loadModule (single module). OPTIONS-verified 2026-08-04 (RW7.21). */
+  loadProgram(task: string, progpath: string, loadmode: 'add' | 'replace' = 'replace'): Promise<void> {
+    const { path, body } = R2.loadProgram(task, progpath, loadmode);
+    return this.req('POST', path, body).then(() => {});
+  }
+
+  /** Save a task's currently loaded RAPID program to disk. OPTIONS-verified 2026-08-04. */
+  saveProgram(task: string, destination: string): Promise<void> {
+    const { path, body } = R2.saveProgram(task, destination);
     return this.req('POST', path, body).then(() => {});
   }
 
@@ -716,6 +743,16 @@ export class RwsClient2 {
     // Live confirmed: POST /rw/elog/clearall → 204
     const { path } = R2.clearAllElogs();
     return this.req('POST', path).then(() => {});
+  }
+
+  /** Dump the full event log to a file in system-dump format (diagnostics/support).
+   *  POST /rw/elog/saveraw, field `path`, OPTIONS-verified 2026-08-04 (RW7.21).
+   *  Note: `path` uses the controller's virtual-root scheme (shared with cfg saveas);
+   *  TEMP:/HOME/$TEMP all returned "Virtual root does not exist" on the VC, so the
+   *  caller must supply a valid virtual-root path for the target controller. */
+  saveEventLogRaw(destination: string): Promise<void> {
+    const { path, body } = R2.saveEventLogRaw(destination);
+    return this.req('POST', path, body).then(() => {});
   }
 
   // ─── I/O signals ─────────────────────────────────────────────────────────────

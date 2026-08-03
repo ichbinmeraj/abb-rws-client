@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- RWS 2.0 coverage additions (verified against an OmniCore VC RW7.21): start RAPID
+  from the production entry (`startProductionEntry`), load/save a full RAPID program
+  (`loadProgram` / `saveProgram`), acknowledge a pending operation-mode switch
+  (`acknowledgeOperationMode`), and dump the event log to file (`saveEventLogRaw`).
+  First batch of a coverage pass driven by a full audit of the client against the
+  documented RWS surface on both protocols.
+
 ### Fixed
 
 - **RWS 2.0 DIPC was fully broken; now works end to end.** Verified against an

@@ -271,4 +271,61 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
   });
+
+  describe('coverage additions (batch 1, RWS2 writes)', () => {
+    it('acknowledgeOperationMode POSTs opmode to /rw/panel/opmode/acknowledge', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.acknowledgeOperationMode('auto');
+        const post = requests.find(r => r.method === 'POST');
+        expect(post?.url).toBe('/rw/panel/opmode/acknowledge');
+        expect(post?.body).toBe('opmode=auto');
+      } finally { server.close(); }
+    });
+
+    it('startProductionEntry POSTs to /rw/rapid/execution/startprodentry with no body', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.startProductionEntry();
+        const post = requests.find(r => r.method === 'POST');
+        expect(post?.url).toBe('/rw/rapid/execution/startprodentry');
+        expect(post?.body).toBe('');
+      } finally { server.close(); }
+    });
+
+    it('loadProgram POSTs progpath+loadmode to /program/load', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.loadProgram('T_ROB1', 'HOME/myprog.pgf', 'replace');
+        const post = requests.find(r => r.method === 'POST');
+        expect(post?.url).toBe('/rw/rapid/tasks/T_ROB1/program/load');
+        expect(post?.body).toBe('progpath=HOME%2Fmyprog.pgf&loadmode=replace');
+      } finally { server.close(); }
+    });
+
+    it('saveProgram POSTs path to /program/save', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.saveProgram('T_ROB1', 'HOME/backup');
+        const post = requests.find(r => r.method === 'POST');
+        expect(post?.url).toBe('/rw/rapid/tasks/T_ROB1/program/save');
+        expect(post?.body).toBe('path=HOME%2Fbackup');
+      } finally { server.close(); }
+    });
+
+    it('saveEventLogRaw POSTs path to /rw/elog/saveraw', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.saveEventLogRaw('HOME/elog.txt');
+        const post = requests.find(r => r.method === 'POST');
+        expect(post?.url).toBe('/rw/elog/saveraw');
+        expect(post?.body).toBe('path=HOME%2Felog.txt');
+      } finally { server.close(); }
+    });
+  });
 });

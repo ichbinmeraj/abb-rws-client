@@ -75,6 +75,15 @@ export function unlockOperationMode(): Rws2Write {
   return { path: '/rw/panel/opmode/unlock' };
 }
 
+/**
+ * Acknowledge a pending operation-mode switch. When the mode selector is turned
+ * the controller holds the change pending until acknowledged over RWS; the target
+ * mode is echoed in the `opmode` field. OPTIONS-verified 2026-08-04 (RW7.21).
+ */
+export function acknowledgeOperationMode(wireMode: string): Rws2Write {
+  return { path: '/rw/panel/opmode/acknowledge', body: { opmode: wireMode } };
+}
+
 // ─── RAPID Service - execution (/rw/rapid/execution) ─────────────────────────
 
 /** Read the RAPID execution state / info. */
@@ -109,6 +118,29 @@ export function resetRapid(): Rws2Write {
 /** Set the execution cycle mode (once / forever / asis). */
 export function setExecutionCycle(cycle: string): Rws2Write {
   return { path: '/rw/rapid/execution/cycle', body: { cycle } };
+}
+
+/** Start RAPID execution from the production entry point (the task list's main).
+ *  OPTIONS-verified 2026-08-04 (RW7.21): POST, no body. */
+export function startProductionEntry(): Rws2Write {
+  return { path: '/rw/rapid/execution/startprodentry' };
+}
+
+// ─── RAPID Service - program load/save (/rw/rapid/tasks/{task}/program) ───────
+
+/**
+ * Load a full RAPID program into a task from controller disk (a .pgf and its
+ * modules), distinct from loadmod (single module). Fields `progpath` + `loadmode`
+ * (add | replace). OPTIONS-verified 2026-08-04 (RW7.21).
+ */
+export function loadProgram(task: string, progpath: string, loadmode: 'add' | 'replace'): Rws2Write {
+  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}/program/load`, body: { progpath, loadmode } };
+}
+
+/** Save a task's currently loaded RAPID program to disk. Field `path`
+ *  (OPTIONS-verified 2026-08-04). */
+export function saveProgram(task: string, destination: string): Rws2Write {
+  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}/program/save`, body: { path: destination } };
 }
 
 // ─── Mastership Service (/rw/mastership) ─────────────────────────────────────
@@ -165,6 +197,12 @@ export function clearElogDomain(domain = 0): Rws2Write {
 /** Clear the event log across all domains. */
 export function clearAllElogs(): Rws2Write {
   return { path: '/rw/elog/clearall' };
+}
+
+/** Dump the full event log to a file in system-dump format (for diagnostics/
+ *  support). Field `path` (OPTIONS-verified 2026-08-04, RW7.21). */
+export function saveEventLogRaw(destination: string): Rws2Write {
+  return { path: '/rw/elog/saveraw', body: { path: destination } };
 }
 
 // ─── CFG Service (/rw/cfg) ───────────────────────────────────────────────────
