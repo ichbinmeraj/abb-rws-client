@@ -328,4 +328,43 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
   });
+
+  describe('coverage additions (batch 2, RWS2 reads)', () => {
+    const halServer = (body: string): ReturnType<typeof startServer> => startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end(body);
+    });
+
+    it('getRestartCount parses the restart-count span', async () => {
+      const { server, port } = await halServer(
+        '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ctrl","_title":"restart-count","restart-count":"3"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getRestartCount()).toBe(3);
+      } finally { server.close(); }
+    });
+
+    it('getDipcQueueInfo parses queue depth and message size', async () => {
+      const { server, port } = await halServer(
+        '{"_links":{"base":{"href":"https://x/"}},"_embedded":{"resources":[{"_type":"dipc-queue","_title":"q1","queue-name":"q1","queue-size":"7","queue-max-msg-size":"88","queue-slot-id":"201"}]}}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const info = await client.getDipcQueueInfo('q1');
+        expect(info).toEqual({ name: 'q1', size: 7, maxMsgSize: 88, slotId: '201' });
+      } finally { server.close(); }
+    });
+
+    it('getRobTarget parses pose from ms-robtargets and encodes tool/wobj', async () => {
+      const { server, port, requests } = await halServer(
+        '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ms-robtargets","_title":"ROB_1","x":"806.29","y":"0","z":"929","q1":"0.5","q2":"0","q3":"0.866","q4":"0"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const rt = await client.getRobTarget('ROB_1', 'tool0', 'wobj0');
+        expect(rt.x).toBeCloseTo(806.29);
+        expect(rt.z).toBeCloseTo(929);
+        expect(rt.q3).toBeCloseTo(0.866);
+        expect(requests[0].url).toBe('/rw/motionsystem/mechunits/ROB_1/robtarget?tool=tool0&wobj=wobj0');
+      } finally { server.close(); }
+    });
+  });
 });

@@ -1109,6 +1109,48 @@ export class RwsClient2 {
     await this.req('DELETE', path);
   }
 
+  /** Read a DIPC queue's info (depth, max message size, slot id). Returns null if
+   *  the queue is unknown. GET /rw/dipc/{q}/information, live-verified 2026-08-04
+   *  (RW7.21, class dipc-queue). */
+  async getDipcQueueInfo(queue: string): Promise<{ name: string; size?: number; maxMsgSize?: number; slotId?: string } | null> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', `/rw/dipc/${encodeURIComponent(queue)}/information`));
+      const d = p.getState('dipc-queue');
+      if (!d['queue-name'] && !d['_title']) { return null; }
+      return {
+        name:       d['queue-name'] ?? d['_title'] ?? queue,
+        size:       d['queue-size']         ? +d['queue-size']         : undefined,
+        maxMsgSize: d['queue-max-msg-size']  ? +d['queue-max-msg-size'] : undefined,
+        slotId:     d['queue-slot-id'],
+      };
+    } catch { return null; }
+  }
+
+  /** Number of controller restarts. GET /ctrl/restart/restartcount, live-verified
+   *  2026-08-04 (RW7.21, class ctrl / span restart-count). */
+  async getRestartCount(): Promise<number> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/restart/restartcount'));
+    return Number(p.getState('ctrl')['restart-count'] ?? p.get('restart-count') ?? 0);
+  }
+
+  /**
+   * Read the Cartesian robtarget of a mechanical unit relative to a specific tool
+   * and work object. Distinct from getCartesianFull (which reads /cartesian with
+   * configuration flags and no tool/wobj). GET /rw/motionsystem/mechunits/{m}/robtarget,
+   * live-verified 2026-08-04 (RW7.21, class ms-robtargets).
+   */
+  async getRobTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): Promise<RobTarget> {
+    const p = RwsClient2.parse(await this.req(
+      'GET',
+      `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/robtarget?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`,
+    ));
+    const d = p.getState('ms-robtargets');
+    return {
+      x: +d['x'], y: +d['y'], z: +d['z'],
+      q1: +d['q1'], q2: +d['q2'], q3: +d['q3'], q4: +d['q4'],
+    };
+  }
+
   // ─── Mastership ───────────────────────────────────────────────────────────────
 
   private rws2Domain(domain: MastershipDomain): string {

@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`acknowledgeOperationMode`), and dump the event log to file (`saveEventLogRaw`).
   First batch of a coverage pass driven by a full audit of the client against the
   documented RWS surface on both protocols.
+- RWS 2.0 read additions, all live-verified on the VC: `getRestartCount`
+  (controller restart counter), `getDipcQueueInfo` (queue depth, max message size,
+  slot id), and `getRobTarget` (Cartesian pose relative to a chosen tool and work
+  object, complementing `getCartesianFull`).
 
 ### Fixed
 
