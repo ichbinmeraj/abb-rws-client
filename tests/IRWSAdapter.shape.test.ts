@@ -28,6 +28,19 @@ describe('IRWSAdapter shape', () => {
     expect(a).toBeInstanceOf(RWS1Adapter);
   });
 
+  it('parity methods exist on BOTH protocol surfaces under the same canonical name', () => {
+    // Methods added by the coverage loop must not fork names between protocols:
+    // one API, any controller. Guard the canonical names on both sides.
+    const parity = ['startProductionEntry', 'getRobTarget', 'saveModule', 'listProgress', 'getProgress'];
+    const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
+    const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
+    const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });
+    for (const m of parity) {
+      expect(typeof (c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m}`).toBe('function');
+      expect(typeof (a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m}`).toBe('function');
+    }
+  });
+
   it('RwsClient2 has the public surface IRWSAdapter requires (basic methods present)', () => {
     const c = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     // Spot-check a representative slice of required methods.

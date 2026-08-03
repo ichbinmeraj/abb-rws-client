@@ -77,6 +77,11 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── Motion ──────────────────────────────────────────────────────────────
   getJointPositions(u?: string) { return this.client.getJointPositions(u); }
   getCartesianFull(u?: string)  { return this.client.getCartesianFull(u); }
+  /** Canonical cross-protocol name for getCartesianPosition - same wire call.
+   *  Matches RwsClient2.getRobTarget (pose relative to a chosen tool/wobj). */
+  getRobTarget(u?: string, tool?: string, wobj?: string): Promise<RobTarget> {
+    return this.client.getCartesianPosition(u, tool, wobj);
+  }
   /** List mechanical units from the controller (positioners/track units show up beyond ROB_1). */
   async listMechunits(): Promise<string[]> {
     const r = await this.rws1Get('/rw/motionsystem/mechunits');
@@ -869,6 +874,12 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async startProductionMode(): Promise<void> {
     await this.rws1Post('/rw/rapid/execution?action=start-prod', '');
+  }
+
+  /** Canonical cross-protocol name for startProductionMode - same wire call.
+   *  Matches RwsClient2.startProductionEntry (RWS 2.0 startprodentry). */
+  startProductionEntry(): Promise<void> {
+    return this.startProductionMode();
   }
 
   // ── Stage 13: Network / time / compatibility (5 methods) ──────────────
