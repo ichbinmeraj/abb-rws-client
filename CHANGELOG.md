@@ -71,6 +71,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **RAPID debugger endpoints were wrong (never live-verified); fixed on RW7.21.**
+  `stepRapid` posted to /rw/rapid/tasks/{task}/step, which does not exist (404) -
+  stepping is the execution START endpoint with a step `execmode`
+  (stepin/stepover/stepout/...). `holdToRun` posted `action` to a non-existent
+  task path - the real resource is /rw/rapid/execution/holdtorun with field
+  `state`. `setBreakpoint` sent `begin-position-row/col`, which the controller
+  rejects ("row parameter invalid or missing"); the form fields are
+  `module`/`row`/`column`. All three now reach the correct resource (verified:
+  stepRapid returns WRONG_MODE instead of 404 - these are manual-mode functions,
+  so full happy-path exercise needs the pendant in MANR). `removeBreakpoint` is
+  marked best-effort until it can be set-then-removed in manual mode.
 - **File-target writes were broken on both protocols; all fixed by one discovery.**
   cfg saveas, elog saveraw and backup create/restore reject every bare volume
   path ('TEMP/x', '$TEMP/x', 'BACKUP/x') - the value must be a fileservice URI

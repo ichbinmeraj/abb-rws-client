@@ -1906,37 +1906,67 @@ export class RwsClient2 {
     });
   }
 
-  async stepRapid(task: string, mode: 'into' | 'over' | 'out'): Promise<void> {
-    const stepMode = mode === 'into' ? 'step-in' : mode === 'over' ? 'step-over' : 'step-out';
-    await this.req('POST', `/rw/rapid/tasks/${task}/step`, { 'step-mode': stepMode });
+  /**
+   * Single-step RAPID. There is NO /rw/rapid/tasks/{task}/step resource (it 404s,
+   * live-verified 2026-08-04 on RW7.21); stepping is the START endpoint with a
+   * step `execmode`. The OPTIONS form of /rw/rapid/execution/start advertises
+   * execmode = stepin | stepover | stepout | stepback | steplast | stepmotion.
+   * Requires MANUAL mode (in AUTO the controller answers 403 "Current execution
+   * state does not allow this operation") plus motors on and a loaded program.
+   */
+  async stepRapid(_task: string, mode: 'into' | 'over' | 'out'): Promise<void> {
+    const execmode = mode === 'into' ? 'stepin' : mode === 'over' ? 'stepover' : 'stepout';
+    await this.req('POST', '/rw/rapid/execution/start', {
+      regain: 'continue', execmode, cycle: 'asis',
+      condition: 'none', stopatbp: 'disabled', alltaskbytsp: 'false',
+    });
   }
 
-  async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
-    await this.req('POST', `/rw/rapid/tasks/${task}/holdtorun`, { action });
+  /**
+   * Hold-to-run (dead-man) control. POST /rw/rapid/execution/holdtorun, field
+   * `state` (not /tasks/{task}/holdtorun with `action`, which 404s - fixed
+   * 2026-08-04). `press` is an accepted value; hold-to-run is a MANUAL-mode
+   * function, so in AUTO the controller rejects the operation on execution state.
+   */
+  async holdToRun(_task: string, action: 'press' | 'release'): Promise<void> {
+    await this.req('POST', '/rw/rapid/execution/holdtorun', { state: action });
   }
 
   async listBreakpoints(task: string): Promise<Array<{ module: string; row: number; col?: number }>> {
     try {
-      // Live-verified: /rw/rapid/tasks/{task}/program/breakpoints (not /breakpoint at task root)
+      // GET /rw/rapid/tasks/{task}/program/breakpoints (verified path). The item
+      // class was empty on the VC (no breakpoints set in AUTO), so both the
+      // rap-breakpoint-li class and the row/col span names are best-effort.
       const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/program/breakpoints`));
       return p.getAllStates('rap-breakpoint-li').map(b => ({
-        module: b['modulename'] ?? b['modulemame'] ?? b['module'] ?? '',
-        row: +(b['begin-position-row'] ?? '0'),
-        col: b['begin-position-col'] ? +b['begin-position-col'] : undefined,
+        module: b['module'] ?? b['modulename'] ?? '',
+        row: +(b['row'] ?? b['begin-position-row'] ?? '0'),
+        col: b['column'] ? +b['column'] : (b['begin-position-col'] ? +b['begin-position-col'] : undefined),
       }));
     } catch { return []; }
   }
 
-  async setBreakpoint(task: string, module: string, row: number, col?: number): Promise<void> {
-    const body: Record<string, string> = { module, 'begin-position-row': String(row) };
-    if (col !== undefined) { body['begin-position-col'] = String(col); }
-    await this.req('POST', `/rw/rapid/tasks/${task}/program/breakpoints`, body);
+  /**
+   * Set a breakpoint. The controller's OPTIONS form lists fields
+   * `module` / `row` / `column` - the previous `begin-position-row/col` names
+   * were rejected with "row parameter invalid or missing" (fixed 2026-08-04,
+   * RW7.21). The row must be an executable source position or the controller
+   * answers 400 "The given source position is illegal". `column` defaults to 1.
+   */
+  async setBreakpoint(task: string, module: string, row: number, col = 1): Promise<void> {
+    await this.req('POST', `/rw/rapid/tasks/${task}/program/breakpoints`,
+      { module, row: String(row), column: String(col) });
   }
 
-  async removeBreakpoint(task: string, module: string, row: number, col?: number): Promise<void> {
-    const params = new URLSearchParams({ module, 'begin-position-row': String(row) });
-    if (col !== undefined) { params.set('begin-position-col', String(col)); }
-    await this.req('DELETE', `/rw/rapid/tasks/${task}/breakpoint?${params.toString()}`);
+  /**
+   * Remove a breakpoint. NOTE: the exact remove form is not yet confirmed - DELETE
+   * on both /program/breakpoints and the task-root /breakpoint answered 405 on
+   * RW7.21, and no breakpoint could be set in AUTO to exercise the removal. This
+   * uses the OPTIONS field names; treat as best-effort until manual-mode verified.
+   */
+  async removeBreakpoint(task: string, module: string, row: number, col = 1): Promise<void> {
+    const params = new URLSearchParams({ module, row: String(row), column: String(col) });
+    await this.req('DELETE', `/rw/rapid/tasks/${task}/program/breakpoints?${params.toString()}`);
   }
 
   // ─── Mechunit detailed endpoints ────────────────────────────────────────────
