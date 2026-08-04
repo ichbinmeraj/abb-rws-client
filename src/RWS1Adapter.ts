@@ -969,7 +969,10 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   async startProductionMode(): Promise<void> {
-    await this.rws1Post('/rw/rapid/execution?action=start-prod', '');
+    // Live-verified 2026-08-04 on RW6.16: the action is `startprodentry` (204,
+    // execution starts). The previously used `start-prod` answers 400 "Invalid
+    // argument" - it never existed on this RobotWare.
+    await this.rws1Post('/rw/rapid/execution?action=startprodentry', '');
   }
 
   /** Canonical cross-protocol name for startProductionMode - same wire call.
@@ -1003,13 +1006,15 @@ export class RWS1Adapter implements IRWSAdapter {
       `filepath=${encodeURIComponent(filepath)}&action-type=${action}`);
   }
 
-  /** Save a CFG domain to a file. Wire form verified 2026-08-04 on RW6.16
-   *  (POST /rw/cfg/{domain}?action=saveas, body filepath - the field parses; the
-   *  VC rejected every path root tried as "invalid or read only", so path
-   *  validity is controller-dependent, matching the RWS 2.0 saveas behavior). */
+  /** Save a CFG domain to a file. POST /rw/cfg/{domain}?action=saveas, body
+   *  filepath. The value must be a fileservice URI (bare '$TEMP/x' answers
+   *  "invalid or read only"; '/fileservice/$TEMP/x' works - live round-tripped
+   *  2026-08-04 on RW6.16: 204, file created and read back). Normalized here. */
   async saveCfgFile(domain: string, filepath: string): Promise<void> {
+    const clean = filepath.replace(/^\/+/, '');
+    const uri = clean.startsWith('fileservice/') ? `/${clean}` : `/fileservice/${clean}`;
     await this.rws1Post(`/rw/cfg/${encodeURIComponent(domain)}?action=saveas`,
-      `filepath=${encodeURIComponent(filepath)}`);
+      `filepath=${encodeURIComponent(uri)}`);
   }
 
   /** Set the active tool of a mechunit. Wire form live-verified 2026-08-04 on

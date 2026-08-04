@@ -240,9 +240,10 @@ export function clearAllElogs(): Rws2Write {
 }
 
 /** Dump the full event log to a file in system-dump format (for diagnostics/
- *  support). Field `path` (OPTIONS-verified 2026-08-04, RW7.21). */
+ *  support). Field `path`; the value must be a fileservice URI (202 Accepted,
+ *  file created - live-verified 2026-08-04, RW7.21). */
 export function saveEventLogRaw(destination: string): Rws2Write {
-  return { path: '/rw/elog/saveraw', body: { path: destination } };
+  return { path: '/rw/elog/saveraw', body: { path: toFileserviceUri(destination) } };
 }
 
 // ─── CFG Service (/rw/cfg) ───────────────────────────────────────────────────
@@ -256,12 +257,26 @@ export function loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-w
 }
 
 /**
+ * Normalize a controller path to the fileservice-URI form the file-target write
+ * endpoints require. Discovered 2026-08-04 on RW7.21 AND RW6.16: cfg saveas,
+ * elog saveraw and backup create/restore all reject bare volume paths
+ * ('TEMP/x', 'TEMP:', '$TEMP/x' - "Virtual root does not exist" / "backup data
+ * parameter is invalid") but accept '/fileservice/TEMP/x' (204/202, file
+ * created). Idempotent for already-prefixed values.
+ */
+export function toFileserviceUri(path: string): string {
+  const clean = path.replace(/^\/+/, '');
+  return clean.startsWith('fileservice/') ? `/${clean}` : `/fileservice/${clean}`;
+}
+
+/**
  * Save a CFG domain to a file. The endpoint is /rw/cfg/{domain}/saveas (/save 405s)
  * and the body field is `filepath` - the spec's `destination` is wrong (OPTIONS on
- * /rw/cfg/{domain}/saveas lists `filepath`). Live-verified 2026-08-03.
+ * /rw/cfg/{domain}/saveas lists `filepath`). The value must be a fileservice URI;
+ * bare volume paths are rejected. Live-verified 2026-08-04 (204, file created).
  */
 export function saveCfgFile(domain: string, filepath: string): Rws2Write {
-  return { path: `/rw/cfg/${domain}/saveas`, body: { filepath } };
+  return { path: `/rw/cfg/${domain}/saveas`, body: { filepath: toFileserviceUri(filepath) } };
 }
 
 // ─── DIPC Service (/rw/dipc) ─────────────────────────────────────────────────
@@ -366,12 +381,26 @@ export function disableExternalControl(): Rws2Write {
 
 // ─── Controller Service - backup (/ctrl/backup) ──────────────────────────────
 
-/** Create a controller backup under the BACKUP volume. */
-export function createBackup(name: string): Rws2Write {
-  return { path: '/ctrl/backup/create', body: { backup: `BACKUP/${name}` } };
+/** Backup value: a bare name targets the BACKUP volume; any path is normalized
+ *  to the fileservice URI the controller requires (bare forms answer 400
+ *  "backup data parameter is invalid" - live-verified 2026-08-04, RW7.21). */
+function backupUri(name: string): string {
+  return toFileserviceUri(name.includes('/') ? name : `BACKUP/${name}`);
 }
 
-/** Restore a controller backup from the BACKUP volume. */
+/** Create a controller backup. 202 Accepted (async; poll /ctrl/backup or the
+ *  progress resource). Live-verified 2026-08-04. */
+export function createBackup(name: string): Rws2Write {
+  return { path: '/ctrl/backup/create', body: { backup: backupUri(name) } };
+}
+
+/** Restore a controller backup (the controller restarts as part of restore). */
 export function restoreBackup(name: string): Rws2Write {
-  return { path: '/ctrl/backup/restore', body: { backup: `BACKUP/${name}` } };
+  return { path: '/ctrl/backup/restore', body: { backup: backupUri(name) } };
+}
+
+/** Validate a backup without restoring it. 200 when the backup is valid and
+ *  restorable. Live-verified 2026-08-04 against a freshly created backup. */
+export function checkRestore(name: string): Rws2Write {
+  return { path: '/ctrl/backup/check-restore', body: { backup: backupUri(name) } };
 }

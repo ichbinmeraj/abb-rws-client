@@ -71,6 +71,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **File-target writes were broken on both protocols; all fixed by one discovery.**
+  cfg saveas, elog saveraw and backup create/restore reject every bare volume
+  path ('TEMP/x', '$TEMP/x', 'BACKUP/x') - the value must be a fileservice URI
+  ('/fileservice/TEMP/x'). Found during live finishing tests on RW7.21 and
+  confirmed on RW6.16; the client now normalizes automatically, so
+  `saveCfgFile('SYS', 'TEMP/sys.cfg')` and `createBackup('name')` just work.
+  Full round trips verified: cfg file created and read back on both protocols,
+  elog dump created, backup created and validated with the new `checkRestore`.
+- `resetRapid` and `startProductionEntry` (RWS 2.0) now acquire edit mastership
+  internally like `setSpeedRatio` does - without it the controller answers
+  MASTERSHIP_REQUIRED (live-verified). `stopRapid` stays unwrapped on purpose:
+  a stop must never be blocked by mastership contention.
+- The RWS 1.0 production-start action is `startprodentry`, not `start-prod`
+  (which answers 400 "Invalid argument" on RW6.16 - the old form never worked).
+  Verified with a full start/stop/reset cycle on the live VC.
 - **RWS 2.0 DIPC was fully broken; now works end to end.** Verified against an
   OmniCore VC RW7.21 by round-tripping create, send, and read.
   - `createDipcQueue` sent `dipc-max-size` / `dipc-max-number-of-messages`, which

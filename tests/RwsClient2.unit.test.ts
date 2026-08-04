@@ -284,14 +284,19 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
-    it('startProductionEntry POSTs to /rw/rapid/execution/startprodentry with no body', async () => {
+    it('startProductionEntry acquires mastership, POSTs startprodentry, releases', async () => {
       const { server, port, requests } = await startServer(ok204);
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.startProductionEntry();
-        const post = requests.find(r => r.method === 'POST');
-        expect(post?.url).toBe('/rw/rapid/execution/startprodentry');
-        expect(post?.body).toBe('');
+        // Live-verified 2026-08-04 (RW7.21): without mastership the controller
+        // answers MASTERSHIP_REQUIRED, so the client wraps the call.
+        expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+          'POST /rw/mastership/edit/request',
+          'POST /rw/rapid/execution/startprodentry',
+          'POST /rw/mastership/edit/release',
+        ]);
+        expect(requests[1].body).toBe('');
       } finally { server.close(); }
     });
 
@@ -317,14 +322,33 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
-    it('saveEventLogRaw POSTs path to /rw/elog/saveraw', async () => {
+    it('saveEventLogRaw POSTs a fileservice URI to /rw/elog/saveraw', async () => {
       const { server, port, requests } = await startServer(ok204);
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.saveEventLogRaw('HOME/elog.txt');
         const post = requests.find(r => r.method === 'POST');
         expect(post?.url).toBe('/rw/elog/saveraw');
-        expect(post?.body).toBe('path=HOME%2Felog.txt');
+        // Bare volume paths are rejected by the controller; the client
+        // normalizes to the fileservice-URI form (live-verified 2026-08-04).
+        expect(post?.body).toBe('path=%2Ffileservice%2FHOME%2Felog.txt');
+      } finally { server.close(); }
+    });
+
+    it('createBackup, checkRestore and saveCfgFile normalize to fileservice URIs', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.createBackup('mybak');
+        await client.checkRestore('mybak');
+        await client.saveCfgFile('SYS', 'TEMP/sys.cfg');
+        const posts = requests.filter(r => r.method === 'POST');
+        expect(posts[0].url).toBe('/ctrl/backup/create');
+        expect(posts[0].body).toBe('backup=%2Ffileservice%2FBACKUP%2Fmybak');
+        expect(posts[1].url).toBe('/ctrl/backup/check-restore');
+        expect(posts[1].body).toBe('backup=%2Ffileservice%2FBACKUP%2Fmybak');
+        expect(posts[2].url).toBe('/rw/cfg/SYS/saveas');
+        expect(posts[2].body).toBe('filepath=%2Ffileservice%2FTEMP%2Fsys.cfg');
       } finally { server.close(); }
     });
   });

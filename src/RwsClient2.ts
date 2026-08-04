@@ -440,9 +440,17 @@ export class RwsClient2 {
     return this.req('POST', path, body).then(() => {});
   }
 
-  resetRapid(): Promise<void> {
-    const { path } = R2.resetRapid();
-    return this.req('POST', path).then(() => {});
+  /** Reset the program pointer to main. Acquires edit mastership internally -
+   *  live-verified 2026-08-04 (RW7.21): without it the controller answers
+   *  MASTERSHIP_REQUIRED. */
+  async resetRapid(): Promise<void> {
+    await this.requestMastership('rapid');
+    try {
+      const { path } = R2.resetRapid();
+      await this.req('POST', path);
+    } finally {
+      await this.releaseMastership('rapid').catch(() => {});
+    }
   }
 
   setExecutionCycle(cycle: ExecutionCycle): Promise<void> {
@@ -451,10 +459,16 @@ export class RwsClient2 {
   }
 
   /** Start RAPID execution from the production entry point (task list main).
-   *  OPTIONS-verified 2026-08-04 (RW7.21): POST, no body. */
-  startProductionEntry(): Promise<void> {
-    const { path } = R2.startProductionEntry();
-    return this.req('POST', path).then(() => {});
+   *  OPTIONS-verified 2026-08-04 (RW7.21): POST, no body. Acquires edit
+   *  mastership internally (MASTERSHIP_REQUIRED without it, live-verified). */
+  async startProductionEntry(): Promise<void> {
+    await this.requestMastership('rapid');
+    try {
+      const { path } = R2.startProductionEntry();
+      await this.req('POST', path);
+    } finally {
+      await this.releaseMastership('rapid').catch(() => {});
+    }
   }
 
   /** Load a full RAPID program (.pgf + modules) into a task from disk. Distinct
@@ -833,10 +847,10 @@ export class RwsClient2 {
   }
 
   /** Dump the full event log to a file in system-dump format (diagnostics/support).
-   *  POST /rw/elog/saveraw, field `path`, OPTIONS-verified 2026-08-04 (RW7.21).
-   *  Note: `path` uses the controller's virtual-root scheme (shared with cfg saveas);
-   *  TEMP:/HOME/$TEMP all returned "Virtual root does not exist" on the VC, so the
-   *  caller must supply a valid virtual-root path for the target controller. */
+   *  POST /rw/elog/saveraw, field `path`. The path is normalized to the
+   *  fileservice-URI form the controller requires ('TEMP/x' works as input);
+   *  bare volume roots answer "Virtual root does not exist". Live round-tripped
+   *  2026-08-04 (RW7.21): 202 Accepted, dump file created. */
   saveEventLogRaw(destination: string): Promise<void> {
     const { path, body } = R2.saveEventLogRaw(destination);
     return this.req('POST', path, body).then(() => {});
@@ -1221,6 +1235,14 @@ export class RwsClient2 {
 
   async restoreBackup(name: string): Promise<void> {
     const { path, body } = R2.restoreBackup(name);
+    await this.req('POST', path, body);
+  }
+
+  /** Validate a backup without restoring it. Resolves when the controller
+   *  reports the backup valid and restorable (HTTP 200); throws otherwise.
+   *  Live-verified 2026-08-04 (RW7.21) against a freshly created backup. */
+  async checkRestore(name: string): Promise<void> {
+    const { path, body } = R2.checkRestore(name);
     await this.req('POST', path, body);
   }
 
