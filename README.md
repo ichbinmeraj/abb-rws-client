@@ -399,6 +399,8 @@ new RwsClient(options: RwsClientOptions)
 | `getRobTarget(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion for a chosen tool/wobj |
 | `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | RWS 1.0 name for `getRobTarget` |
 | `getCartesianFull(mechunit?)` | `CartesianFull` | TCP pose + j1/j4/j6/jx configuration flags |
+| `getMotionSupervision(mechunit?)` / `getPathSupervision(mechunit?)` | - | Supervision mode + level, RWS 2.0 |
+| `getAxisPose(mechunit, axis)` | `RobTarget` | Pose of one axis, RWS 2.0 |
 
 ---
 
@@ -412,6 +414,8 @@ new RwsClient(options: RwsClientOptions)
 | `deleteFile(remotePath)` | `void` | Delete file |
 | `createDirectory(parentPath, dirName)` | `void` | Create directory |
 | `copyFile(sourcePath, destPath)` | `void` | Copy file on controller |
+| `renameFile(path, newName)` | `void` | Rename a file in place, RWS 2.0 |
+| `listFileVolumes()` | `string[]` | Controller volumes/devices |
 
 ---
 
@@ -420,7 +424,9 @@ new RwsClient(options: RwsClientOptions)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `listAllSignals(start?, limit?)` | `Signal[]` | Paginated flat list of all signals |
+| `searchSignals(criteria)` | `Signal[]` | Server-side search (name substring, type, device, network), RWS 2.0 |
 | `readSignal(network, device, name)` | `Signal` | Read a specific signal by address |
+| `getSignalConfig(network, device, name)` | `Record` | Configuration instance of a signal, RWS 2.0 |
 | `writeSignal(network, device, name, value)` | `void` | Write DO/AO/GO - value as string: `'1'`, `'0'`, `'3.14'` |
 | `listNetworks()` | `IoNetwork[]` | All I/O networks |
 | `listDevices(network)` | `IoDevice[]` | Devices on a network |
@@ -437,6 +443,7 @@ new RwsClient(options: RwsClientOptions)
 | `clearEventLog(domain?)` | `void` | Clear messages in one domain |
 | `clearAllEventLogs()` | `void` | Clear all domains |
 | `saveEventLogRaw(destination)` | `void` | Dump the full log to a file in system-dump format, RWS 2.0 |
+| `getEventLogMessage(domain, seqnum, lang?)` | `ElogMessage \| null` | One message by domain + sequence number |
 
 ---
 
