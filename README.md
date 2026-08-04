@@ -592,15 +592,22 @@ OmniCore-specific limits aren't fully documented by ABB; what the lib observes e
 
 ## Compatibility
 
-| | RobotWare 6.x (RWS 1.0) | RobotWare 7.x (RWS 2.0) |
-|--|--|--|
-| This package | ✅ `RwsClient` | ✅ `RwsClient2` |
-| IRC5 controller (real) | ✅ | n/a |
-| OmniCore controller (real) | n/a | ✅ |
-| RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) |
-| Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` |
+| | RobotWare 6.x (RWS 1.0) | RobotWare 7.x (RWS 2.0) | RobotWare 8.x (RWS 2.0) |
+|--|--|--|--|
+| This package | ✅ `RwsClient` | ✅ `RwsClient2` | ✅ `RwsClient2` |
+| IRC5 controller (real) | ✅ | n/a | n/a |
+| OmniCore controller (real) | n/a | ✅ | ✅ |
+| RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) | ✅ (RW8.x VC) |
+| Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` | ✅ via `createClient()` |
+| Write access | Mastership | Mastership | Control Station (automatic) |
 
-**Live-tested matrix** as of v1.1.0: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 440+ unit tests + 339 live protocol-coverage tests + chaos-proxy resilience suites pass against both.
+RobotWare 8 removes the mastership service and requires a registered control
+station for write access. The client detects the RobotWare version on connect
+and routes write access automatically, so the same code runs on all three
+generations. The full Control Station Service is also exposed directly
+(`requestWriteAccess`, `getWriteAccessStatus`, `setAllowMotionControl`, ...).
+
+**Live-tested matrix**: RobotWare 8.1 (OmniCore VC), RobotWare 7.21 (OmniCore VC), RobotWare 6.16 (IRC5 VC). 460+ unit tests + live protocol-coverage tests + chaos-proxy resilience suites.
 
 ---
 

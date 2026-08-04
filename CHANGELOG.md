@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RobotWare 8 support.** RW8 removes the mastership service (HTTP 410) and
+  requires a registered control station for write access. The client now detects
+  the RobotWare version on connect and routes write access automatically:
+  mastership on RW7, Control Station write access on RW8 (register once per
+  session, then request/release). Every existing write method works unchanged on
+  both. The full Control Station Service is also exposed directly:
+  `registerControlStationRemote/Local`, `requestWriteAccess`, `releaseWriteAccess`,
+  `getWriteAccessStatus`, `appealWriteAccessRelease` (+ change count),
+  `getControlStationType/Id`, `isLocalControlStationConnected`,
+  `getAllowMotionControl`, `setAllowMotionControl`, `disableExternalControl`,
+  `getTpuSafetyProtocolStatus`, plus `getRobotWareVersion`. Wire forms
+  discovered and verified end to end on an OmniCore VC RW8.1.1 (the register
+  id must be a braced GUID; registration is session-scoped).
+
 - RWS 2.0 coverage additions (verified against an OmniCore VC RW7.21): start RAPID
   from the production entry (`startProductionEntry`), load/save a full RAPID program
   (`loadProgram` / `saveProgram`), acknowledge a pending operation-mode switch

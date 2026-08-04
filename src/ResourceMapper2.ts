@@ -284,6 +284,60 @@ export function removeDipcQueue(name: string): Rws2Write {
   return { path: `/rw/dipc/${encodeURIComponent(name)}` };
 }
 
+// ─── Control Station Service (/rw/controlstation) - RobotWare 8 ──────────────
+// RW8 removes Mastership entirely (/rw/mastership returns HTTP 410 GONE) and
+// replaces it with this service. All wire forms below live-verified 2026-08-04
+// on an OmniCore VC RW8.1.1 unless noted. Registration is SESSION-scoped: the
+// register call binds THIS session to the station; a new session must
+// re-register. RW8's OPTIONS returns 204 with no form body, so field names came
+// from controller error messages (which name the missing field) and trials.
+
+/**
+ * Register this session as a remote control station. Required before any write
+ * access on RW8 (unregistered request answers 403 "Session is not part of a
+ * Control Station"). The id must be a BRACED GUID: '{8-4-4-4-12}' - other forms
+ * are rejected with "Control station id not allowed".
+ */
+export function registerControlStationRemote(name: string, id: string, pincode: string): Rws2Write {
+  return {
+    path: '/rw/controlstation/register/remote',
+    body: { 'control-station-name': name, 'control-station-id': id, pincode },
+  };
+}
+
+/** Register this session as the local control station (pendant side). Field
+ *  name from the RW8 migration guide; not live-verified (needs local presence). */
+export function registerControlStationLocal(localPresenceKey: number): Rws2Write {
+  return { path: '/rw/controlstation/register/local', body: { 'local-presence-key': String(localPresenceKey) } };
+}
+
+/** Request write access (the RW8 successor of mastership request). 204 on grant. */
+export function requestWriteAccess(): Rws2Write {
+  return { path: '/rw/controlstation/writeaccess/request' };
+}
+
+/** Release write access. 204 on success. */
+export function releaseWriteAccess(): Rws2Write {
+  return { path: '/rw/controlstation/writeaccess/release' };
+}
+
+/** Appeal to the current holder to release write access; poll the changecount
+ *  resource and re-request when it changes. */
+export function appealWriteAccessRelease(): Rws2Write {
+  return { path: '/rw/controlstation/writeaccess/release/appeal' };
+}
+
+/** Enable or disable motion control for the control station. Field name from
+ *  the RW8 migration guide; the GET side (is-enabled) is live-verified. */
+export function setAllowMotionControl(allow: boolean): Rws2Write {
+  return { path: '/rw/controlstation/allowmotioncontrol', body: { 'allow-motion-control': allow ? 'true' : 'false' } };
+}
+
+/** Explicitly disable external control. */
+export function disableExternalControl(): Rws2Write {
+  return { path: '/rw/controlstation/disableexternalcontrol' };
+}
+
 // ─── Controller Service - backup (/ctrl/backup) ──────────────────────────────
 
 /** Create a controller backup under the BACKUP volume. */

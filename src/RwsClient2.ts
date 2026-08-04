@@ -1,5 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
+import { randomUUID } from 'node:crypto';
 import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
 import * as R2 from './ResourceMapper2.js';
@@ -56,16 +57,40 @@ export class RwsClient2 {
   /** Signal name → {network, device} - populated by listAllSignals for writeSignal lookups */
   private readonly sigCoords = new Map<string, { n: string; d: string }>();
 
+  /** RobotWare major version, parsed from /rw/system on connect (null before). */
+  private rwMajor: number | null = null;
+  /** Raw rwversion string from /rw/system, e.g. '8.1.1+614'. */
+  private rwVersionRaw: string | null = null;
+  /** How write access is acquired: RW7 mastership or RW8 control-station.
+   *  Resolved from the version on connect, or lazily when /rw/mastership
+   *  answers 410 GONE (RW8 removed it). */
+  private writeAccessMode: 'mastership' | 'controlstation' | null = null;
+  /** True once THIS session registered its control station (registration is
+   *  session-scoped on RW8 - a reconnect must re-register). */
+  private controlStationRegistered = false;
+  private readonly csName: string;
+  private readonly csId: string;
+  private readonly csPincode: string;
+
   constructor(
     private readonly baseUrl: string,
     username: string,
     password: string,
-    opts: { timeout?: number; rejectUnauthorized?: boolean } = {},
+    opts: {
+      timeout?: number; rejectUnauthorized?: boolean;
+      /** RW8 control-station identity used when the controller requires
+       *  registration for write access. Defaults: name 'abb-rws-client',
+       *  a per-instance braced GUID, pincode '1234'. */
+      controlStation?: { name?: string; id?: string; pincode?: string };
+    } = {},
   ) {
     this.authHeader = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
     this.isHttps = baseUrl.startsWith('https');
     this.timeoutMs = opts.timeout ?? 10000;
     this.rejectUnauthorized = opts.rejectUnauthorized ?? false;
+    this.csName = opts.controlStation?.name ?? 'abb-rws-client';
+    this.csId = opts.controlStation?.id ?? `{${randomUUID()}}`;
+    this.csPincode = opts.controlStation?.pincode ?? '1234';
     // keepAlive reuses the TCP connection so we don't churn sessions on every poll.
     this.httpsAgent = new https.Agent({
       keepAlive: true,
@@ -249,15 +274,38 @@ export class RwsClient2 {
 
   // ─── Connection ────────────────────────────────────────────────────────────
 
-  async connect(): Promise<void> { await this.req('GET', '/rw/system'); }
+  async connect(): Promise<void> {
+    const body = await this.req('GET', '/rw/system');
+    // Cache the RobotWare version - it decides how write access works: RW7 uses
+    // /rw/mastership, RW8 removed it (410 GONE) for the Control Station Service.
+    const ver = RwsClient2.parse(body).getState('sys-system')['rwversion'] ?? '';
+    if (ver) {
+      this.rwVersionRaw = ver;
+      const major = Number(ver.split('.')[0]);
+      if (Number.isFinite(major) && major > 0) {
+        this.rwMajor = major;
+        this.writeAccessMode = major >= 8 ? 'controlstation' : 'mastership';
+      }
+    }
+  }
 
   async disconnect(): Promise<void> {
     // /logout invalidates the session server-side (frees the slot in the controller's pool).
     await this.req('GET', '/logout').catch(() => {});
     this.sessionCookie = null;
+    // Registration is session-scoped - the next session must re-register.
+    this.controlStationRegistered = false;
     // Drop pooled keep-alive sockets so the next connect() starts clean.
     this.httpsAgent.destroy();
     this.httpAgent.destroy();
+  }
+
+  /** RobotWare version string from /rw/system (e.g. '7.21.0+229', '8.1.1+614'),
+   *  cached on connect. Fetches if not connected yet. */
+  async getRobotWareVersion(): Promise<string> {
+    if (this.rwVersionRaw) { return this.rwVersionRaw; }
+    await this.connect();
+    return this.rwVersionRaw ?? '';
   }
 
   getSessionCookie(): string | null { return this.sessionCookie; }
@@ -1186,26 +1234,92 @@ export class RwsClient2 {
     return (domain === 'rapid' || domain === 'cfg') ? 'edit' : domain;
   }
 
-  requestMastership(domain: MastershipDomain): Promise<void> {
+  /** True when `e` is the RW8 "mastership is gone" signal (HTTP 410). */
+  private static isMastershipGone(e: unknown): boolean {
+    return e instanceof RwsError && e.httpStatus === 410;
+  }
+
+  /**
+   * Acquire write access the RW8 way: register this session as a remote control
+   * station (once per session - registration is session-scoped), then request
+   * write access. Live-verified 2026-08-04 on OmniCore VC RW8.1.1: register 204,
+   * request 204, a real panel write succeeds under the grant, release 204.
+   */
+  private async acquireWriteAccess(): Promise<void> {
+    if (!this.controlStationRegistered) {
+      const { path, body } = R2.registerControlStationRemote(this.csName, this.csId, this.csPincode);
+      await this.req('POST', path, body);
+      this.controlStationRegistered = true;
+    }
+    const { path } = R2.requestWriteAccess();
+    await this.req('POST', path);
+  }
+
+  private async dropWriteAccess(): Promise<void> {
+    const { path } = R2.releaseWriteAccess();
+    await this.req('POST', path);
+  }
+
+  /**
+   * Request mastership. On RobotWare 8 the mastership service is REMOVED
+   * (/rw/mastership answers 410 GONE) and write access goes through the Control
+   * Station Service instead - this method routes there automatically, keyed off
+   * the version detected at connect() or a live 410, so every write method in
+   * this client works unchanged on RW7 and RW8. Control-station write access is
+   * global: the domain argument is ignored on the RW8 path.
+   */
+  async requestMastership(domain: MastershipDomain): Promise<void> {
+    if (this.writeAccessMode === 'controlstation') { return this.acquireWriteAccess(); }
     const { path } = R2.requestMastership(this.rws2Domain(domain));
-    return this.req('POST', path).then(() => {});
+    try {
+      await this.req('POST', path);
+    } catch (e) {
+      if (!RwsClient2.isMastershipGone(e)) { throw e; }
+      this.writeAccessMode = 'controlstation';
+      await this.acquireWriteAccess();
+    }
   }
 
-  releaseMastership(domain: MastershipDomain): Promise<void> {
+  /** Release mastership; routes to control-station write-access release on RW8
+   *  (see requestMastership). */
+  async releaseMastership(domain: MastershipDomain): Promise<void> {
+    if (this.writeAccessMode === 'controlstation') { return this.dropWriteAccess(); }
     const { path } = R2.releaseMastership(this.rws2Domain(domain));
-    return this.req('POST', path).then(() => {});
+    try {
+      await this.req('POST', path);
+    } catch (e) {
+      if (!RwsClient2.isMastershipGone(e)) { throw e; }
+      this.writeAccessMode = 'controlstation';
+      await this.dropWriteAccess();
+    }
   }
 
-  /** Request mastership on ALL domains at once (RWS 2.0). Cheaper than calling per-domain. */
-  requestMastershipAll(): Promise<void> {
+  /** Request mastership on ALL domains at once (RWS 2.0). Cheaper than calling
+   *  per-domain. Routes to control-station write access on RW8 (already global). */
+  async requestMastershipAll(): Promise<void> {
+    if (this.writeAccessMode === 'controlstation') { return this.acquireWriteAccess(); }
     const { path } = R2.requestMastershipAll();
-    return this.req('POST', path).then(() => {});
+    try {
+      await this.req('POST', path);
+    } catch (e) {
+      if (!RwsClient2.isMastershipGone(e)) { throw e; }
+      this.writeAccessMode = 'controlstation';
+      await this.acquireWriteAccess();
+    }
   }
 
-  /** Release mastership on ALL domains at once (RWS 2.0). */
-  releaseMastershipAll(): Promise<void> {
+  /** Release mastership on ALL domains at once (RWS 2.0). Routes to
+   *  control-station write-access release on RW8. */
+  async releaseMastershipAll(): Promise<void> {
+    if (this.writeAccessMode === 'controlstation') { return this.dropWriteAccess(); }
     const { path } = R2.releaseMastershipAll();
-    return this.req('POST', path).then(() => {});
+    try {
+      await this.req('POST', path);
+    } catch (e) {
+      if (!RwsClient2.isMastershipGone(e)) { throw e; }
+      this.writeAccessMode = 'controlstation';
+      await this.dropWriteAccess();
+    }
   }
 
   /**
@@ -1256,6 +1370,111 @@ export class RwsClient2 {
   async listMastershipDomains(): Promise<string[]> {
     const p = RwsClient2.parse(await this.req('GET', '/rw/mastership'));
     return p.getAllStates('msh-resource-li').map(d => d['_title']).filter(Boolean) as string[];
+  }
+
+  // ─── Control Station Service `/rw/controlstation` (RobotWare 8) ─────────────
+  // RW8 removes Mastership (410 GONE) for this service. requestMastership /
+  // releaseMastership route here automatically; the methods below expose the
+  // full service directly. All parse classes live-verified 2026-08-04 on an
+  // OmniCore VC RW8.1.1. On RW7 these endpoints answer 404.
+
+  /**
+   * Register this session as a remote control station. Required once per
+   * session before write access on RW8 (registration dies with the session).
+   * Uses the identity from the constructor's `controlStation` option unless
+   * overridden. The id must be a braced GUID.
+   */
+  async registerControlStationRemote(name?: string, id?: string, pincode?: string): Promise<void> {
+    const { path, body } = R2.registerControlStationRemote(
+      name ?? this.csName, id ?? this.csId, pincode ?? this.csPincode);
+    await this.req('POST', path, body);
+    this.controlStationRegistered = true;
+  }
+
+  /** Register as the LOCAL control station (pendant side). Field from the RW8
+   *  migration guide; not exercisable from a remote client without local presence. */
+  async registerControlStationLocal(localPresenceKey: number): Promise<void> {
+    const { path, body } = R2.registerControlStationLocal(localPresenceKey);
+    await this.req('POST', path, body);
+    this.controlStationRegistered = true;
+  }
+
+  /** Request write access (RW8 successor of mastership). Registers the control
+   *  station first if this session has not yet. */
+  requestWriteAccess(): Promise<void> { return this.acquireWriteAccess(); }
+
+  /** Release write access. */
+  releaseWriteAccess(): Promise<void> { return this.dropWriteAccess(); }
+
+  /** Ask the current write-access holder to release; monitor
+   *  getWriteAccessAppealChangeCount() and re-request when it changes. */
+  async appealWriteAccessRelease(): Promise<void> {
+    const { path } = R2.appealWriteAccessRelease();
+    await this.req('POST', path);
+  }
+
+  /** Change count of release appeals (class ...-appeal-change-count). */
+  async getWriteAccessAppealChangeCount(): Promise<number> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/writeaccess/release/appeal/changecount'));
+    return Number(p.getState('controlstation-release-write-access-appeal-change-count')['changecount'] ?? 0);
+  }
+
+  /** Who holds write access, and whether external control is enabled. */
+  async getWriteAccessStatus(): Promise<{ held: boolean; heldById: string; heldByName: string; externalControlEnabled: boolean }> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/writeaccess/status'));
+    const d = p.getState('controlstation-write-access-status');
+    return {
+      held:                   d['control-station-write-access-held'] === 'true',
+      heldById:               d['held-by-control-station-Id'] ?? 'none',
+      heldByName:             d['held-by-control-station-name'] ?? 'none',
+      externalControlEnabled: d['control-station-external-control-enabled'] === 'true',
+    };
+  }
+
+  /** Control-station type of this session: 'none' | 'remote' | 'local'. */
+  async getControlStationType(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/type'));
+    return p.getState('controlstation-type')['control-station-type'] ?? 'none';
+  }
+
+  /** Control-station id bound to this session ('none' before registration). */
+  async getControlStationId(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/id'));
+    return p.getState('control-station')['control-station-Id'] ?? 'none';
+  }
+
+  /** Whether a local control station (pendant) is connected. */
+  async isLocalControlStationConnected(): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/local/isconnected'));
+    return p.getState('controlstation-local-connected')['control-station-local-isconnected'] === 'true';
+  }
+
+  /** Whether motion control is currently allowed for the control station.
+   *  The controller spells the class 'controstation-allow-motion-control'
+   *  (missing 'l' - live RW8.1.1); the corrected spelling is read as fallback. */
+  async getAllowMotionControl(): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/allowmotioncontrol'));
+    let d = p.getState('controstation-allow-motion-control');
+    if (!('is-enabled' in d)) { d = p.getState('controlstation-allow-motion-control'); }
+    return d['is-enabled'] === 'true';
+  }
+
+  /** Enable or disable motion control for the control station (RW8 motion gating). */
+  async setAllowMotionControl(allow: boolean): Promise<void> {
+    const { path, body } = R2.setAllowMotionControl(allow);
+    await this.req('POST', path, body);
+  }
+
+  /** Explicitly disable external control. */
+  async disableExternalControl(): Promise<void> {
+    const { path } = R2.disableExternalControl();
+    await this.req('POST', path);
+  }
+
+  /** TPU (pendant) safety-protocol connection state. */
+  async getTpuSafetyProtocolStatus(): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/controlstation/tpu/safety/protocol/status'));
+    return p.getState('controlstation-tpu-safety-protocol-status')['is-connected'] === 'true';
   }
 
   // ─── Devices `/rw/devices` ──────────────────────────────────────────────────

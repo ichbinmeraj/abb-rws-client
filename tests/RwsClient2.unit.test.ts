@@ -408,4 +408,91 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
   });
+
+  describe('RW8 control station and write-access failover', () => {
+    /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
+    const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+      const url = req.url ?? '';
+      if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+      if (url === '/rw/system') {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"sys-system","_title":"system","rwversion":"8.1.1+614"}]}');
+        return;
+      }
+      res.writeHead(204); res.end();
+    };
+
+    it('requestMastership falls over to register + writeaccess when mastership answers 410', async () => {
+      const { server, port, requests } = await startServer(rw8Handler);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p',
+          { controlStation: { name: 'test-cs', id: '{11111111-2222-3333-4444-555555555555}', pincode: '9999' } });
+        await client.requestMastership('rapid');
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toContain('POST /rw/mastership/edit/request');
+        expect(urls).toContain('POST /rw/controlstation/register/remote');
+        expect(urls).toContain('POST /rw/controlstation/writeaccess/request');
+        const reg = requests.find(r => r.url === '/rw/controlstation/register/remote');
+        expect(reg?.body).toBe('control-station-name=test-cs&control-station-id=%7B11111111-2222-3333-4444-555555555555%7D&pincode=9999');
+
+        // Second acquire goes straight to write access: no more mastership tries,
+        // no re-registration (session-scoped, already registered).
+        const before = requests.length;
+        await client.requestMastership('motion');
+        const later = requests.slice(before).map(r => `${r.method} ${r.url}`);
+        expect(later).toEqual(['POST /rw/controlstation/writeaccess/request']);
+
+        await client.releaseMastership('motion');
+        expect(requests[requests.length - 1].url).toBe('/rw/controlstation/writeaccess/release');
+      } finally { server.close(); }
+    });
+
+    it('connect() reads rwversion 8.x and routes write access without trying mastership', async () => {
+      const { server, port, requests } = await startServer(rw8Handler);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.connect();
+        expect(await client.getRobotWareVersion()).toBe('8.1.1+614');
+        await client.requestMastership('rapid');
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls.some(u => u.includes('/rw/mastership'))).toBe(false);
+        expect(urls).toContain('POST /rw/controlstation/writeaccess/request');
+      } finally { server.close(); }
+    });
+
+    it('RW7 path is untouched: mastership 204 means no controlstation calls', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        await client.releaseMastership('rapid');
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toEqual(['POST /rw/mastership/edit/request', 'POST /rw/mastership/edit/release']);
+      } finally { server.close(); }
+    });
+
+    it('getWriteAccessStatus parses the live RW8 status shape', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"controlstation-write-access-status","_title":"write-access-status","held-by-control-station-Id":"{1111}","held-by-control-station-name":"probe-cs","control-station-write-access-held":"true","control-station-external-control-enabled":"true"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getWriteAccessStatus()).toEqual({
+          held: true, heldById: '{1111}', heldByName: 'probe-cs', externalControlEnabled: true,
+        });
+      } finally { server.close(); }
+    });
+
+    it('getAllowMotionControl reads the controller-typo class controstation-allow-motion-control', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"controstation-allow-motion-control","_title":"allow-motion-control","is-enabled":"false"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getAllowMotionControl()).toBe(false);
+      } finally { server.close(); }
+    });
+  });
 });
