@@ -31,7 +31,11 @@ describe('IRWSAdapter shape', () => {
   it('parity methods exist on BOTH protocol surfaces under the same canonical name', () => {
     // Methods added by the coverage loop must not fork names between protocols:
     // one API, any controller. Guard the canonical names on both sides.
-    const parity = ['startProductionEntry', 'getRobTarget', 'saveModule', 'listProgress', 'getProgress'];
+    const parity = [
+      'startProductionEntry', 'getRobTarget', 'saveModule', 'listProgress', 'getProgress',
+      'listServiceRoutines', 'getModuleInfo', 'getTaskProgramInfo', 'listFileVolumes',
+      'saveProgram', 'loadCfgFile', 'saveCfgFile', 'setActiveTool', 'setActiveWobj',
+    ];
     const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
     const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });

@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
   and `getProgress` (track asynchronous operations such as backups and event-log
   dumps).
+- Cross-protocol parity batch, live-verified on RW6.16, RW7.21 and RW8.1 VCs:
+  `listServiceRoutines` (all three generations; the controller spells the field
+  `routine-name` on RWS 1.0 and `routine_name` on RWS 2.0, both handled), and on
+  the RWS 1.0 side `getModuleInfo`, `getTaskProgramInfo` (XML representation:
+  the RW6.16 JSON template for this resource is broken and returns unrendered
+  template source), `listFileVolumes`, `saveProgram`, `loadCfgFile`,
+  `saveCfgFile`, `setActiveTool` and `setActiveWobj` (mechunit `?action=set`
+  under motion mastership).
 
 ### Fixed
 

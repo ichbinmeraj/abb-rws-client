@@ -1140,6 +1140,18 @@ export class RwsClient2 {
 
   // ─── Service routine / PROC call ────────────────────────────────────────────
 
+  /** List callable service routines of a task. Live-verified 2026-08-04 on RW7.21
+   *  and RW8.1.1 VCs: class rap-task-routine, spans routine_name / url_to_routine
+   *  (RWS 1.0 spells them with hyphens - both read for safety). */
+  async listServiceRoutines(task: string): Promise<Array<{ name: string; url: string }>> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/serviceroutine`));
+      return p.getAllStates('rap-task-routine')
+        .map(d => ({ name: d['routine_name'] ?? d['routine-name'] ?? '', url: d['url_to_routine'] ?? d['url-to-routine'] ?? '' }))
+        .filter(x => x.name);
+    } catch { return []; }
+  }
+
   async callServiceRoutine(task: string, routineName: string, args: Record<string, string> = {}): Promise<void> {
     await this.req('POST', `/rw/rapid/tasks/${task}/serviceroutine`, { routine: routineName, ...args });
   }

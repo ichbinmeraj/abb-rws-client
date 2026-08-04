@@ -872,6 +872,57 @@ export class RWS1Adapter implements IRWSAdapter {
     await this.rws1Post(`/rw/rapid/tasks/${task}?action=holdtorun`, `action=${action}`);
   }
 
+  /** List callable service routines of a task. Live-verified 2026-08-04 on RW6.16
+   *  VC: class rap-task-routine, spans routine-name and url-to-routine (RWS 2.0
+   *  spells them routine_name / url_to_routine - both read for safety). */
+  async listServiceRoutines(task: string): Promise<Array<{ name: string; url: string }>> {
+    try {
+      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/serviceroutine`);
+      return r.states
+        .filter(s => (s as Record<string, string>)['_type'] === 'rap-task-routine')
+        .map(s => {
+          const d = s as Record<string, string>;
+          return { name: d['routine-name'] ?? d['routine_name'] ?? '', url: d['url-to-routine'] ?? d['url_to_routine'] ?? '' };
+        })
+        .filter(x => x.name);
+    } catch { return []; }
+  }
+
+  /** Module metadata (filename, attributes). Live-verified 2026-08-04 on RW6.16:
+   *  GET /rw/rapid/modules/{module}?task= returns class rap-module with
+   *  taskname/modname/filename/attribute. Parity with RwsClient2.getModuleInfo. */
+  async getModuleInfo(task: string, moduleName: string): Promise<Record<string, string>> {
+    const r = await this.rws1Get(`/rw/rapid/modules/${encodeURIComponent(moduleName)}?task=${encodeURIComponent(task)}`);
+    const d = (r.states.find(s => (s as Record<string, string>)['_type'] === 'rap-module') ?? r.state ?? {}) as Record<string, string>;
+    return d;
+  }
+
+  /**
+   * Program resource of a task (name, entrypoint if loaded). Parity with
+   * RwsClient2.getTaskProgramInfo. Read via XHTML: on RW6.16 the ?json=1
+   * representation of this resource is a BROKEN template (the controller
+   * returns unrendered jtmpl directives - live-observed 2026-08-04), so the
+   * XML form is the only reliable one.
+   */
+  async getTaskProgramInfo(task: string): Promise<Record<string, string>> {
+    const res = await this.client.request('GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/program`);
+    if (res.status === 204 || !res.body) { return {}; }
+    const out: Record<string, string> = {};
+    const li = res.body.match(/<li class="rap-program"[^>]*>([^]*?)<\/li>/);
+    for (const m of (li ? li[1] : res.body).matchAll(/<span class="([^"]+)">([^<]*)<\/span>/g)) {
+      if (m[1] !== 'code') { out[m[1]] = m[2]; }
+    }
+    return out;
+  }
+
+  /** Save a task's program to disk. Wire form verified 2026-08-04 on RW6.16
+   *  (a bogus path root fails with a file error, proving action and field parse):
+   *  POST /rw/rapid/tasks/{task}/program?action=save, body path=. */
+  async saveProgram(task: string, destination: string): Promise<void> {
+    await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/program?action=save`,
+      `path=${encodeURIComponent(destination)}`);
+  }
+
   async startProductionMode(): Promise<void> {
     await this.rws1Post('/rw/rapid/execution?action=start-prod', '');
   }
@@ -883,6 +934,63 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   // ── Stage 13: Network / time / compatibility (5 methods) ──────────────
+
+  /** List controller file volumes (devices). Live-verified 2026-08-04 on RW6.16:
+   *  GET /fileservice lists class fs-device entries titled 'C:' etc. Parity with
+   *  RwsClient2.listFileVolumes. */
+  async listFileVolumes(): Promise<string[]> {
+    try {
+      const r = await this.rws1Get('/fileservice');
+      const names = r.states
+        .filter(s => (s as Record<string, string>)['_type'] === 'fs-device')
+        .map(s => (s as Record<string, string>)['_title'])
+        .filter(Boolean) as string[];
+      return names.length > 0 ? names : ['$HOME', '$TEMP', '$BACKUP'];
+    } catch { return ['$HOME', '$TEMP', '$BACKUP']; }
+  }
+
+  /** Load a CFG file into the configuration database. Wire form verified
+   *  2026-08-04 on RW6.16 (a bogus file fails with "file or file path is either
+   *  invalid or read only", proving action and both fields parse):
+   *  POST /rw/cfg?action=load, body filepath + action-type. Requires cfg mastership. */
+  async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'replace'): Promise<void> {
+    await this.rws1Post('/rw/cfg?action=load',
+      `filepath=${encodeURIComponent(filepath)}&action-type=${action}`);
+  }
+
+  /** Save a CFG domain to a file. Wire form verified 2026-08-04 on RW6.16
+   *  (POST /rw/cfg/{domain}?action=saveas, body filepath - the field parses; the
+   *  VC rejected every path root tried as "invalid or read only", so path
+   *  validity is controller-dependent, matching the RWS 2.0 saveas behavior). */
+  async saveCfgFile(domain: string, filepath: string): Promise<void> {
+    await this.rws1Post(`/rw/cfg/${encodeURIComponent(domain)}?action=saveas`,
+      `filepath=${encodeURIComponent(filepath)}`);
+  }
+
+  /** Set the active tool of a mechunit. Wire form live-verified 2026-08-04 on
+   *  RW6.16: POST /rw/motionsystem/mechunits/{m}?action=set, body tool= - without
+   *  mastership it answers the mastership 403, with motion mastership it applies.
+   *  Acquire -> set -> release-in-finally. */
+  async setActiveTool(mechunit: string, toolName: string): Promise<void> {
+    await this.client.requestMastership('motion');
+    try {
+      await this.rws1Post(`/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}?action=set`,
+        `tool=${encodeURIComponent(toolName)}`);
+    } finally {
+      await this.client.releaseMastership('motion').catch(() => {});
+    }
+  }
+
+  /** Set the active work object of a mechunit (same wire form as setActiveTool). */
+  async setActiveWobj(mechunit: string, wobjName: string): Promise<void> {
+    await this.client.requestMastership('motion');
+    try {
+      await this.rws1Post(`/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}?action=set`,
+        `wobj=${encodeURIComponent(wobjName)}`);
+    } finally {
+      await this.client.releaseMastership('motion').catch(() => {});
+    }
+  }
 
   async getNetworkConfig(): Promise<Record<string, string>> {
     try {
