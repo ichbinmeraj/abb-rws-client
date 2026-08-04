@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
   and `getProgress` (track asynchronous operations such as backups and event-log
   dumps).
+- IO and file additions, live-verified on the RW7.21 VC: `searchSignals`
+  (server-side signal search; the name criterion is a substring match, filters
+  compose as AND, and hits feed the same coordinate cache `writeSignal` uses),
+  `getSignalConfig` (EIO_SIGNAL configuration of one signal), and `renameFile`
+  (the wire field is `fs-newname`; the published spec's `new-filename` is
+  rejected by the controller).
 - Cross-protocol parity batch, live-verified on RW6.16, RW7.21 and RW8.1 VCs:
   `listServiceRoutines` (all three generations; the controller spells the field
   `routine-name` on RWS 1.0 and `routine_name` on RWS 2.0, both handled), and on

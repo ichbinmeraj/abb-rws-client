@@ -821,6 +821,33 @@ export class RwsClient2 {
     return { name: d['name'] ?? name, value: d['lvalue'] ?? '0', type: (d['type'] ?? 'DI') as Signal['type'], lvalue: d['lvalue'] ?? '0' };
   }
 
+  /**
+   * Search IO signals by criteria instead of paging through the full list.
+   * `name` is a SUBSTRING match (not a wildcard - '*' matches nothing); criteria
+   * compose as AND. Live-verified 2026-08-04 (RW7.21): type filter alone found
+   * every DO, device filter scoped correctly. Hits populate the same
+   * network/device cache writeSignal uses.
+   */
+  async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
+    const { path, body } = R2.searchSignals(criteria);
+    const p = RwsClient2.parse(await this.req('POST', path, body));
+    return p.getAllStates('ios-signal-li').map(s => {
+      const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
+      const parts = (s['_title'] ?? '').split('/');
+      if (parts.length >= 3) { this.sigCoords.set(name, { n: parts[0], d: parts[1] }); }
+      return { name, value: s['lvalue'] ?? '0', type: (s['type'] ?? 'DI') as Signal['type'], lvalue: s['lvalue'] ?? '0' };
+    });
+  }
+
+  /** Configuration properties of one signal (EIO_SIGNAL instance: category,
+   *  device mapping, access, ...). Live-verified 2026-08-04 (RW7.21), class
+   *  ios-signal-config-general. */
+  async getSignalConfig(network: string, device: string, name: string): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/iosystem/signals/${network}/${device}/${name}/config`));
+    return p.getState('ios-signal-config-general');
+  }
+
   writeSignal(network: string, device: string, name: string, value: string): Promise<void> {
     let n = network, d = device;
     if (!n || !d) {
@@ -905,6 +932,14 @@ export class RwsClient2 {
 
   copyFile(sourcePath: string, destPath: string): Promise<void> {
     return this.req('POST', `/fileservice/${this.rws2Path(sourcePath)}/copy`, { destination: destPath }).then(() => {});
+  }
+
+  /** Rename a file in place (same directory). The body field is `fs-newname` -
+   *  the published spec's `new-filename` is rejected. Live-verified 2026-08-04
+   *  (RW7.21) with a create/rename/read-back round trip. */
+  renameFile(path: string, newName: string): Promise<void> {
+    const { path: p, body } = R2.renameFile(this.rws2Path(path), newName);
+    return this.req('POST', p, body).then(() => {});
   }
 
   // ─── Configuration database `/rw/cfg` ───────────────────────────────────────

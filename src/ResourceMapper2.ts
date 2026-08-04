@@ -196,6 +196,32 @@ export function setSignalValue(network: string, device: string, name: string, va
   return { path: `/rw/iosystem/signals/${network}/${device}/${name}/set-value`, body: { lvalue: value } };
 }
 
+/**
+ * Search IO signals by criteria. The `name` criterion is a SUBSTRING match (not
+ * a wildcard or regex - '*' and '.*' match nothing); criteria compose as AND.
+ * Live-verified 2026-08-04 (RW7.21). Results are standard ios-signal-li entries.
+ */
+export function searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Rws2Write {
+  const body: Record<string, string> = {};
+  if (criteria.name)     { body['name'] = criteria.name; }
+  if (criteria.device)   { body['device'] = criteria.device; }
+  if (criteria.network)  { body['network'] = criteria.network; }
+  if (criteria.category) { body['category'] = criteria.category; }
+  if (criteria.type)     { body['type'] = criteria.type; }
+  return { path: '/rw/iosystem/signals/signal-search', body };
+}
+
+// ─── File Service (/fileservice) ─────────────────────────────────────────────
+
+/**
+ * Rename a file in place. The body field is `fs-newname` - the published spec's
+ * `new-filename` is rejected with "Invalid/No Query Parameter". Live-verified
+ * 2026-08-04 (RW7.21): create, rename, read back round trip.
+ */
+export function renameFile(dirAndFile: string, newName: string): Rws2Write {
+  return { path: `/fileservice/${dirAndFile}/rename`, body: { 'fs-newname': newName } };
+}
+
 // ─── Elog Service (/rw/elog) ─────────────────────────────────────────────────
 
 /** Read event-log messages for a domain (0 = common controller log). */

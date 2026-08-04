@@ -409,6 +409,48 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 4, IO search + signal config + rename)', () => {
+    it('searchSignals POSTs only the given criteria and parses ios-signal-li hits', async () => {
+      const { server, port, requests } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/rw/iosystem/"}},"_embedded":{"resources":[{"_links":{"self":{"href":"signals/Net/Dev/do1"}},"_type":"ios-signal-li","_title":"Net/Dev/do1","name":"do1","type":"DO","lvalue":"1"}]}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const hits = await client.searchSignals({ type: 'DO' });
+        expect(requests[0].url).toBe('/rw/iosystem/signals/signal-search');
+        expect(requests[0].body).toBe('type=DO');
+        expect(hits).toEqual([{ name: 'do1', value: '1', type: 'DO', lvalue: '1' }]);
+        // The search must feed the coords cache so writeSignal works by name
+        await client.writeSignal('', '', 'do1', '0');
+        expect(requests[1].url).toBe('/rw/iosystem/signals/Net/Dev/do1/set-value');
+      } finally { server.close(); }
+    });
+
+    it('getSignalConfig parses ios-signal-config-general', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ios-signal-config-general","_title":"Net/Dev/di1","cfgname":"EIO_SIGNAL","name":"di1","signaltype":"DI","device":"Dev"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const cfg = await client.getSignalConfig('Net', 'Dev', 'di1');
+        expect(cfg['cfgname']).toBe('EIO_SIGNAL');
+        expect(cfg['signaltype']).toBe('DI');
+      } finally { server.close(); }
+    });
+
+    it('renameFile POSTs fs-newname to the rename action', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.renameFile('TEMP/old.txt', 'new.txt');
+        expect(requests[0].url).toBe('/fileservice/TEMP/old.txt/rename');
+        expect(requests[0].body).toBe('fs-newname=new.txt');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
