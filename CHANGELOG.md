@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
   and `getProgress` (track asynchronous operations such as backups and event-log
   dumps).
+- Motion niche reads, live-verified on the RW7.21 VC: `getMotionSupervision`,
+  `getPathSupervision`, `getCollisionPredictionModel`, `getAxisPose`, and
+  `checkMotionChangeCount`. On the RWS 1.0 side `getEventLogMessage` (the only
+  one of these RW6.16 serves; supervision, UAS and lock-state reads are
+  protocol-absent there).
 - Niche read batch, all live-verified on the RW7.21 VC: `getOperationModeLockState`,
   `getEventLogMessage` and `getEventLogMessageBySeqnum` (single-message lookup),
   `getLoginInfo`, `checkGrantExists`, `listAllGrants`, `listCurrentUserGrants`

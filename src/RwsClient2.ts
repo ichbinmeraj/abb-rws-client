@@ -887,6 +887,49 @@ export class RwsClient2 {
     return p.getState('ios-signal-config-general');
   }
 
+  /** Motion (jog) supervision state of a mechunit: enabled + sensitivity level.
+   *  Live-verified 2026-08-04 (RW7.21), class ms-motionsupervision. */
+  async getMotionSupervision(mechunit = 'ROB_1'): Promise<{ enabled: boolean; level: number }> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/motionsupervision`));
+    const d = p.getState('ms-motionsupervision');
+    return { enabled: (d['mode-enabled'] ?? '').toUpperCase() === 'TRUE', level: Number(d['level'] ?? 0) };
+  }
+
+  /** Path supervision state of a mechunit: mode + level. Live-verified
+   *  2026-08-04 (RW7.21), class ms-pathsupervision. */
+  async getPathSupervision(mechunit = 'ROB_1'): Promise<{ mode: string; level: number }> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/pathsupervision`));
+    const d = p.getState('ms-pathsupervision');
+    return { mode: d['mode'] ?? 'unknown', level: Number(d['level'] ?? 0) };
+  }
+
+  /** Collision-prediction model of a mechunit (model file + init state).
+   *  Live-verified 2026-08-04 (RW7.21), class ms-mechunit-collision-prediction-model. */
+  async getCollisionPredictionModel(mechunit = 'ROB_1'): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/coll-pred-model`));
+    return p.getState('ms-mechunit-collision-prediction-model');
+  }
+
+  /** Pose of one axis of a mechunit. Live-verified 2026-08-04 (RW7.21),
+   *  class ms-mechunit-axispose (x/y/z + q1..q4). */
+  async getAxisPose(mechunit: string, axis: number): Promise<RobTarget> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/axes/${axis}/pose`));
+    const d = p.getState('ms-mechunit-axispose');
+    return { x: +d['x'], y: +d['y'], z: +d['z'], q1: +d['q1'], q2: +d['q2'], q3: +d['q3'], q4: +d['q4'] };
+  }
+
+  /** Whether the motion configuration changed relative to a change count
+   *  previously read from getMotionChangeCount. Live-verified 2026-08-04
+   *  (RW7.21), class check-changecount, span change-state. */
+  async checkMotionChangeCount(changecount: number): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/checkchangecount/${changecount}`));
+    return (p.getState('check-changecount')['change-state'] ?? '').toUpperCase() === 'TRUE';
+  }
+
   /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
    *  (RW7.21), class ios-network-li. */
   async getIoNetwork(network: string): Promise<Record<string, string>> {

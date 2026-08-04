@@ -491,6 +491,28 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
+    it('motion supervision, path supervision, axis pose and change-count reads parse the live shapes', async () => {
+      const bodies: Record<string, string> = {
+        motionsupervision: '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ms-motionsupervision","_title":"motionsupervision","mode-enabled":"TRUE","level":"100"}]}',
+        pathsupervision: '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ms-pathsupervision","_title":"pathsupervision","mode":"ON","level":"100"}]}',
+        pose: '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ms-mechunit-axispose","_title":"axispose","x":"0","y":"0","z":"0","q1":"1","q2":"0","q3":"0","q4":"0"}]}',
+        checkchangecount: '{"_links":{"base":{"href":"https://x/"}},"status":{"code":294912},"state":[{"_type":"check-changecount","_title":"changecount","change-state":"FALSE"}]}',
+      };
+      const { server, port } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        const key = Object.keys(bodies).find(k => url.includes(k)) ?? 'pose';
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end(bodies[key]);
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getMotionSupervision()).toEqual({ enabled: true, level: 100 });
+        expect(await client.getPathSupervision()).toEqual({ mode: 'ON', level: 100 });
+        expect((await client.getAxisPose('ROB_1', 1)).q1).toBe(1);
+        expect(await client.checkMotionChangeCount(1)).toBe(false);
+      } finally { server.close(); }
+    });
+
     it('listCfgTypeAttributes parses cfg-dt-attribute entries', async () => {
       const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"cfg-dt-attribute","_title":"Name","name":"Name","type":"string","numbers":"1","mandatory":"false"}]}');
       try {

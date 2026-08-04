@@ -2,6 +2,7 @@ import { RwsClient } from './RwsClient.js';
 import type {
   ExecutionCycle, JointTarget, RobTarget, RapidSymbolSearchParams,
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
+  ElogMessage,
 } from './types.js';
 import * as http from 'http';
 import * as crypto from 'crypto';
@@ -870,6 +871,25 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
     await this.rws1Post(`/rw/rapid/tasks/${task}?action=holdtorun`, `action=${action}`);
+  }
+
+  /** One event-log message by domain and sequence number. Live-verified
+   *  2026-08-04 on RW6.16: GET /rw/elog/{d}/{seq}, class elog-message (same
+   *  shape as RWS 2.0). Null when unknown. Note: login-info, grant-exists,
+   *  /uas/grants, opmode lock-state and motionsupervision are protocol-absent
+   *  on RW6.16 (404) - the elog lookup is the only batch-5 read RWS 1.0 has. */
+  async getEventLogMessage(domain: number, seqnum: number, lang = 'en'): Promise<ElogMessage | null> {
+    try {
+      const r = await this.rws1Get(`/rw/elog/${domain}/${seqnum}?lang=${encodeURIComponent(lang)}`);
+      const m = (r.states.find(s => (s as Record<string, string>)['_type'] === 'elog-message') ?? {}) as Record<string, string>;
+      if (!m['code']) { return null; }
+      return {
+        seqnum, code: Number(m['code'] ?? 0), msgtype: Number(m['msgtype'] ?? 1) as 1 | 2 | 3,
+        timestamp: m['tstamp'] ?? '', srcName: m['src-name'] ?? '',
+        title: m['title'] ?? `Event ${m['code']}`, desc: m['desc'] ?? '',
+        causes: m['causes'] ?? '', consequences: m['conseqs'] ?? '', actions: m['actions'] ?? '',
+      };
+    } catch { return null; }
   }
 
   /** List callable service routines of a task. Live-verified 2026-08-04 on RW6.16
