@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
   and `getProgress` (track asynchronous operations such as backups and event-log
   dumps).
+- Niche read batch, all live-verified on the RW7.21 VC: `getOperationModeLockState`,
+  `getEventLogMessage` and `getEventLogMessageBySeqnum` (single-message lookup),
+  `getLoginInfo`, `checkGrantExists`, `listAllGrants`, `listCurrentUserGrants`
+  (UAS reads; `/uas/users` and `/uas/roles` need the UAS administration grant),
+  `getIoNetwork`, `getIoNetworkConfig`, `getIoDeviceInfo`, `getIoDeviceConfig`,
+  and `listCfgTypeAttributes` (attribute schema of a configuration type).
 - RWS 1.0 debugger and program parity, live-verified on the RW6.16 VC:
   `setProgramPointer` (pcp `?action=set-pp-routine`; the controller requires
   BOTH module and routine) and `loadProgram` (`?action=loadprog`, body

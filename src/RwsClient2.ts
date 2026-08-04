@@ -377,6 +377,13 @@ export class RwsClient2 {
     return this.req('POST', path, body).then(() => {});
   }
 
+  /** Lock state of the operation-mode selector ('locked' | 'unlocked').
+   *  Live-verified 2026-08-04 (RW7.21), class pnl-opmode-lockstate-li. */
+  async getOperationModeLockState(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/opmode/lock-state'));
+    return p.getState('pnl-opmode-lockstate-li')['lockstate'] ?? 'unknown';
+  }
+
   /**
    * Switch the controller's operation mode. **Virtual controllers only** -
    * real hardware respects the FlexPendant key switch.
@@ -793,6 +800,38 @@ export class RwsClient2 {
     return this.req('POST', path).then(() => {});
   }
 
+  /** One event-log message by domain and sequence number. Live-verified
+   *  2026-08-04 (RW7.21), class elog-message. Returns null when unknown. */
+  async getEventLogMessage(domain: number, seqnum: number, lang = 'en'): Promise<ElogMessage | null> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', `/rw/elog/${domain}/${seqnum}?lang=${encodeURIComponent(lang)}`));
+      const m = p.getState('elog-message');
+      if (!m['code']) { return null; }
+      return {
+        seqnum, code: Number(m['code'] ?? 0), msgtype: Number(m['msgtype'] ?? 1) as 1 | 2 | 3,
+        timestamp: m['tstamp'] ?? '', srcName: m['src-name'] ?? '',
+        title: m['title'] ?? `Event ${m['code']}`, desc: m['desc'] ?? '',
+        causes: m['causes'] ?? '', consequences: m['conseqs'] ?? '', actions: m['actions'] ?? '',
+      };
+    } catch { return null; }
+  }
+
+  /** One event-log message by global sequence number (across domains).
+   *  Live-verified 2026-08-04 (RW7.21): GET /rw/elog/seqnum/{n}. */
+  async getEventLogMessageBySeqnum(seqnum: number, lang = 'en'): Promise<ElogMessage | null> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', `/rw/elog/seqnum/${seqnum}?lang=${encodeURIComponent(lang)}`));
+      const m = p.getState('elog-message');
+      if (!m['code']) { return null; }
+      return {
+        seqnum, code: Number(m['code'] ?? 0), msgtype: Number(m['msgtype'] ?? 1) as 1 | 2 | 3,
+        timestamp: m['tstamp'] ?? '', srcName: m['src-name'] ?? '',
+        title: m['title'] ?? `Event ${m['code']}`, desc: m['desc'] ?? '',
+        causes: m['causes'] ?? '', consequences: m['conseqs'] ?? '', actions: m['actions'] ?? '',
+      };
+    } catch { return null; }
+  }
+
   /** Dump the full event log to a file in system-dump format (diagnostics/support).
    *  POST /rw/elog/saveraw, field `path`, OPTIONS-verified 2026-08-04 (RW7.21).
    *  Note: `path` uses the controller's virtual-root scheme (shared with cfg saveas);
@@ -846,6 +885,36 @@ export class RwsClient2 {
     const p = RwsClient2.parse(await this.req(
       'GET', `/rw/iosystem/signals/${network}/${device}/${name}/config`));
     return p.getState('ios-signal-config-general');
+  }
+
+  /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
+   *  (RW7.21), class ios-network-li. */
+  async getIoNetwork(network: string): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req('GET', `/rw/iosystem/networks/${encodeURIComponent(network)}`));
+    return p.getState('ios-network-li');
+  }
+
+  /** Configuration of one IO network (its cfg instance). Live-verified
+   *  2026-08-04 (RW7.21), class ios-network-config-general. */
+  async getIoNetworkConfig(network: string): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req('GET', `/rw/iosystem/networks/${encodeURIComponent(network)}/config`));
+    return p.getState('ios-network-config-general');
+  }
+
+  /** Detail of one IO device. Live-verified 2026-08-04 (RW7.21), class
+   *  ios-device-li. */
+  async getIoDeviceInfo(network: string, device: string): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/iosystem/devices/${encodeURIComponent(network)}/${encodeURIComponent(device)}`));
+    return p.getState('ios-device-li');
+  }
+
+  /** Configuration of one IO device (its cfg instance). Live-verified
+   *  2026-08-04 (RW7.21), class ios-device-config-general. */
+  async getIoDeviceConfig(network: string, device: string): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/iosystem/devices/${encodeURIComponent(network)}/${encodeURIComponent(device)}/config`));
+    return p.getState('ios-device-config-general');
   }
 
   writeSignal(network: string, device: string, name: string, value: string): Promise<void> {
@@ -1064,6 +1133,14 @@ export class RwsClient2 {
    */
   async removeCfgInstance(domain: string, type: string, instance: string): Promise<void> {
     await this.req('DELETE', `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}`);
+  }
+
+  /** Attribute schema of a cfg type (name, type, min/max, mandatory per
+   *  attribute). Live-verified 2026-08-04 (RW7.21), class cfg-dt-attribute. */
+  async listCfgTypeAttributes(domain: string, type: string): Promise<Array<Record<string, string>>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/cfg/${encodeURIComponent(domain)}/${encodeURIComponent(type)}/attributes`));
+    return p.getAllStates('cfg-dt-attribute');
   }
 
   async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'replace'): Promise<void> {
@@ -2385,6 +2462,38 @@ export class RwsClient2 {
   /** Request 'modify' privilege. Triggers a FlexPendant approval popup. */
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
     await this.req('POST', '/users/rmmp', { privilege: level });
+  }
+
+  /** Info about the logged-in user session (uas-id, user-name, locale,
+   *  application). Live-verified 2026-08-04 (RW7.21), class user-login-info. */
+  async getLoginInfo(): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req('GET', '/users/login-info'));
+    return p.getState('user-login-info');
+  }
+
+  /** Whether the logged-in user holds a UAS grant. Pre-check before an
+   *  operation that would 403. Live-verified 2026-08-04 (RW7.21). */
+  async checkGrantExists(grant: string): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req('GET', `/users/grant-exists?grant=${encodeURIComponent(grant)}`));
+    return p.getState('user-grant-status')['status'] === 'true';
+  }
+
+  /** All grants DEFINED on the controller (name, description, display name).
+   *  Live-verified 2026-08-04 (RW7.21), class grant-info. (The _title of each
+   *  entry is an unrendered controller template - fields are correct.) */
+  async listAllGrants(): Promise<Array<{ name: string; description?: string; displayName?: string }>> {
+    const p = RwsClient2.parse(await this.req('GET', '/uas/grants'));
+    return p.getAllStates('grant-info').map(g => ({
+      name: g['grant-name'] ?? '', description: g['grant-description'], displayName: g['display-name'],
+    })).filter(g => g.name);
+  }
+
+  /** Grants HELD by the logged-in user. Live-verified 2026-08-04 (RW7.21),
+   *  class uas-grant. (/uas/users and /uas/roles answer 403 without the UAS
+   *  administration grant.) */
+  async listCurrentUserGrants(): Promise<string[]> {
+    const p = RwsClient2.parse(await this.req('GET', '/uas/user/grants'));
+    return p.getAllStates('uas-grant').map(g => g['grantname']).filter(Boolean) as string[];
   }
 
   // ─── Jogging ─────────────────────────────────────────────────────────────────

@@ -451,6 +451,57 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 5, niche reads)', () => {
+    const hal = (body: string): ReturnType<typeof startServer> => startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end(body);
+    });
+
+    it('getOperationModeLockState parses pnl-opmode-lockstate-li', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"status":{"code":294912},"state":[{"_type":"pnl-opmode-lockstate-li","_title":"lock-state","lockstate":"unlocked"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getOperationModeLockState()).toBe('unlocked');
+      } finally { server.close(); }
+    });
+
+    it('getEventLogMessage parses a single elog-message', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"status":{"code":294912},"state":[{"_type":"elog-message","_title":"/rw/elog/0/1","msgtype":"1","code":"10046","tstamp":"2026-08-04 T 03:26:39","title":"System reset","desc":"Loading done"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const m = await client.getEventLogMessage(0, 1);
+        expect(m?.code).toBe(10046);
+        expect(m?.title).toBe('System reset');
+      } finally { server.close(); }
+    });
+
+    it('checkGrantExists and listCurrentUserGrants parse the UAS shapes', async () => {
+      const { server, port } = await startServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        if ((req.url ?? '').includes('grant-exists')) {
+          res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"user-grant-status","_title":"grant-exist","status":"true"}]}');
+        } else {
+          res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"uas-grant","_title":"0","grantname":"UAS_CFG_WRITE"},{"_type":"uas-grant","_title":"1","grantname":"UAS_BACKUP"}]}');
+        }
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.checkGrantExists('UAS_REMOTE_LOGIN')).toBe(true);
+        expect(await client.listCurrentUserGrants()).toEqual(['UAS_CFG_WRITE', 'UAS_BACKUP']);
+      } finally { server.close(); }
+    });
+
+    it('listCfgTypeAttributes parses cfg-dt-attribute entries', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"cfg-dt-attribute","_title":"Name","name":"Name","type":"string","numbers":"1","mandatory":"false"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const attrs = await client.listCfgTypeAttributes('EIO', 'EIO_SIGNAL');
+        expect(attrs[0]['name']).toBe('Name');
+        expect(attrs[0]['type']).toBe('string');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
