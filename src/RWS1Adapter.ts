@@ -923,6 +923,31 @@ export class RWS1Adapter implements IRWSAdapter {
       `path=${encodeURIComponent(destination)}`);
   }
 
+  /** Load a full RAPID program (.pgf) into a task. Wire form verified 2026-08-04
+   *  on RW6.16: POST /rw/rapid/tasks/{task}/program?action=loadprog, body
+   *  progpath= (a bogus file fails with "File not found", proving the parse).
+   *  RWS 1.0 has no loadmode field - the argument is accepted for signature
+   *  parity with RwsClient2.loadProgram and ignored. */
+  async loadProgram(task: string, progpath: string, _loadmode: 'add' | 'replace' = 'replace'): Promise<void> {
+    await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/program?action=loadprog`,
+      `progpath=${encodeURIComponent(progpath)}`);
+  }
+
+  /**
+   * Set the program pointer to a routine. Live-verified 2026-08-04 on RW6.16:
+   * POST /rw/rapid/tasks/{task}/pcp?action=set-pp-routine with BOTH module= and
+   * routine= (routine alone answers "Invalid data") -> 204 under rapid
+   * mastership. RWS 1.0 has no row/col cursor form; those params are not
+   * supported here (parity signature with RwsClient2.setProgramPointer).
+   */
+  async setProgramPointer(task: string, params: { module?: string; routine: string; row?: number; col?: number }): Promise<void> {
+    if (!params.module) {
+      throw new Error('RWS 1.0 set-pp-routine requires the module name (module + routine)');
+    }
+    await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/pcp?action=set-pp-routine`,
+      `module=${encodeURIComponent(params.module)}&routine=${encodeURIComponent(params.routine)}`);
+  }
+
   async startProductionMode(): Promise<void> {
     await this.rws1Post('/rw/rapid/execution?action=start-prod', '');
   }

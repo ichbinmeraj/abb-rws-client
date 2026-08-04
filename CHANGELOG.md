@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
   and `getProgress` (track asynchronous operations such as backups and event-log
   dumps).
+- RWS 1.0 debugger and program parity, live-verified on the RW6.16 VC:
+  `setProgramPointer` (pcp `?action=set-pp-routine`; the controller requires
+  BOTH module and routine) and `loadProgram` (`?action=loadprog`, body
+  `progpath`). Breakpoint endpoints turned out to be protocol-absent on RW6.16
+  (`/program/breakpoints` is 404), so `listBreakpoints` returning empty there
+  is controller behavior, not a client gap.
 - IO and file additions, live-verified on the RW7.21 VC: `searchSignals`
   (server-side signal search; the name criterion is a substring match, filters
   compose as AND, and hits feed the same coordinate cache `writeSignal` uses),
