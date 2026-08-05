@@ -548,6 +548,86 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 7, OPTIONS-verified niche writes)', () => {
+    it('setMotionSupervisionSensitivity wraps motion mastership and uses field `sensitivity`', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.setMotionSupervisionSensitivity(50);
+        expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+          'POST /rw/mastership/motion/request',
+          'POST /rw/motionsystem/mechunits/ROB_1/motionsupervision/level',
+          'POST /rw/mastership/motion/release',
+        ]);
+        expect(requests[1].body).toBe('sensitivity=50');
+      } finally { server.close(); }
+    });
+
+    it('setPathSupervisionMode posts mode under motion mastership', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.setPathSupervisionMode('ON');
+        const post = requests.find(r => r.url.includes('pathsupervision'));
+        expect(post?.url).toBe('/rw/motionsystem/mechunits/ROB_1/pathsupervision/mode');
+        expect(post?.body).toBe('mode=ON');
+      } finally { server.close(); }
+    });
+
+    it('setSignalSimulated toggles lstate simulated / not simulated', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.setSignalSimulated('Net', 'Dev', 'do1', true);
+        await client.setSignalSimulated('Net', 'Dev', 'do1', false);
+        expect(requests[0].url).toBe('/rw/iosystem/signals/Net/Dev/do1/set-lstate');
+        expect(requests[0].body).toBe('lstate=simulated');
+        expect(requests[1].body).toBe('lstate=not+simulated');
+      } finally { server.close(); }
+    });
+
+    it('setNetworkLState and setIoDeviceLState map start/stop and enable/disable', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.setNetworkLState('IntBus', true);
+        await client.setIoDeviceLState('IntBus', 'EPanel', false);
+        expect(requests[0].url).toBe('/rw/iosystem/networks/IntBus/set-lstate');
+        expect(requests[0].body).toBe('lstate=start');
+        expect(requests[1].url).toBe('/rw/iosystem/devices/IntBus/EPanel/set-lstate');
+        expect(requests[1].body).toBe('lstate=disable');
+      } finally { server.close(); }
+    });
+
+    it('searchDevices posts the properties filter', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.searchDevices('name');
+        expect(requests[0].url).toBe('/rw/devices/search');
+        expect(requests[0].body).toBe('property=name');
+      } finally { server.close(); }
+    });
+
+    it('PP navigation and vttimeslice hit the right resources', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.ppPrevInst('T_ROB1');
+        await client.ppNextInst('T_ROB1');
+        await client.setPPToRoutineFromUrl('T_ROB1', 'RAPID/T_ROB1/mod/rt');
+        await client.setVirtualTimeTimeslice(5);
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toContain('POST /rw/rapid/tasks/T_ROB1/pcp/prev-inst');
+        expect(urls).toContain('POST /rw/rapid/tasks/T_ROB1/pcp/next-inst');
+        const from = requests.find(r => r.url.includes('routine-from-url'));
+        expect(from?.body).toBe('routineurl=RAPID%2FT_ROB1%2Fmod%2Frt');
+        const vt = requests.find(r => r.url.includes('vttimeslice'));
+        expect(vt?.body).toBe('vttimeslice=5');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

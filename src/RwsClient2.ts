@@ -944,6 +944,100 @@ export class RwsClient2 {
     return (p.getState('check-changecount')['change-state'] ?? '').toUpperCase() === 'TRUE';
   }
 
+  // ─── Niche coverage (OPTIONS-verified forms, RW7.21, 2026-08) ────────────────
+  // Every form below came from the endpoint's own OPTIONS response. Motion
+  // supervision writes acquire motion mastership internally; the IO-network,
+  // IO-device and motion writes change controller/robot state, so callers should
+  // gate them like any other command.
+
+  /** Set motion (jog) supervision mode (e.g. 'on' | 'off'). Acquires motion mastership. */
+  async setMotionSupervisionMode(mode: string, mechunit = 'ROB_1'): Promise<void> {
+    await this.requestMastership('motion');
+    try { const { path, body } = R2.setMotionSupervisionMode(mechunit, mode); await this.req('POST', path, body); }
+    finally { await this.releaseMastership('motion').catch(() => {}); }
+  }
+
+  /** Set motion supervision sensitivity. The controller's form field is
+   *  `sensitivity`, not `level` (despite the endpoint name). Acquires motion mastership. */
+  async setMotionSupervisionSensitivity(sensitivity: number, mechunit = 'ROB_1'): Promise<void> {
+    await this.requestMastership('motion');
+    try { const { path, body } = R2.setMotionSupervisionSensitivity(mechunit, sensitivity); await this.req('POST', path, body); }
+    finally { await this.releaseMastership('motion').catch(() => {}); }
+  }
+
+  /** Set path supervision mode (e.g. 'ON' | 'OFF'). Acquires motion mastership. */
+  async setPathSupervisionMode(mode: string, mechunit = 'ROB_1'): Promise<void> {
+    await this.requestMastership('motion');
+    try { const { path, body } = R2.setPathSupervisionMode(mechunit, mode); await this.req('POST', path, body); }
+    finally { await this.releaseMastership('motion').catch(() => {}); }
+  }
+
+  /** Simulate (force) or un-simulate an IO signal's logical state. Reversible;
+   *  the controller form takes `lstate` = 'simulated' | 'not simulated'. */
+  async setSignalSimulated(network: string, device: string, name: string, simulated: boolean): Promise<void> {
+    const { path, body } = R2.setSignalSimulated(network, device, name, simulated);
+    await this.req('POST', path, body);
+  }
+
+  /** Release blocked/forced signals (POST /rw/iosystem/signals/unblock-signal). */
+  async unblockSignals(): Promise<void> {
+    await this.req('POST', '/rw/iosystem/signals/unblock-signal');
+  }
+
+  /** Start or stop an IO network (`lstate` = start | stop). Changes IO availability. */
+  async setNetworkLState(network: string, start: boolean): Promise<void> {
+    const { path, body } = R2.setNetworkLState(network, start);
+    await this.req('POST', path, body);
+  }
+
+  /** Enable or disable an IO device (`lstate` = enable | disable). Changes IO availability. */
+  async setIoDeviceLState(network: string, device: string, enable: boolean): Promise<void> {
+    const { path, body } = R2.setIoDeviceLState(network, device, enable);
+    await this.req('POST', path, body);
+  }
+
+  /** Search the hardware device tree for a node. The controller field is
+   *  `property` (singular, not the OPTIONS-advertised `properties`); the value is
+   *  a device-tree node path. Returns the matching device rows. */
+  async searchDevices(property: string): Promise<Array<Record<string, string>>> {
+    const { path, body } = R2.searchDevices(property);
+    const p = RwsClient2.parse(await this.req('POST', path, body));
+    return p.getAllStates('dev-id-li');
+  }
+
+  /** Step the program pointer back one instruction (manual-mode debugger). */
+  async ppPrevInst(task: string): Promise<void> {
+    const { path } = R2.ppPrevInst(task);
+    await this.req('POST', path);
+  }
+
+  /** Step the program pointer forward one instruction (manual-mode debugger). */
+  async ppNextInst(task: string): Promise<void> {
+    const { path } = R2.ppNextInst(task);
+    await this.req('POST', path);
+  }
+
+  /** Set the program pointer to a routine by its symbol URL (form: routineurl, userlevel). */
+  async setPPToRoutineFromUrl(task: string, routineurl: string, userlevel = ''): Promise<void> {
+    const { path, body } = R2.setPPToRoutineFromUrl(task, routineurl, userlevel);
+    await this.req('POST', path, body);
+  }
+
+  /** Set the virtual-time timeslice (VC only; form field `vttimeslice`). */
+  async setVirtualTimeTimeslice(vttimeslice: number): Promise<void> {
+    await this.req('POST', '/ctrl/virtualtime/vttimeslice', { vttimeslice: String(vttimeslice) });
+  }
+
+  /** Refresh the connected integrated-vision camera(s). POST, no body. */
+  async refreshVisionCameras(): Promise<void> {
+    await this.req('POST', '/rw/vision/refresh');
+  }
+
+  /** Reset accumulated system energy counters. POST, no body. */
+  async resetEnergy(): Promise<void> {
+    await this.req('POST', '/rw/system/energy/reset');
+  }
+
   /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
    *  (RW7.21), class ios-network-li. */
   async getIoNetwork(network: string): Promise<Record<string, string>> {

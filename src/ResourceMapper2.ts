@@ -157,6 +157,28 @@ export function saveModuleAs(task: string, module: string, name: string, volume:
   };
 }
 
+// ─── RAPID Service - program-pointer navigation (/rw/rapid/tasks/{task}/pcp) ──
+// Manual-mode debugger moves (like stepping, they need manual mode + the
+// enabling device); the paths and forms are OPTIONS-verified (RW7.21, 2026-08).
+
+/** Move the program pointer back one instruction. POST, no body. */
+export function ppPrevInst(task: string): Rws2Write {
+  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}/pcp/prev-inst` };
+}
+
+/** Move the program pointer forward one instruction. POST, no body. */
+export function ppNextInst(task: string): Rws2Write {
+  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}/pcp/next-inst` };
+}
+
+/** Set the program pointer to a routine by its symbol URL. OPTIONS form fields:
+ *  `routineurl`, `userlevel`. */
+export function setPPToRoutineFromUrl(task: string, routineurl: string, userlevel = ''): Rws2Write {
+  const body: Record<string, string> = { routineurl };
+  if (userlevel) { body['userlevel'] = userlevel; }
+  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}/pcp/routine-from-url`, body };
+}
+
 // ─── Mastership Service (/rw/mastership) ─────────────────────────────────────
 // `domain` is the RWS 2.0 wire domain ('edit' | 'motion'); callers map
 // 'cfg'|'rapid' -> 'edit' before calling (RwsClient2.rws2Domain).
@@ -186,6 +208,36 @@ export function mastershipWatchdog(): Rws2Write {
   return { path: '/rw/mastership/watchdog' };
 }
 
+// ─── MotionSystem Service - supervision (/rw/motionsystem) ────────────────────
+// Field names below are from each endpoint's OPTIONS form (RW7.21, 2026-08).
+// These change motion supervision configuration; they require motion mastership.
+
+/** Set motion (jog) supervision mode. OPTIONS form field is `mode`. */
+export function setMotionSupervisionMode(mechunit: string, mode: string): Rws2Write {
+  return { path: `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/motionsupervision/mode`, body: { mode } };
+}
+
+/** Set motion supervision sensitivity. The OPTIONS form field is `sensitivity`
+ *  (NOT `level` as the endpoint name would suggest). */
+export function setMotionSupervisionSensitivity(mechunit: string, sensitivity: number): Rws2Write {
+  return { path: `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/motionsupervision/level`, body: { sensitivity: String(sensitivity) } };
+}
+
+/** Set path supervision mode. OPTIONS form field is `mode`. */
+export function setPathSupervisionMode(mechunit: string, mode: string): Rws2Write {
+  return { path: `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/pathsupervision/mode`, body: { mode } };
+}
+
+// ─── Devices Service (/rw/devices) ───────────────────────────────────────────
+
+/** Search the hardware device tree for a node. The controller field is
+ *  `property` (SINGULAR) - the OPTIONS form advertises `properties`, but that is
+ *  rejected with "property parameter is required" (live-verified 2026-08, RW7.21;
+ *  another OPTIONS-vs-actual mismatch). The value is a device-tree node path. */
+export function searchDevices(property: string): Rws2Write {
+  return { path: '/rw/devices/search', body: { property } };
+}
+
 // ─── IO Service (/rw/iosystem) ───────────────────────────────────────────────
 
 /**
@@ -209,6 +261,29 @@ export function searchSignals(criteria: { name?: string; device?: string; networ
   if (criteria.category) { body['category'] = criteria.category; }
   if (criteria.type)     { body['type'] = criteria.type; }
   return { path: '/rw/iosystem/signals/signal-search', body };
+}
+
+/** Simulate (force) or un-simulate a signal's logical state. OPTIONS form:
+ *  `lstate` = 'simulated' | 'not simulated'. Reversible; live round-tripped
+ *  2026-08 on RW7.21. */
+export function setSignalSimulated(network: string, device: string, name: string, simulated: boolean): Rws2Write {
+  return {
+    path: `/rw/iosystem/signals/${network}/${device}/${name}/set-lstate`,
+    body: { lstate: simulated ? 'simulated' : 'not simulated' },
+  };
+}
+
+/** Start or stop an IO network. OPTIONS form: `lstate` = 'start' | 'stop'. */
+export function setNetworkLState(network: string, start: boolean): Rws2Write {
+  return { path: `/rw/iosystem/networks/${encodeURIComponent(network)}/set-lstate`, body: { lstate: start ? 'start' : 'stop' } };
+}
+
+/** Enable or disable an IO device. OPTIONS form: `lstate` = 'enable' | 'disable'. */
+export function setIoDeviceLState(network: string, device: string, enable: boolean): Rws2Write {
+  return {
+    path: `/rw/iosystem/devices/${encodeURIComponent(network)}/${encodeURIComponent(device)}/set-lstate`,
+    body: { lstate: enable ? 'enable' : 'disable' },
+  };
 }
 
 // ─── File Service (/fileservice) ─────────────────────────────────────────────

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Niche coverage batch, forms taken from each endpoint's own `OPTIONS` response
+  and cross-checked live on RW7.21: motion supervision (`setMotionSupervisionMode`,
+  `setMotionSupervisionSensitivity` — the controller field is `sensitivity`, not
+  `level`; `setPathSupervisionMode` — all gated behind the Collision Detection
+  option), IO (`setSignalSimulated`, `unblockSignals`, `setNetworkLState`,
+  `setIoDeviceLState`), `searchDevices` (the field is `property`, not the
+  OPTIONS-advertised `properties`), program-pointer navigation (`ppPrevInst`,
+  `ppNextInst`, `setPPToRoutineFromUrl`), and `setVirtualTimeTimeslice`,
+  `refreshVisionCameras`, `resetEnergy`. Verified live: `setVirtualTimeTimeslice`
+  and `unblockSignals` (204); `setSignalSimulated` correctly refused (403) on a
+  protected safety signal.
 - **RobotWare 8 support.** RW8 removes the mastership service (HTTP 410) and
   requires a registered control station for write access. The client now detects
   the RobotWare version on connect and routes write access automatically:
