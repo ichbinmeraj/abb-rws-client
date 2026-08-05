@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Deep-coverage read batch, shapes captured live and identical on RW7.21 and
+  RW8.1: `getModuleText` (full source straight from program memory, no TEMP
+  round trip), `getModuleTextRange`, `searchModuleText` (query param is `text`;
+  hits are Row/Column positions), `getModuleChangeCount`,
+  `getModuleSyncPersStatus`, `getModuleExtension`, `getProgramPointerSyncState`,
+  `getMotionPointerSyncState`, `getSpyStatus`, `getSafetyMode`,
+  `getSafetyViolationInfo`, `getSafetyLoadStatus`, `getSafetyStartupStatus`
+  (the controller misspells the class as `...-load-satus` on both generations;
+  read as-is with the corrected spelling as fallback), and
+  `getVirtualTimeTimeslice`.
+- `decompressPath` added, and `compressPath` fixed: the controller fields are
+  `srcpath`/`dstpath` as fileservice URIs (the documented `source`/`destination`
+  are rejected). Compress verified creating the archive on the VC; note the VC's
+  compression backend leaves the archive empty (controller-side limitation).
+- RWS 1.0 `createBackup`/`restoreBackup` fixed: the backup value must be a
+  fileservice URI (`/fileservice/$BACKUP/name`); the previous bare form answered
+  400 "Invalid File Service path". Verified 202 + backup created on RW6.16.
+  RWS 1.0 `holdToRun` marked unverified: its wire form answers 400 on RW6.16.
 - Niche coverage batch, forms taken from each endpoint's own `OPTIONS` response
   and cross-checked live on RW7.21: motion supervision (`setMotionSupervisionMode`,
   `setMotionSupervisionSensitivity` — the controller field is `sensitivity`, not

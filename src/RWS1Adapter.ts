@@ -629,12 +629,17 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async createBackup(name: string): Promise<void> {
     // Async - controller returns 202 + Location header pointing to /progress/{id}.
-    // Caller polls getProgress() to track completion.
-    await this.rws1Post('/ctrl/backup?action=backup', `backup=$BACKUP/${encodeURIComponent(name)}`);
+    // Caller polls getProgress() to track completion. The backup value must be a
+    // fileservice URI: bare '$BACKUP/x' answers 400 "Invalid File Service path";
+    // '/fileservice/$BACKUP/x' answers 202 (live-verified 2026-08 on RW6.16 -
+    // the same URI scheme the RWS 2.0 file-target writes require).
+    await this.rws1Post('/ctrl/backup?action=backup',
+      `backup=${encodeURIComponent(`/fileservice/$BACKUP/${name}`)}`);
   }
 
   async restoreBackup(name: string): Promise<void> {
-    await this.rws1Post('/ctrl/backup?action=restore', `backup=$BACKUP/${encodeURIComponent(name)}`);
+    await this.rws1Post('/ctrl/backup?action=restore',
+      `backup=${encodeURIComponent(`/fileservice/$BACKUP/${name}`)}`);
   }
 
   async listProgress(): Promise<Array<{ id: string; state: string }>> {
@@ -869,6 +874,11 @@ export class RWS1Adapter implements IRWSAdapter {
     } catch { return []; }
   }
 
+  /** CAUTION: wire form unverified on RWS 1.0. The task-level
+   *  ?action=holdtorun with body action= answers 400 "Invalid argument" on
+   *  RW6.16 (live-probed 2026-08) - the real form is undiscovered and
+   *  hold-to-run is a manual-mode function anyway. Kept for source
+   *  compatibility; expect the controller's 400 until the form is found. */
   async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
     await this.rws1Post(`/rw/rapid/tasks/${task}?action=holdtorun`, `action=${action}`);
   }

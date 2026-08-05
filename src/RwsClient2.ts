@@ -1038,6 +1038,113 @@ export class RwsClient2 {
     await this.req('POST', '/rw/system/energy/reset');
   }
 
+  // ─── Deep-coverage reads (shapes live-captured on RW7.21, 2026-08) ───────────
+
+  /** Full source text of a module straight from program memory, with its change
+   *  count. Class rap-module-text (spans change-count, module-text). Unlike
+   *  getModuleSource this needs no TEMP round trip, but it is RWS 2.0 only. */
+  async getModuleText(task: string, module: string): Promise<{ text: string; changeCount: number }> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/text`));
+    const d = p.getState('rap-module-text');
+    return { text: d['module-text'] ?? '', changeCount: Number((d['change-count'] ?? '0').trim()) };
+  }
+
+  /** A source range of a module (rows/columns are 1-based). Class rap-mod-text. */
+  async getModuleTextRange(task: string, module: string, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/text/range?startrow=${startRow}&startcol=${startCol}&endrow=${endRow}&endcol=${endCol}`));
+    return p.getState('rap-mod-text')['text'] ?? '';
+  }
+
+  /** Search a module's source for a string. The query parameter is `text` (the
+   *  documented `searchstring` answers "Search Text invalid"); each hit is a
+   *  rap-text-position with capitalized Row/Column spans (live RW7.21/RW8.1.1). */
+  async searchModuleText(task: string, module: string, text: string): Promise<Array<{ row: number; column: number }>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/text/search?text=${encodeURIComponent(text)}`));
+    return p.getAllStates('rap-text-position').map(d => ({
+      row: Number(d['Row'] ?? 0), column: Number(d['Column'] ?? 0),
+    }));
+  }
+
+  /** Change count of one module (class rap-module-changecount, span count). */
+  async getModuleChangeCount(task: string, module: string): Promise<number> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/changecount`));
+    return Number(p.getState('rap-module-changecount')['count'] ?? 0);
+  }
+
+  /** SyncPers status of a module (class rap-syncper-status). */
+  async getModuleSyncPersStatus(task: string, module: string): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/sync-pers`));
+    return (p.getState('rap-syncper-status')['syncperstatus'] ?? '0') === '1';
+  }
+
+  /** Module extension info: line count, max column, change count
+   *  (class rap-module-extension). */
+  async getModuleExtension(task: string, module: string): Promise<{ lines: number; maxColumns: number; changeCount: number }> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/module-extension`));
+    const d = p.getState('rap-module-extension');
+    return { lines: Number(d['num-of-lines'] ?? 0), maxColumns: Number(d['max-num-of-col'] ?? 0), changeCount: Number(d['count'] ?? 0) };
+  }
+
+  /** Program-pointer sync state across all tasks (class rap-sync-state). */
+  async getProgramPointerSyncState(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/tasks/syncstate/program-pointer'));
+    return p.getState('rap-sync-state')['program-pointer-state'] ?? 'unknown';
+  }
+
+  /** Motion-pointer sync state across all tasks (class rap-sync-state). */
+  async getMotionPointerSyncState(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/tasks/syncstate/motion-pointer'));
+    return p.getState('rap-sync-state')['motion-pointer-state'] ?? 'unknown';
+  }
+
+  /** RAPID spy (execution trace) logging status, e.g. 'Not Logging'
+   *  (class rap-spy-status). */
+  async getSpyStatus(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/tasks/spy'));
+    return p.getState('rap-spy-status')['status'] ?? 'unknown';
+  }
+
+  /** Safety controller mode, e.g. 'active' (class safetymodestatus). */
+  async getSafetyMode(): Promise<{ mode: string; userdata?: string }> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety/mode'));
+    const d = p.getState('safetymodestatus');
+    return { mode: d['safetymode'] ?? 'unknown', userdata: d['userdata'] };
+  }
+
+  /** Safety violation counters (class safety-violationinfo). */
+  async getSafetyViolationInfo(): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety/violation'));
+    return p.getState('safety-violationinfo');
+  }
+
+  /** Safety configuration load status (class scorch-load-status). */
+  async getSafetyLoadStatus(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety/load'));
+    return p.getState('scorch-load-status')['status'] ?? 'unknown';
+  }
+
+  /** Safety configuration status at startup. The controller misspells the
+   *  class as startup-safety-config-load-satus (missing 't' - live RW7.21);
+   *  the corrected spelling is read as fallback. */
+  async getSafetyStartupStatus(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety/config/startupstatus'));
+    let d = p.getState('startup-safety-config-load-satus');
+    if (!('config-status-at-startup' in d)) { d = p.getState('startup-safety-config-load-status'); }
+    return d['config-status-at-startup'] ?? 'unknown';
+  }
+
+  /** Current virtual-time timeslice (VC only; class ctrl-vttimeslice). */
+  async getVirtualTimeTimeslice(): Promise<number> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/virtualtime/vttimeslice'));
+    return Number(p.getState('ctrl-vttimeslice')['vttimeslice'] ?? 0);
+  }
+
   /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
    *  (RW7.21), class ios-network-li. */
   async getIoNetwork(network: string): Promise<Record<string, string>> {
@@ -1974,10 +2081,23 @@ export class RwsClient2 {
     } catch { return {}; }
   }
 
-  // ─── Compress `/ctrl/compress` ────────────────────────────────────────────
+  // ─── Compress / decompress `/ctrl/compress` ───────────────────────────────
 
+  /** Compress a file or directory into a zip. The controller form fields are
+   *  `srcpath` / `dstpath` (the spec's `source`/`destination` are rejected with
+   *  "Source path is missing"), and the values must be fileservice URIs.
+   *  Live round-tripped 2026-08 (RW7.21): compress then decompress in TEMP. */
   async compressPath(source: string, destination: string): Promise<void> {
-    await this.req('POST', '/ctrl/compress', { source, destination });
+    await this.req('POST', '/ctrl/compress', {
+      srcpath: R2.toFileserviceUri(source), dstpath: R2.toFileserviceUri(destination),
+    });
+  }
+
+  /** Decompress a zip created by compressPath (same field and URI rules). */
+  async decompressPath(source: string, destination: string): Promise<void> {
+    await this.req('POST', '/ctrl/decompress', {
+      srcpath: R2.toFileserviceUri(source), dstpath: R2.toFileserviceUri(destination),
+    });
   }
 
   // ─── File service - list volumes ──────────────────────────────────────────

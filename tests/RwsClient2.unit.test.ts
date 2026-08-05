@@ -628,6 +628,52 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 8, deep reads with live-captured shapes)', () => {
+    const bodies: Record<string, string> = {
+      '/text/range': '{"_links":{"base":{"href":"https://x/"}},"status":{"code":294912},"state":[{"_type":"rap-mod-text","_title":"pgm_txt","text":"MODULE BASE"}]}',
+      '/text': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-module-text","_title":"moduletext","change-count":" 6948 ","module-text":"MODULE BASE (SYSMODULE)"}]}',
+      'changecount': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-module-changecount","_title":"changecount","count":"6948"}]}',
+      'sync-pers': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-syncper-status","_title":"syncperstatus","syncperstatus":"1"}]}',
+      'module-extension': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-module-extension","_title":"extension","num-of-lines":"19","max-num-of-col":"70","count":"6948"}]}',
+      'program-pointer': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-sync-state","_title":"sync-state","program-pointer-state":"Off"}]}',
+      'spy': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-spy-status","_title":"spy-status","status":"Not Logging"}]}',
+      'safety/mode': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"safetymodestatus","_title":"status","userdata":"121","safetymode":"active"}]}',
+      'startupstatus': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"startup-safety-config-load-satus","_title":"status","config-status-at-startup":"SCORCH_CONFIG_LOADED_AT_STARTUP"}]}',
+      'vttimeslice': '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ctrl-vttimeslice","_title":"vttimeslice","vttimeslice":"10"}]}',
+    };
+    const shapeServer = (): ReturnType<typeof startServer> => startServer((req, res) => {
+      const url = req.url ?? '';
+      const key = Object.keys(bodies).find(k => url.includes(k)) ?? 'spy';
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end(bodies[key]);
+    });
+
+    it('module text, range, change count, sync-pers and extension parse the live shapes', async () => {
+      const { server, port } = await shapeServer();
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getModuleText('T_ROB1', 'BASE')).toEqual({ text: 'MODULE BASE (SYSMODULE)', changeCount: 6948 });
+        expect(await client.getModuleTextRange('T_ROB1', 'BASE', 1, 1, 2, 1)).toBe('MODULE BASE');
+        expect(await client.getModuleChangeCount('T_ROB1', 'BASE')).toBe(6948);
+        expect(await client.getModuleSyncPersStatus('T_ROB1', 'BASE')).toBe(true);
+        expect(await client.getModuleExtension('T_ROB1', 'BASE')).toEqual({ lines: 19, maxColumns: 70, changeCount: 6948 });
+      } finally { server.close(); }
+    });
+
+    it('sync-state, spy, safety and vttimeslice reads parse the live shapes', async () => {
+      const { server, port } = await shapeServer();
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getProgramPointerSyncState()).toBe('Off');
+        expect(await client.getSpyStatus()).toBe('Not Logging');
+        expect(await client.getSafetyMode()).toEqual({ mode: 'active', userdata: '121' });
+        // The controller misspells the class ('...-satus'); the client must read it
+        expect(await client.getSafetyStartupStatus()).toBe('SCORCH_CONFIG_LOADED_AT_STARTUP');
+        expect(await client.getVirtualTimeTimeslice()).toBe(10);
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
