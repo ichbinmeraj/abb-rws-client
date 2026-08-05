@@ -1423,6 +1423,16 @@ export class RwsClient2 {
     } catch { return []; }
   }
 
+  /**
+   * NOTE (RWS 2.0): there is no direct "call service routine" endpoint. POST to
+   * /rw/rapid/tasks/{task}/serviceroutine answers HTTP 405 (the resource is
+   * GET-only - see listServiceRoutines), live-verified 2026-08 on RW7.21/RW8.1.1.
+   * On RWS 2.0 a service routine is invoked by setting the program pointer to it
+   * (setProgramPointer / setPPToRoutineFromUrl) and then starting execution -
+   * which is a motion-producing operation and must be gated accordingly. This
+   * method is kept for source compatibility but will reject with the controller's
+   * 405 on RWS 2.0; use the PP + start path instead.
+   */
   async callServiceRoutine(task: string, routineName: string, args: Record<string, string> = {}): Promise<void> {
     await this.req('POST', `/rw/rapid/tasks/${task}/serviceroutine`, { routine: routineName, ...args });
   }
