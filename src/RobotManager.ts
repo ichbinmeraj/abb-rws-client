@@ -1112,16 +1112,10 @@ export class RobotManager {
 
   async refreshIoSignals(): Promise<void> {
     if (!this.adapter) { throw new Error('Not connected'); }
-    const PAGE = 100;
-    let start = 0;
-    const all: Signal[] = [];
-    while (true) {
-      const page = await this.adapter.listAllSignals(start, PAGE);
-      all.push(...page);
-      if (page.length < PAGE) { break; }
-      start += PAGE;
-    }
-    this._state.ioSignals = all;
+    // listAllSignals follows the controller's own pagination now, so one call
+    // returns every signal. Looping over it again here re-fetched from an
+    // offset and appended duplicates.
+    this._state.ioSignals = await this.adapter.listAllSignals();
     this.notify();
   }
 
@@ -1715,17 +1709,11 @@ export class RobotManager {
       }
 
       if (this.fetchCount === 1 || this.fetchCount % 5 === 0) {
-        const PAGE = 100;
-        let start = 0;
-        const all: Signal[] = [];
         try {
-          while (true) {
-            const page = await this.adapter.listAllSignals(start, PAGE);
-            if (stale()) { return; }
-            all.push(...page);
-            if (page.length < PAGE) { break; }
-            start += PAGE;
-          }
+          // One call returns every signal: the adapter walks the controller's
+          // pagination itself (an outer loop here would duplicate entries).
+          const all = await this.adapter.listAllSignals();
+          if (stale()) { return; }
           this._state.ioSignals = all;
         } catch { /* non-fatal */ }
       }

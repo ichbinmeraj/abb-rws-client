@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `RobotManager` no longer pages over `listAllSignals` itself. That loop was
+  correct while the adapter returned a single page, but once the adapter began
+  following the controller's pagination it re-fetched from an offset and
+  appended duplicates. Verified live: 130 and 141 signals on the two OmniCore
+  controllers with no duplicates.
 - `listAllGrants` returned an empty list whenever a controller served XHTML.
   The two representations of that one resource use different class and field
   names (`grant-info`/`grant-description` in JSON, `uas-grant`/`description` in

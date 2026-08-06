@@ -823,3 +823,28 @@ describe('RobotManager.discoverControllersMdns', () => {
     }
   });
 });
+
+describe('RobotManager I/O refresh', () => {
+  it('asks the adapter once and does not re-page over a complete list', async () => {
+    // listAllSignals walks the controller's own pagination, so it returns every
+    // signal in one call. RobotManager used to loop over it with a page size of
+    // 100; once the adapter returned all 130, that loop fetched again from
+    // offset 100 and appended 30 duplicates.
+    const signals = Array.from({ length: 130 }, (_, i) => ({
+      name: `sig${i}`, value: '0', type: 'DI' as const, lvalue: '0',
+    }));
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn(async () => signals);
+
+    const mgr = new RobotManager();
+    (mgr as unknown as { adapter: unknown }).adapter = fake;
+    (mgr as unknown as { adapterConfig: unknown }).adapterConfig =
+      { host: 'vc-a', username: 'u', password: 'p', port: 80 };
+
+    await mgr.refreshIoSignals();
+
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(1);
+    expect(mgr.state.ioSignals).toHaveLength(130);
+    expect(new Set(mgr.state.ioSignals.map(s => s.name)).size).toBe(130);
+  });
+});
