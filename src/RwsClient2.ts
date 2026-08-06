@@ -605,7 +605,16 @@ export class RwsClient2 {
     const p = RwsClient2.parse(
       await this.req('GET', `/rw/rapid/symbol/RAPID/${task}/${module}/${symbol}/properties`)
     );
-    const d = p.getState('rap-sympropvar') || p.getState('rap-sympropvar-li') || p.getState('rap-symbol-properties');
+    // The class encodes the symbol KIND: rap-sympropvar (VAR),
+    // rap-symproppers (PERS - e.g. tool0, live-verified 2026-08),
+    // rap-sympropconst (CONST), rap-sympropproc/fun (routines). Only the VAR
+    // spelling was checked before, so persistents and constants parsed as empty.
+    let d: Record<string, string> = {};
+    for (const cls of ['rap-sympropvar', 'rap-symproppers', 'rap-sympropconst',
+      'rap-sympropproc', 'rap-sympropfun', 'rap-sympropvar-li', 'rap-symbol-properties']) {
+      d = p.getState(cls);
+      if (Object.keys(d).length > 0) { break; }
+    }
     return {
       symburl: d['symburl'] ?? `RAPID/${task}/${module}/${symbol}`,
       symtyp:  d['symtyp']  ?? '',
@@ -2067,14 +2076,31 @@ export class RwsClient2 {
 
   // ─── Safety controller `/ctrl/safety` ──────────────────────────────────────
 
+  /**
+   * Safety controller status. /ctrl/safety itself is only a directory of links
+   * (no aggregate state - it never carried a `ctrl-safety` class, so this used
+   * to report 'unknown' always; corrected 2026-08 by reading the live tree).
+   * The real state lives in the sub-resources, so this composes the mode with
+   * the violation and load-status readings.
+   */
   async getSafetyStatus(): Promise<{ state: string; details?: Record<string, string> }> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety'));
-      const d = p.getState('ctrl-safety') || p.getState('ctrl-safety-info');
-      return { state: d['state'] ?? 'unknown', details: d };
+      const [mode, violation, load] = await Promise.all([
+        this.getSafetyMode().catch(() => ({ mode: 'unknown' } as { mode: string; userdata?: string })),
+        this.getSafetyViolationInfo().catch(() => ({} as Record<string, string>)),
+        this.getSafetyLoadStatus().catch(() => 'unknown'),
+      ]);
+      return {
+        state: mode.mode,
+        details: { safetymode: mode.mode, ...(mode.userdata ? { userdata: mode.userdata } : {}),
+          'load-status': load, ...violation },
+      };
     } catch { return { state: 'unavailable' }; }
   }
 
+  /** Safety zones. NOTE: /ctrl/safety/zones does not exist on RobotWare 7/8
+   *  (HTTP 404 - the safety tree exposes mode/cbc/config/violation/load
+   *  instead), so this returns an empty list. Kept for source compatibility. */
   async listSafetyZones(): Promise<Array<Record<string, string>>> {
     try {
       const p = RwsClient2.parse(await this.req('GET', '/ctrl/safety/zones'));
@@ -2148,14 +2174,21 @@ export class RwsClient2 {
 
   // ─── Certificate store `/ctrl/certstore` ──────────────────────────────────
 
+  /**
+   * Certificate STORES the controller exposes ('controller' and 'system' on a
+   * stock RW7/RW8). The class is ctrl-certstore-li with a `store-name` span -
+   * the previously parsed `ctrl-cert-li` is not emitted anywhere, so this
+   * always returned an empty list (corrected 2026-08 from the live response).
+   * Certificates themselves live under /ctrl/certstore/{store}.
+   */
   async listCertificates(): Promise<Array<{ name: string; subject?: string; expires?: string }>> {
     try {
       const p = RwsClient2.parse(await this.req('GET', '/ctrl/certstore'));
-      return p.getAllStates('ctrl-cert-li').map(c => ({
-        name: c['name'] ?? c['_title'] ?? '',
+      return p.getAllStates('ctrl-certstore-li').map(c => ({
+        name: c['store-name'] ?? c['name'] ?? c['_title'] ?? '',
         subject: c['subject'],
         expires: c['expires'] ?? c['valid-to'],
-      }));
+      })).filter(c => c.name);
     } catch { return []; }
   }
 
@@ -2169,10 +2202,26 @@ export class RwsClient2 {
 
   // ─── Registry `/ctrl/registry` ────────────────────────────────────────────
 
+  /**
+   * The registry files the controller exposes, as {name: resourceName}. The
+   * root emits one `ctrl-reg-{name}-li` entry per file (cfgrules, cfgtext,
+   * devices, elogtext, elogrules, hw-compatibility, option, rapid-metadata,
+   * rapid-text, rw-services, uastext) - there is no `ctrl-registry` class, so
+   * this used to return {} always (corrected 2026-08). Read a file's contents
+   * with getRegistryFile().
+   */
   async getRegistry(): Promise<Record<string, string>> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', '/ctrl/registry'));
-      return p.getState('ctrl-registry');
+      const body = await this.req('GET', '/ctrl/registry');
+      const out: Record<string, string> = {};
+      for (const m of body.matchAll(/"_type"\s*:\s*"ctrl-reg-([a-z-]+)-li"[^}]*?"_title"\s*:\s*"([^"]*)"/g)) {
+        out[m[2] || m[1]] = m[1];
+      }
+      if (Object.keys(out).length === 0) {
+        // XHTML representation fallback (older RW7 releases negotiate XHTML).
+        for (const m of body.matchAll(/class="ctrl-reg-([a-z-]+)-li"[^>]*title="([^"]*)"/g)) { out[m[2] || m[1]] = m[1]; }
+      }
+      return out;
     } catch { return {}; }
   }
 
@@ -2197,12 +2246,19 @@ export class RwsClient2 {
 
   // ─── File service - list volumes ──────────────────────────────────────────
 
+  /**
+   * Controller file volumes (TEMP, HOME, BACKUP, ...). The root lists them as
+   * `fs-dir` entries - `fs-volume` is not a class the controller emits, so this
+   * silently fell through to the hardcoded list every time (corrected 2026-08).
+   * The hardcoded list remains only as a last-resort fallback.
+   */
   async listFileVolumes(): Promise<string[]> {
     try {
       const p = RwsClient2.parse(await this.req('GET', '/fileservice'));
-      return p.getAllStates('fs-volume').map(v => v['_title'] ?? v['name']).filter(Boolean) as string[];
+      const names = p.getAllStates('fs-dir').map(v => v['_title'] ?? v['name']).filter(Boolean) as string[];
+      if (names.length > 0) { return names; }
+      return ['HOME', 'BACKUP', 'DATA', 'ADDINDATA', 'PRODUCTS', 'RAMDISK', 'TEMP'];
     } catch {
-      // Fallback: known standard volumes
       return ['HOME', 'BACKUP', 'DATA', 'ADDINDATA', 'PRODUCTS', 'RAMDISK', 'TEMP'];
     }
   }
@@ -2318,17 +2374,27 @@ export class RwsClient2 {
     const axes: Array<Record<string, string>> = [];
     for (let i = 1; i <= axisCount; i++) {
       try {
+        // Each axis returns TWO state entries: ms-mechunit-axisstatus (span
+        // axis-status, e.g. 'Synchronized') and ms-mechunit-logicalaxis (span
+        // logical-axis). The previously parsed ms-mechunit-axis / ms-axis are
+        // not emitted, so every axis came back with no fields (fixed 2026-08).
         const ap = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes/${i}`));
-        const ad = ap.getState('ms-mechunit-axis') || ap.getState('ms-axis');
-        axes.push({ axis: String(i), ...ad });
+        axes.push({
+          axis: String(i),
+          ...ap.getState('ms-mechunit-axisstatus'),
+          ...ap.getState('ms-mechunit-logicalaxis'),
+        });
       } catch { axes.push({ axis: String(i), error: 'unreachable' }); }
     }
     return axes;
   }
 
+  /** Physical joint mapping of a mechunit. Class is ms-mechunit-pjoints; the
+   *  previously parsed `ms-pjoints` is never emitted, so this returned an empty
+   *  object on every controller (fixed 2026-08). */
   async getMechunitPjoints(mechunit = 'ROB_1'): Promise<Record<string, number>> {
     const p = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/pjoints`));
-    const d = p.getState('ms-pjoints');
+    const d = p.getState('ms-mechunit-pjoints');
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(d)) { if (!k.startsWith('_')) { out[k] = +v; } }
     return out;
@@ -2450,7 +2516,18 @@ export class RwsClient2 {
 
   async getTaskMotion(task: string): Promise<Record<string, string>> {
     const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/motion`));
-    return p.getState('rap-task-motion') || {};
+    // /motion is a directory of sub-resources (robtarget, jointtarget,
+    // mechunits, extjointstate) - there is no `rap-task-motion` aggregate class,
+    // so this always returned {}. Report which motion sub-resources the task
+    // exposes; read the values via getRobTarget/getJointPositions (fixed 2026-08).
+    const out: Record<string, string> = {};
+    for (const cls of ['rapid-robtarget-li', 'rapid-jointtarget-li', 'rapid-mechunit-li', 'rapid-extjointstate-li']) {
+      for (const d of p.getAllStates(cls)) {
+        const name = d['_title'] ?? cls.replace(/^rapid-|-li$/g, '');
+        out[name] = cls.replace(/^rapid-|-li$/g, '');
+      }
+    }
+    return out;
   }
 
   async getTaskActivationRecord(task: string): Promise<Record<string, string>> {
@@ -2462,7 +2539,9 @@ export class RwsClient2 {
     // Endpoint returns 204 (no content) when no program is loaded - caller handles this.
     const xml = await this.req('GET', `/rw/rapid/tasks/${task}/program`);
     if (!xml) { return {}; }
-    return RwsClient2.parse(xml).getState('rap-program-info') || {};
+    // Class is rap-program (spans name, entrypoint); `rap-program-info` is never
+    // emitted, so this returned {} even with a program loaded (fixed 2026-08).
+    return RwsClient2.parse(xml).getState('rap-program');
   }
 
   // ─── WebSocket subscriptions ──────────────────────────────────────────────────
@@ -3121,23 +3200,37 @@ export class RwsClient2 {
 
   async getReturnCode(code: number, lang = 'en'): Promise<{ code: number; title: string; desc: string } | null> {
     try {
+      // Class is err-desc with spans name / code / severity / description -
+      // NOT rw-retcode with title/desc, which is never emitted (fixed 2026-08;
+      // this used to return null for every code). `title` keeps carrying the
+      // symbolic name (e.g. SYS_CTRL_E_MASTER_REJECT) for source compatibility.
       const p = RwsClient2.parse(await this.req('GET', `/rw/retcode?code=${code}&lang=${lang}`));
-      const d = p.getState('rw-retcode') || p.getState('rw-retcode-li');
-      if (!d['title'] && !d['desc']) { return null; }
-      return { code, title: d['title'] ?? '', desc: d['desc'] ?? '' };
+      const d = p.getState('err-desc');
+      if (!d['description'] && !d['name']) { return null; }
+      return { code, title: d['name'] ?? '', desc: d['description'] ?? '' };
     } catch { return null; }
   }
 
   // ─── Controller detail endpoints ────────────────────────────────────────────
 
+  /**
+   * Installed RobotWare options. /ctrl/options answers 200 with NO content on
+   * RW7/RW8 (it is a verify-one-option endpoint: /ctrl/options/{option}), so
+   * this used to return an empty list. The actual installed-option list is
+   * /rw/system/options, class sys-option-li with an `option` span - live-verified
+   * 2026-08 (fixed endpoint and class).
+   */
   async listControllerOptions(): Promise<Array<{ name: string; description?: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', '/ctrl/options'));
-    return p.getAllStates('ctrl-option').map(o => ({
+    const p = RwsClient2.parse(await this.req('GET', '/rw/system/options'));
+    return p.getAllStates('sys-option-li').map(o => ({
       name: o['option'] ?? o['name'] ?? '',
       description: o['description'],
-    }));
+    })).filter(o => o.name);
   }
 
+  /** Verify one controller feature. /ctrl/features is a verify-style endpoint
+   *  (`/ctrl/features/{id}`) and returns no list of its own, so the bare listing
+   *  is empty on RW7/RW8 - pass a feature id to check it. */
   async listFeatures(): Promise<Array<Record<string, string>>> {
     const p = RwsClient2.parse(await this.req('GET', '/ctrl/features'));
     return p.getAllStates('ctrl-feature');

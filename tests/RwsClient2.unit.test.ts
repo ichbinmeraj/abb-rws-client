@@ -773,6 +773,74 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 11, parse-class audit fixes)', () => {
+    const hal = (body: string): ReturnType<typeof startServer> => startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end(body);
+    });
+
+    it('getReturnCode parses err-desc (name/description), not the never-emitted rw-retcode', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"err-desc","_title":"-1073445859","name":"SYS_CTRL_E_MASTER_REJECT","code":"-1073445859","severity":"Error","description":"The user does not have required mastership for the operation."}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const rc = await client.getReturnCode(-1073445859);
+        expect(rc?.title).toBe('SYS_CTRL_E_MASTER_REJECT');
+        expect(rc?.desc).toContain('mastership');
+      } finally { server.close(); }
+    });
+
+    it('listControllerOptions reads /rw/system/options with sys-option-li', async () => {
+      const { server, port, requests } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"sys-option-li","_title":"0","option":"RobotControl Base"},{"_type":"sys-option-li","_title":"1","option":"English"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const opts = await client.listControllerOptions();
+        // The old code asked /ctrl/options, which serves no list at all.
+        expect(requests[0].url).toBe('/rw/system/options');
+        expect(opts.map(o => o.name)).toEqual(['RobotControl Base', 'English']);
+      } finally { server.close(); }
+    });
+
+    it('listFileVolumes reads the real fs-dir entries instead of falling back', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/fileservice/"}},"_embedded":{"resources":[{"_type":"fs-dir","_title":"TEMP"},{"_type":"fs-dir","_title":"HOME"}]}}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.listFileVolumes()).toEqual(['TEMP', 'HOME']);
+      } finally { server.close(); }
+    });
+
+    it('listCertificates reads ctrl-certstore-li store names', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"_embedded":{"resources":[{"_type":"ctrl-certstore-li","_title":"0","store-name":"controller"},{"_type":"ctrl-certstore-li","_title":"1","store-name":"system"}]}}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect((await client.listCertificates()).map(c => c.name)).toEqual(['controller', 'system']);
+      } finally { server.close(); }
+    });
+
+    it('getMechunitPjoints and getTaskProgramInfo use the real classes', async () => {
+      const { server, port } = await startServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end((req.url ?? '').includes('pjoints')
+          ? '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"ms-mechunit-pjoints","_title":"pjoints","j1":"0","j2":"1"}]}'
+          : '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-program","_title":"myprog","name":"myprog","entrypoint":"main"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getMechunitPjoints()).toEqual({ j1: 0, j2: 1 });
+        expect((await client.getTaskProgramInfo('T_ROB1'))['entrypoint']).toBe('main');
+      } finally { server.close(); }
+    });
+
+    it('getRapidSymbolProperties handles a PERS symbol (rap-symproppers)', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"_embedded":{"resources":[{"_type":"rap-symproppers","_title":"RAPID/T_ROB1/BASE/tool0","symburl":"RAPID/T_ROB1/BASE/tool0","name":"tool0","symtyp":"per","dattyp":"tooldata","ndim":"0"}]}}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const props = await client.getRapidSymbolProperties('T_ROB1', 'BASE', 'tool0');
+        expect(props.symtyp).toBe('per');
+        expect(props.dattyp).toBe('tooldata');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

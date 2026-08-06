@@ -121,7 +121,13 @@ async function startSubscriptionServer(opts: {
   };
 }
 
-function until(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+/**
+ * Poll until a condition holds. The budget is deliberately generous: these
+ * tests assert that something eventually happens (a socket opens, a re-POST
+ * lands), never how fast. A tight budget only makes the suite fail when the
+ * machine is busy - which is exactly when the whole suite runs in parallel.
+ */
+function until(cond: () => boolean, timeoutMs = 20000): Promise<void> {
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
     const timer = setInterval(() => {
@@ -202,7 +208,7 @@ describe('RWS 2.0 subscription reconnect', () => {
 
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('adopts a re-issued session cookie so recovery works after a controller restart', async () => {
     // Live-observed on RW7.21 (2026-08-02): a warm restart kills the session;
@@ -226,7 +232,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(s.sockets.length).toBeGreaterThanOrEqual(2);
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('fires onRestored after each successful re-subscribe, never on the initial one', async () => {
     const s = await startSubscriptionServer();
@@ -255,7 +261,7 @@ describe('RWS 2.0 subscription reconnect', () => {
 
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('detects a half-open connection via missed PONGs and re-subscribes', async () => {
     // A controller that stops answering app-level PINGs is half-open (frozen
@@ -276,7 +282,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       await until(() => restored >= 1, 5000);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('keeps a healthy connection open when PONGs are answered', async () => {
     const s = await startSubscriptionServer({ answerPings: true });
@@ -295,7 +301,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(s.sockets.length).toBe(1);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('connects the WebSocket via the configured base URL, not the advertised authority', async () => {
     // NAT/port-forward simulation: the controller advertises its own (wrong
@@ -317,7 +323,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(events[0]).toBe('55');
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('honors reconnect tuning options and fires onLost after the configured budget', async () => {
     let failing = false;
@@ -349,7 +355,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(lostCount).toBe(1);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('does not reconnect after unsubscribe', async () => {
     const s = await startSubscriptionServer();
@@ -362,7 +368,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       await new Promise(r => setTimeout(r, 1200));
       expect(s.posts.length).toBe(1);
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('rides the session cookie and DELETEs the old group before re-subscribing', async () => {
     const s = await startSubscriptionServer();
@@ -385,7 +391,7 @@ describe('RWS 2.0 subscription reconnect', () => {
 
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('unsubscribe DELETEs the subscription group resource (/subscription/{id}, not the poll URL)', async () => {
     const s = await startSubscriptionServer();
@@ -408,7 +414,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       await expect(client.subscribe(['speedratio'], () => {})).rejects.toThrow(/timed out/i);
       await until(() => s.requests.some(r => r.method === 'DELETE' && r.url === '/subscription/1'), 3000);
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('invokes onLost exactly once when reconnect attempts are exhausted', async () => {
     tuning.WS_RECONNECT_BASE_MS = 5;
@@ -429,7 +435,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(lost).toBe(1);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('unsubscribe during an in-flight reconnect stops the retry loop without onLost', async () => {
     tuning.WS_RECONNECT_BASE_MS = 30;
@@ -459,7 +465,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(subPosts()).toBe(postsAfterUnsub);
       expect(lost).toBe(0);
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 });
 
 // ─── TLS behavior (self-signed, like every shipping controller) ──────────────

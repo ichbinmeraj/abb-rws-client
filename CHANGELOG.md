@@ -27,6 +27,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ten methods were parsing classes the controllers never send, so they
+  returned empty or wrong data on every controller.** Found by harvesting every
+  class the three controllers actually emit and diffing it against what the
+  client expects. Each is now read from the real response and verified live on
+  RobotWare 7.21 and 8.1.1:
+  `getReturnCode` (the class is `err-desc` with name/description - it returned
+  null for every code), `listControllerOptions` (the installed-option list is
+  `/rw/system/options`, not `/ctrl/options`, which serves no list at all - 24
+  options now returned), `listFileVolumes` (volumes are `fs-dir` entries; it
+  silently fell back to a hardcoded list every time), `listCertificates`,
+  `getRegistry`, `getSafetyStatus` (`/ctrl/safety` is only a directory of links,
+  so the status is now composed from the mode, violation and load resources),
+  `getMechunitPjoints`, `getMechunitAxes` (each axis carries a status and a
+  logical-axis entry), `getTaskProgramInfo`, `getTaskMotion`, and
+  `getRapidSymbolProperties` (persistents and constants use their own classes,
+  so only plain variables ever parsed).
+- `listSafetyZones` documented as unavailable: `/ctrl/safety/zones` does not
+  exist on RobotWare 7 or 8.
 - **RobotWare 8.1.1 ships with its RMMP service broken** - every verb answers
   HTTP 500 (verified back to back against a working RobotWare 7.21). The client
   no longer surfaces a bare 500: `getRmmpPrivilege` reports no privilege held,
