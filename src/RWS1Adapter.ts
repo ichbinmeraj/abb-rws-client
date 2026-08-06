@@ -962,6 +962,45 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   /**
+   * Structural change count of a task - name parity with the RWS 2.0 method.
+   * NOTE: `/rw/rapid/tasks/{task}/structural-changecount` does not exist on
+   * RobotWare 6.16 (HTTP 404, live-probed 2026-08), so this reports 0 there.
+   * The RWS 2.0 side returns the real counter. Kept so callers can use one name
+   * across protocols without branching.
+   */
+  async getTaskStructuralChangeCount(task: string): Promise<number> {
+    try {
+      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/structural-changecount`);
+      const d = (r.state ?? {}) as Record<string, string>;
+      return Number(d['struc-change-count'] ?? d['change-count'] ?? 0);
+    } catch { return 0; }
+  }
+
+  /** Motion sub-resources a task exposes (robtarget, jointtarget, ...) - parity
+   *  with the RWS 2.0 method; the resource is a directory of links. */
+  async getTaskMotion(task: string): Promise<Record<string, string>> {
+    try {
+      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/motion`);
+      const out: Record<string, string> = {};
+      for (const s of r.states) {
+        const d = s as Record<string, string>;
+        const name = d['_title'] ?? '';
+        if (name) { out[name] = (d['_type'] ?? '').replace(/^rapid-|-li$/g, ''); }
+      }
+      return out;
+    } catch { return {}; }
+  }
+
+  /** Per-task activation record (current stack frame). Parity with RWS 2.0;
+   *  the controller answers 400 "No such stack frame" when the task is idle. */
+  async getTaskActivationRecord(task: string): Promise<Record<string, string>> {
+    try {
+      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/activation-record`);
+      return (r.state ?? {}) as Record<string, string>;
+    } catch { return {}; }
+  }
+
+  /**
    * Grants held by the logged-in user. RWS 1.0 serves these at /users/grants
    * (class user-grant, the grant name in the title) - the /uas/* tree is the
    * one that does not exist on RobotWare 6, so this parity with the RWS 2.0
