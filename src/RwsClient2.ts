@@ -824,15 +824,25 @@ export class RwsClient2 {
    * @param lang Message language (default 'en').
    * @param maxPages Safety bound on pages to walk (default 20, so up to ~1000).
    */
-  async getEventLog(domain = 0, lang = 'en', maxPages = 20): Promise<ElogMessage[]> {
+  async getEventLog(
+    domain = 0, lang = 'en', maxPages = 20, order: 'oldest' | 'newest' = 'oldest',
+  ): Promise<ElogMessage[]> {
     // lang required to get title/desc/causes/actions (confirmed by live probe)
     const out: ElogMessage[] = [];
     const visited = new Set<string>();
-    let path = R2.elogMessages(domain, lang);
+    // Newest-first needs the undocumented v=2.1 media type. Under v=2.0 the
+    // controller refuses order=lifo outright: 400 "LIFO is not supported in
+    // v=2.0, Use v=2.1 to list Elog messages in LIFO order." The event log is
+    // the only resource that accepts v=2.1 - every other one answers 406 - and
+    // the response is still labelled v=2.0. Live-verified 2026-08-06 on RW7.21
+    // and RW8.1.1.
+    const newest = order === 'newest';
+    const accept = newest ? 'application/hal+json;v=2.1' : undefined;
+    let path = newest ? `${R2.elogMessages(domain, lang)}&order=lifo` : R2.elogMessages(domain, lang);
     for (let page = 0; path && page < maxPages; page++) {
       if (visited.has(path)) { break; }   // guard against a self-referential `next`
       visited.add(path);
-      const body = await this.req('GET', path);
+      const body = await this.req('GET', path, undefined, undefined, undefined, [], accept);
       const p = RwsClient2.parse(body);
       for (const m of p.getAllStates('elog-message-li')) {
         const parts = (m['_title'] ?? '').split('/');

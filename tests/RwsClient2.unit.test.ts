@@ -1039,6 +1039,28 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
+    it('newest-first event log asks for order=lifo under the v=2.1 media type', async () => {
+      // v=2.0 refuses lifo outright with "Use v=2.1 to list Elog messages in
+      // LIFO order", and v=2.1 is accepted on the event log alone.
+      const seen: Array<{ url: string; accept?: string }> = [];
+      const { server, port } = await startServer((req, res) => {
+        seen.push({ url: req.url ?? '', accept: req.headers.accept });
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"_embedded":{"resources":[]}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.getEventLog(0, 'en', 1, 'newest');
+        expect(seen[0].url).toContain('order=lifo');
+        expect(seen[0].accept).toContain('v=2.1');
+
+        seen.length = 0;
+        await client.getEventLog(0, 'en', 1, 'oldest');
+        expect(seen[0].url).not.toContain('order=lifo');
+        expect(seen[0].accept).not.toContain('v=2.1');
+      } finally { server.close(); }
+    });
+
     it('disconnect releases write access before logging out', async () => {
       // RW8 keeps control-station write access after the session ends, so a
       // client that logs out still holding it blocks every other client with

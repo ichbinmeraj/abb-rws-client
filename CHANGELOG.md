@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `getEventLog` can list newest-first: pass `'newest'` as the fourth argument.
+  Paging from the oldest end meant a controller with a long log handed back
+  boot messages instead of what just happened, which is backwards for
+  diagnostics. This needs the `v=2.1` media type, which is not in the
+  published API reference and which the event log is the only resource to
+  accept; under `v=2.0` the controller refuses `order=lifo` and names 2.1 in
+  the error. Live-verified on RW7.21 and RW8.1.1.
 - `ElogMessage.args` carries the substituted values of an event-log message.
   The controller stores the text as a template and sends the values
   separately, so "The speed has been adjusted to 100% by Default User" arrived
