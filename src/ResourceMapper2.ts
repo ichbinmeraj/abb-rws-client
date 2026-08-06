@@ -16,6 +16,8 @@
  * Targets RWS 2.0 (RobotWare 7.x / OmniCore). Not compatible with RWS 1.0.
  */
 
+import { assertSpeedRatio } from './ResourceMapper.js';
+
 /** A write endpoint: path plus an optional urlencoded form body. */
 export interface Rws2Write {
   path: string;
@@ -56,7 +58,8 @@ export function speedRatio(): string {
  * accepted by the controller and live-verified changing VC speed.
  */
 export function setSpeedRatio(ratio: number): Rws2Write {
-  const v = Math.round(Math.max(0, Math.min(100, ratio)));
+  // Rejects out-of-range values rather than clamping - see assertSpeedRatio.
+  const v = assertSpeedRatio(ratio);
   return { path: '/rw/panel/speedratio?action=setspeedratio', body: { 'speed-ratio': String(v) } };
 }
 

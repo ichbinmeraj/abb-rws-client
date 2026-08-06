@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { RwsError } from '../src/types.js';
 import {
   controllerState,
   setControllerState,
@@ -333,9 +334,20 @@ describe('setSpeedRatio', () => {
     });
   });
 
-  it('clamps to 0-100', () => {
-    expect(setSpeedRatio(150).body).toBe('speed-ratio=100');
-    expect(setSpeedRatio(-10).body).toBe('speed-ratio=0');
+  it('rejects out-of-range ratios instead of clamping them', () => {
+    // Clamping silently gave the caller a different robot speed than they
+    // asked for. 0.85 meaning "85%" used to become 1%.
+    for (const bad of [150, -10, 101, -0.5, NaN, Infinity]) {
+      expect(() => setSpeedRatio(bad)).toThrow(RwsError);
+      try { setSpeedRatio(bad); } catch (e) {
+        expect((e as RwsError).code).toBe('INVALID_ARGUMENT');
+      }
+    }
+  });
+
+  it('accepts the boundaries', () => {
+    expect(setSpeedRatio(0).body).toBe('speed-ratio=0');
+    expect(setSpeedRatio(100).body).toBe('speed-ratio=100');
   });
 
   it('rounds fractional ratios to integers', () => {

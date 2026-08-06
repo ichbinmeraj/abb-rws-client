@@ -1039,6 +1039,34 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
+    it('disconnect releases write access before logging out', async () => {
+      // RW8 keeps control-station write access after the session ends, so a
+      // client that logs out still holding it blocks every other client with
+      // "Remote Control Station cannot take SPoC when it is taken" until
+      // someone releases it. Observed for real on RW8.1.1.
+      const { server, port, requests } = await startServer(rw8Handler);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        await client.disconnect();
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        const release = urls.indexOf('POST /rw/controlstation/writeaccess/release');
+        const logout = urls.indexOf('GET /logout');
+        expect(release).toBeGreaterThan(-1);
+        expect(logout).toBeGreaterThan(release);
+      } finally { server.close(); }
+    });
+
+    it('disconnect does not release write access it never took', async () => {
+      const { server, port, requests } = await startServer(rw8Handler);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.connect();
+        await client.disconnect();
+        expect(requests.map(r => r.url)).not.toContain('/rw/controlstation/writeaccess/release');
+      } finally { server.close(); }
+    });
+
     it('connect() reads rwversion 8.x and routes write access without trying mastership', async () => {
       const { server, port, requests } = await startServer(rw8Handler);
       try {

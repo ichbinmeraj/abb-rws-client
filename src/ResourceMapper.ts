@@ -6,6 +6,8 @@
  * Targets RWS 1.0 (RobotWare 6.x). Not compatible with RWS 2.0 / RobotWare 7.x.
  */
 
+import { RwsError } from './types.js';
+
 // ─── Controller ──────────────────────────────────────────────────────────────
 
 /** Path to read the current controller state (motoron, motoroff, etc.) */
@@ -31,11 +33,31 @@ export function speedRatio(): string {
   return '/rw/panel/speedratio';
 }
 
+/**
+ * Validate a speed ratio and return it as the integer percent the controller
+ * wants. Shared by both protocol builders.
+ *
+ * This used to clamp with Math.min/Math.max, which meant a caller who passed
+ * 500, or 0.85 meaning "85%", silently got a different robot speed than they
+ * asked for and no indication anything was wrong. Speed is a motion parameter,
+ * so guessing at the caller's intent is the wrong default: reject instead, and
+ * reject before anything reaches the controller.
+ */
+export function assertSpeedRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 100) {
+    throw new RwsError(
+      `Speed ratio must be between 0 and 100, got ${ratio}`,
+      'INVALID_ARGUMENT',
+    );
+  }
+  return Math.round(ratio);
+}
+
 /** Path + body to set the speed ratio. Only valid in AUTO mode. @param ratio 0-100 */
 export function setSpeedRatio(ratio: number): { path: string; body: string } {
   return {
     path: '/rw/panel/speedratio?action=setspeedratio',
-    body: `speed-ratio=${Math.round(Math.max(0, Math.min(100, ratio)))}`,
+    body: `speed-ratio=${assertSpeedRatio(ratio)}`,
   };
 }
 

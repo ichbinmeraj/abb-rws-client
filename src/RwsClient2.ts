@@ -68,6 +68,8 @@ export class RwsClient2 {
   /** True once THIS session registered its control station (registration is
    *  session-scoped on RW8 - a reconnect must re-register). */
   private controlStationRegistered = false;
+  /** True while this session holds RW8 control-station write access. */
+  private writeAccessHeld = false;
   private readonly csName: string;
   private readonly csId: string;
   private readonly csPincode: string;
@@ -290,11 +292,21 @@ export class RwsClient2 {
   }
 
   async disconnect(): Promise<void> {
+    // RobotWare 8 does NOT drop control-station write access when the session
+    // ends. Logging out while holding it leaves the controller believing a
+    // station that no longer exists still owns write access, and every other
+    // client is refused with "Remote Control Station cannot take SPoC when it
+    // is taken" until someone releases it. Mastership on RW7 is released by
+    // /logout; this replacement is not. Live-verified 2026-08-06 on RW8.1.1.
+    // (Recovery, if it ever does leak: register again with the same
+    // control-station id, then release.)
+    if (this.writeAccessHeld) { await this.dropWriteAccess().catch(() => {}); }
     // /logout invalidates the session server-side (frees the slot in the controller's pool).
     await this.req('GET', '/logout').catch(() => {});
     this.sessionCookie = null;
     // Registration is session-scoped - the next session must re-register.
     this.controlStationRegistered = false;
+    this.writeAccessHeld = false;
     // Drop pooled keep-alive sockets so the next connect() starts clean.
     this.httpsAgent.destroy();
     this.httpAgent.destroy();
@@ -345,9 +357,12 @@ export class RwsClient2 {
    * Acquires `edit` mastership internally and releases it after.
    */
   async setSpeedRatio(ratio: number): Promise<void> {
+    // Build (and therefore validate) before taking write access: a rejected
+    // argument should cost no controller round trip, and on RW8 a failure to
+    // take write access would otherwise mask the real complaint.
+    const { path, body } = R2.setSpeedRatio(ratio);
     await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
     try {
-      const { path, body } = R2.setSpeedRatio(ratio);
       await this.req('POST', path, body);
     } finally {
       await this.releaseMastership('rapid').catch(() => {});
@@ -1778,11 +1793,13 @@ export class RwsClient2 {
     }
     const { path } = R2.requestWriteAccess();
     await this.req('POST', path);
+    this.writeAccessHeld = true;
   }
 
   private async dropWriteAccess(): Promise<void> {
     const { path } = R2.releaseWriteAccess();
     await this.req('POST', path);
+    this.writeAccessHeld = false;
   }
 
   /**

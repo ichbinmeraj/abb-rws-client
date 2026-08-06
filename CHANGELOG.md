@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The client leaked RobotWare 8 write access on disconnect.** RW8 does not
+  drop control-station write access when the session ends, unlike the
+  mastership service it replaces, so logging out while holding it left the
+  controller believing a station that no longer existed still owned write
+  access. Every later client, ours or anyone's, was then refused with 403
+  "Remote Control Station cannot take SPoC when it is taken" until someone
+  released it by hand. `disconnect()` now releases first, and only if this
+  session actually took it. Found by hitting the leak on a live RW8.
+- `setSpeedRatio` rejects a ratio outside 0-100 instead of silently clamping
+  it. Clamping meant a caller who passed 500, or 0.85 intending 85%, got a
+  different robot speed than they asked for with no error. Speed is a motion
+  parameter, so it now throws `INVALID_ARGUMENT` (a new error code) and sends
+  nothing. Validation also moved ahead of the write-access acquire, so a bad
+  argument costs no controller round trip and its error is not masked by an
+  unrelated write-access failure on RW8.
 - **Six controller error codes were unmapped, so callers got `UNKNOWN`.** Found
   by triggering safe rejected operations on all three generations and recording
   every native code each returns. `unloadModule` on a module that is not loaded
