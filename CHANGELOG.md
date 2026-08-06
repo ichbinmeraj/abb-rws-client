@@ -25,8 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accept; calling either against an IRC5 throws `UNSUPPORTED_OPERATION` (a new
   error code) rather than failing at the controller.
 
+### Added
+
+- `ElogMessage.args` carries the substituted values of an event-log message.
+  The controller stores the text as a template and sends the values
+  separately, so "The speed has been adjusted to 100% by Default User" arrived
+  as a generic title with the two values dropped on the floor. On the live
+  controllers 58 of 153 messages (RW7) and 48 of 83 (RW8) carry arguments, so
+  a large share of the log was losing the detail that says which task, which
+  value, which user. Read on both protocols and both representations.
+
 ### Fixed
 
+- `XhtmlParser` dropped every `<span>` that carried attributes beyond `class`.
+  The pattern required `>` immediately after the class, and event-log
+  arguments are served as `<span class="arg1" type="long">100</span>`, so they
+  never parsed. A test had pinned this as intended behavior; it was a bug.
+  The RWS 1.0 parser already tolerated extra attributes.
 - **The client leaked RobotWare 8 write access on disconnect.** RW8 does not
   drop control-station write access when the session ends, unlike the
   mastership service it replaces, so logging out while holding it left the

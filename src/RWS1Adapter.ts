@@ -4,6 +4,7 @@ import type {
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
   ElogMessage,
 } from './types.js';
+import { decodeElogArgs } from './types.js';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import type { IRWSAdapter } from './IRWSAdapter.js';
@@ -914,6 +915,7 @@ export class RWS1Adapter implements IRWSAdapter {
         timestamp: m['tstamp'] ?? '', srcName: m['src-name'] ?? '',
         title: m['title'] ?? `Event ${m['code']}`, desc: m['desc'] ?? '',
         causes: m['causes'] ?? '', consequences: m['conseqs'] ?? '', actions: m['actions'] ?? '',
+        args: decodeElogArgs(m),
       };
     } catch { return null; }
   }

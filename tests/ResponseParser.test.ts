@@ -787,6 +787,27 @@ describe('parseElogMessages', () => {
   it('returns an empty array when the log is empty', () => {
     expect(parseElogMessages('<html></html>')).toEqual([]);
   });
+
+  it('reads the substituted arguments and their declared types', () => {
+    // Live shape from RW6.16: the message text is a template and the values
+    // arrive separately, so without these the log entry loses the detail that
+    // says which task, which value, which user.
+    const xml = `<li class="elog-message-li" title="/rw/elog/0/51">
+      <span class="msgtype">1</span><span class="code">10140</span>
+      <span class="src-name">MC0</span><span class="tstamp">2026-08-06 T 08:01:07</span>
+      <span class="argc">2</span>
+      <span class="arg1" type="long">100</span>
+      <span class="arg2" type="string">Default User</span></li>`;
+    const [m] = parseElogMessages(xml);
+    expect(m.args).toEqual([
+      { type: 'long', value: '100' },
+      { type: 'string', value: 'Default User' },
+    ]);
+  });
+
+  it('gives an empty args array when the message takes none', () => {
+    expect(parseElogMessages(ELOG_XML)[0].args).toEqual([]);
+  });
 });
 
 describe('parseDirectory', () => {

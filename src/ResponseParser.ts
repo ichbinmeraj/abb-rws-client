@@ -524,6 +524,16 @@ export function parseElogMessages(xml: string): ElogMessage[] {
       causes: get('causes'),
       consequences: get('conseqs'),
       actions: get('actions'),
+      // The substituted values, served as <span class="arg1" type="long">100</span>.
+      args: [...Array(parseInt(get('argc'), 10) || 0)].map((_, i) => {
+        const m = block.match(
+          new RegExp(`<span[^>]*class="[^"]*\\barg${i + 1}\\b[^"]*"([^>]*)>(.*?)</span>`, 'is'),
+        );
+        return {
+          type: m ? (m[1].match(/type="([^"]*)"/)?.[1] ?? '') : '',
+          value: m ? decodeEntities(m[2].trim()) : '',
+        };
+      }),
     };
   });
 }

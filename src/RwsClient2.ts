@@ -5,7 +5,7 @@ import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
 import * as R2 from './ResourceMapper2.js';
 import { Logger } from './Logger.js';
-import { RwsError, stripRapidDomain, type RwsErrorCode } from './types.js';
+import { RwsError, stripRapidDomain, decodeElogArgs, type RwsErrorCode } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
 import type { WsSubscribeOptions } from './WsSubscriber.js';
 import type {
@@ -847,6 +847,7 @@ export class RwsClient2 {
           causes:       m['causes']  ?? '',
           consequences: m['conseqs'] ?? '',
           actions:      m['actions'] ?? '',
+          args:         decodeElogArgs(m),
         });
       }
       path = RwsClient2.nextPagePath(body, `/rw/elog/${domain}`);
@@ -877,6 +878,7 @@ export class RwsClient2 {
         timestamp: m['tstamp'] ?? '', srcName: m['src-name'] ?? '',
         title: m['title'] ?? `Event ${m['code']}`, desc: m['desc'] ?? '',
         causes: m['causes'] ?? '', consequences: m['conseqs'] ?? '', actions: m['actions'] ?? '',
+        args: decodeElogArgs(m),
       };
     } catch { return null; }
   }
@@ -893,6 +895,7 @@ export class RwsClient2 {
         timestamp: m['tstamp'] ?? '', srcName: m['src-name'] ?? '',
         title: m['title'] ?? `Event ${m['code']}`, desc: m['desc'] ?? '',
         causes: m['causes'] ?? '', consequences: m['conseqs'] ?? '', actions: m['actions'] ?? '',
+        args: decodeElogArgs(m),
       };
     } catch { return null; }
   }

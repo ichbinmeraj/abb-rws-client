@@ -108,6 +108,18 @@ export interface ControllerIdentity {
   mac: string;
 }
 
+/**
+ * One substituted argument of an event-log message. The controller stores the
+ * message text as a template and supplies the values separately, so "The speed
+ * has been adjusted to 100% by Default User" arrives as a title plus
+ * `[{type:'long', value:'100'}, {type:'string', value:'Default User'}]`.
+ */
+export interface ElogArg {
+  /** Controller-declared type, e.g. 'long', 'string', 'float'. */
+  type: string;
+  value: string;
+}
+
 export interface ElogMessage {
   /** Sequence number */
   seqnum: number;
@@ -124,6 +136,11 @@ export interface ElogMessage {
   causes: string;
   consequences: string;
   actions: string;
+  /**
+   * Substituted values for this message, in order. Empty when the message
+   * takes none. Both protocols carry them; they were never read until 2026-08.
+   */
+  args: ElogArg[];
 }
 
 /** Controller clock date/time. */
@@ -382,4 +399,37 @@ export interface HttpResponse {
   status: number;
   body: string;
   headers: Headers;
+}
+
+/**
+ * Read the substituted arguments out of one parsed event-log message.
+ *
+ * The two representations carry them differently and neither is documented:
+ *   hal+json / ?json=1 : "argv":[{"type":"long","value":100}, ...]
+ *   XHTML              : <span class="arg1" type="long">100</span> ...
+ * Handles both, on both protocol generations. Returns [] when the message
+ * takes no arguments, which is the common case.
+ */
+export function decodeElogArgs(fields: Record<string, unknown>): ElogArg[] {
+  const raw = fields['argv'];
+  // RWS 1.0's ?json=1 path hands over the parsed array; the hal+json parser
+  // keeps it as a JSON string. Accept either.
+  const list: unknown = typeof raw === 'string' && raw
+    ? ((): unknown => { try { return JSON.parse(raw); } catch { return undefined; } })()
+    : raw;
+  if (Array.isArray(list)) {
+    return (list as Array<{ type?: unknown; value?: unknown }>).map(a => ({
+      type: String(a?.type ?? ''),
+      value: String(a?.value ?? ''),
+    }));
+  }
+  const count = Number(fields['argc'] ?? 0);
+  if (!Number.isFinite(count) || count <= 0) { return []; }
+  const out: ElogArg[] = [];
+  for (let i = 1; i <= count; i++) {
+    const v = fields[`arg${i}`];
+    if (v === undefined) { continue; }
+    out.push({ type: '', value: String(v) });
+  }
+  return out;
 }

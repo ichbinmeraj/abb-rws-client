@@ -72,6 +72,7 @@ export type {
   ControllerIdentity,
   ControllerClock,
   ElogMessage,
+  ElogArg,
   FileEntry,
   MastershipDomain,
   CollisionDetectionState,

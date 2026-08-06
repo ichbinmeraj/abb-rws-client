@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseControllerStatus, classifyControllerError } from '../src/ControllerError.js';
+import { decodeElogArgs } from '../src/types.js';
 import type { RwsErrorCode } from '../src/types.js';
 
 interface Fixture {
@@ -170,5 +171,34 @@ describe('classifyControllerError - fallbacks', () => {
     });
     expect(info.code).toBe('CONTROLLER_BUSY');
     expect(info.controllerCode).toBeNull();
+  });
+});
+
+describe('decodeElogArgs', () => {
+  it('reads the hal+json argv array kept as a string by the parser', () => {
+    expect(decodeElogArgs({
+      argc: '2',
+      argv: '[{"type":"long","value":100},{"type":"string","value":"Default User"}]',
+    })).toEqual([
+      { type: 'long', value: '100' },
+      { type: 'string', value: 'Default User' },
+    ]);
+  });
+
+  it('reads an argv array handed over already parsed (RWS 1.0 ?json=1)', () => {
+    expect(decodeElogArgs({
+      argc: '1',
+      argv: [{ type: 'float', value: 1.5 }],
+    })).toEqual([{ type: 'float', value: '1.5' }]);
+  });
+
+  it('falls back to the arg1..argN span form', () => {
+    expect(decodeElogArgs({ argc: '2', arg1: 'SYS', arg2: 'Default User' }))
+      .toEqual([{ type: '', value: 'SYS' }, { type: '', value: 'Default User' }]);
+  });
+
+  it('returns an empty array when there are no arguments', () => {
+    expect(decodeElogArgs({ argc: '0' })).toEqual([]);
+    expect(decodeElogArgs({})).toEqual([]);
   });
 });

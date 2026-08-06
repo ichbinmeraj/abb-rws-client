@@ -129,6 +129,15 @@ export class HalJsonParser {
     }
     for (const [key, value] of Object.entries(obj)) {
       if (key.startsWith('_')) { continue; }
+      if (Array.isArray(value)) {
+        // Arrays of plain values carry real data that has no _type of its own -
+        // event-log `argv` is the case that matters. Keep them verbatim so a
+        // caller can decode them; skipping meant the values vanished silently.
+        if (!value.some(v => v !== null && typeof v === 'object' && '_type' in (v as JsonObject))) {
+          fields[key] = JSON.stringify(value);
+        }
+        continue;
+      }
       if (value === null || typeof value === 'object') { continue; } // nested resources have their own _type
       fields[key] = String(value);
     }
