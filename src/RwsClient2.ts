@@ -1145,6 +1145,59 @@ export class RwsClient2 {
     return Number(p.getState('ctrl-vttimeslice')['vttimeslice'] ?? 0);
   }
 
+  /**
+   * List the event-log domains the controller actually serves, with how many
+   * events each holds and its buffer size. Discovered by crawling the /rw/elog
+   * root, which advertises a domain per entry (class elog-domain-li). Useful
+   * because getEventLog() defaults to domain 0, while a live controller also
+   * carries messages in other domains (0, 1 and 9 were populated on RW7.21).
+   */
+  async listEventLogDomains(): Promise<Array<{ domain: number; events: number; bufferSize: number }>> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/elog'));
+    return p.getAllStates('elog-domain-li').map(d => ({
+      domain: Number(d['_title'] ?? 0),
+      events: Number(d['numevts'] ?? 0),
+      bufferSize: Number(d['buffsize'] ?? 0),
+    }));
+  }
+
+  /**
+   * RAPID instruction catalog: the categories the pendant groups instructions
+   * into (Common, Prog.Flow, Motion&Proc., I/O, ...). Undocumented resource
+   * found by crawling the task tree (class rap-pallet-head). Pair with
+   * listInstructions() to build an instruction picker.
+   */
+  async listInstructionCategories(task: string): Promise<Array<{ number: number; name: string }>> {
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/pallet-head`));
+    return p.getAllStates('rap-pallet-head').map(d => ({
+      number: Number(d['Number'] ?? 0), name: d['Name'] ?? '',
+    })).filter(c => c.name);
+  }
+
+  /**
+   * RAPID instructions in one catalog category (class rap-pallet; spans Name,
+   * Instruction, Parameter, Alternative, Keyword). Undocumented resource; the
+   * category number comes from listInstructionCategories().
+   */
+  async listInstructions(task: string, category: number): Promise<Array<Record<string, string>>> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/pallet/${category}`));
+    return p.getAllStates('rap-pallet');
+  }
+
+  /**
+   * Read one controller registry file (cfgrules, cfgtext, devices, elogtext,
+   * elogrules, hw-compatibility, option, rapid-metadata, rapid-text,
+   * rw-services, uastext). The content is returned inline as the file's own
+   * XML text (class ctrl-reg-file-li). The existing getRegistry() only lists
+   * the root; these are the actual files.
+   */
+  async getRegistryFile(name: string): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', `/ctrl/registry/${encodeURIComponent(name)}`));
+    const d = p.getState('ctrl-reg-file-li');
+    return d[name] ?? Object.values(d).find(v => typeof v === 'string' && v.startsWith('<?xml')) ?? '';
+  }
+
   /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
    *  (RW7.21), class ios-network-li. */
   async getIoNetwork(network: string): Promise<Record<string, string>> {
@@ -2012,8 +2065,33 @@ export class RwsClient2 {
     } catch { return []; }
   }
 
+  /**
+   * Trigger a cyclic brake check. CAUTION: /ctrl/safety/cyclic-brake-check
+   * answers 404 "Resource is not supported on virtual controller" (live-probed
+   * 2026-08, RW7.21), and /ctrl/safety/cbc is GET-only (405 on POST). The brake
+   * check is normally started from RAPID; this call is retained for real
+   * hardware, where the resource may exist. Use getCyclicBrakeCheckStatus() to
+   * read whether a check is required or when the last one ran.
+   */
   async runCyclicBrakeCheck(): Promise<void> {
     await this.req('POST', '/ctrl/safety/cyclic-brake-check');
+  }
+
+  /**
+   * Cyclic brake check status for one drive unit. The resource REQUIRES the
+   * `drivenum` query parameter (the controller advertises `cbc?drivenum=1` in
+   * its own /ctrl/safety listing); class cbc-status carries
+   * next-brake-check-time, last-brake-check-status and status (e.g. 'required').
+   * Live-verified 2026-08 on RW7.21.
+   */
+  async getCyclicBrakeCheckStatus(drivenum = 1): Promise<{ status: string; lastStatus: string; nextCheckTime: number }> {
+    const p = RwsClient2.parse(await this.req('GET', `/ctrl/safety/cbc?drivenum=${drivenum}`));
+    const d = p.getState('cbc-status');
+    return {
+      status: d['status'] ?? 'unknown',
+      lastStatus: d['last-brake-check-status'] ?? 'unknown',
+      nextCheckTime: Number(d['next-brake-check-time'] ?? 0),
+    };
   }
 
   // ─── Virtual time `/ctrl/virtualtime` ─────────────────────────────────────
@@ -2331,9 +2409,26 @@ export class RwsClient2 {
 
   // ─── Per-task additional endpoints ──────────────────────────────────────────
 
+  /**
+   * Structural change count of a task - bumped when the task's PROGRAM STRUCTURE
+   * changes (modules/routines added or removed), so it is the cheap "did the
+   * program shape change" poll. Class rap-task-struc-change-count carries BOTH
+   * `struc-change-count` (structural) and `change-count` (any edit); this method
+   * returns the structural one - it previously returned `change-count`, i.e. the
+   * wrong number (live-verified 2026-08: struc=6966 vs change=215 on RW7.21).
+   * Use getTaskChangeCount() for the any-edit counter.
+   */
   async getTaskStructuralChangeCount(task: string): Promise<number> {
     const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/structural-changecount`));
-    return Number(p.get('change-count') ?? p.get('structural-changecount') ?? 0);
+    const d = p.getState('rap-task-struc-change-count');
+    return Number(d['struc-change-count'] ?? d['change-count'] ?? 0);
+  }
+
+  /** Any-edit change count of a task (the sibling of the structural count above,
+   *  same resource and class). */
+  async getTaskChangeCount(task: string): Promise<number> {
+    const p = RwsClient2.parse(await this.req('GET', `/rw/rapid/tasks/${task}/structural-changecount`));
+    return Number(p.getState('rap-task-struc-change-count')['change-count'] ?? 0);
   }
 
   async getTaskMotion(task: string): Promise<Record<string, string>> {
@@ -3063,11 +3158,19 @@ export class RwsClient2 {
     }));
   }
 
-  async getTaskSelection(): Promise<{ selected: string[]; available: string[] }> {
+  /**
+   * Task-panel selection state. The live class is `rap-taskselection` (NOT the
+   * `-li` variant this previously parsed, which made the result always empty -
+   * fixed 2026-08 after reading the real response on RW7.21). Each entry carries
+   * name, state (ON/OFF), motiontask and usermodify.
+   */
+  async getTaskSelection(): Promise<{ selected: string[]; available: string[]; entries: Array<Record<string, string>> }> {
     const p = RwsClient2.parse(await this.req('GET', '/rw/rapid/taskselection'));
-    const sel = p.getAllStates('rap-taskselection-li').map(t => t['name']).filter(Boolean) as string[];
-    const all = p.getAllStates('rap-task-li').map(t => t['name']).filter(Boolean) as string[];
-    return { selected: sel, available: all };
+    const entries = p.getAllStates('rap-taskselection');
+    const available = entries.map(t => t['name']).filter(Boolean) as string[];
+    const selected = entries.filter(t => (t['state'] ?? '').toUpperCase() === 'ON')
+      .map(t => t['name']).filter(Boolean) as string[];
+    return { selected, available, entries };
   }
 
   async setTaskSelection(tasks: string[]): Promise<void> {

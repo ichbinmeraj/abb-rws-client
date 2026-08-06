@@ -674,6 +674,64 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 9, crawl findings and parse fixes)', () => {
+    const hal = (body: string): ReturnType<typeof startServer> => startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end(body);
+    });
+
+    it('getTaskStructuralChangeCount returns the STRUCTURAL count, not the edit count', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-task-struc-change-count","_title":"task-struc-change-count","change-count":"215","struc-change-count":"6966"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        // Previously returned 215 (the any-edit counter) - the wrong number.
+        expect(await client.getTaskStructuralChangeCount('T_ROB1')).toBe(6966);
+        expect(await client.getTaskChangeCount('T_ROB1')).toBe(215);
+      } finally { server.close(); }
+    });
+
+    it('getTaskSelection parses rap-taskselection (not the -li class) and reads ON state', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"status":{"code":294912},"state":[{"_type":"rap-taskselection","_title":"T_ROB1","name":"T_ROB1","state":"ON","motiontask":"TRUE","usermodify":"TRUE"},{"_type":"rap-taskselection","_title":"T_ROB2","name":"T_ROB2","state":"OFF","motiontask":"FALSE","usermodify":"TRUE"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const sel = await client.getTaskSelection();
+        expect(sel.available).toEqual(['T_ROB1', 'T_ROB2']);
+        expect(sel.selected).toEqual(['T_ROB1']);
+        expect(sel.entries[0]['motiontask']).toBe('TRUE');
+      } finally { server.close(); }
+    });
+
+    it('getCyclicBrakeCheckStatus requires drivenum and parses cbc-status', async () => {
+      const { server, port, requests } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"cbc-status","_title":"status","next-brake-check-time":"0","last-brake-check-status":"ok","status":"required"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getCyclicBrakeCheckStatus(1)).toEqual({ status: 'required', lastStatus: 'ok', nextCheckTime: 0 });
+        expect(requests[0].url).toBe('/ctrl/safety/cbc?drivenum=1');
+      } finally { server.close(); }
+    });
+
+    it('listEventLogDomains reports each domain with its event count', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"status":{"code":294912},"_embedded":{"resources":[{"_links":{"self":{"href":"0"}},"_type":"elog-domain-li","_title":"0","numevts":"146","buffsize":"1000"},{"_links":{"self":{"href":"1"}},"_type":"elog-domain-li","_title":"1","numevts":"50","buffsize":"1000"}]}}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.listEventLogDomains()).toEqual([
+          { domain: 0, events: 146, bufferSize: 1000 },
+          { domain: 1, events: 50, bufferSize: 1000 },
+        ]);
+      } finally { server.close(); }
+    });
+
+    it('listInstructionCategories parses the undocumented pallet-head catalog', async () => {
+      const { server, port } = await hal('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"rap-pallet-head","_title":"pallet-head1","Name":"Common","Number":"1"},{"_type":"rap-pallet-head","_title":"pallet-head2","Name":"Prog.Flow","Number":"2"}]}');
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.listInstructionCategories('T_ROB1')).toEqual([
+          { number: 1, name: 'Common' }, { number: 2, name: 'Prog.Flow' },
+        ]);
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

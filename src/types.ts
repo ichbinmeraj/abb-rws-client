@@ -183,7 +183,16 @@ export interface RapidSymbolSearchParams {
 }
 
 /** Controller restart mode. */
-export type RestartMode = 'restart' | 'istart' | 'pstart' | 'bstart';
+/**
+ * Controller restart modes. `restart` (warm), `istart` (re-install the system),
+ * `pstart` (restart and delete the program), `bstart` (restart from the last
+ * backup) are accepted on both protocol generations.
+ *
+ * `shutdown` and `xstart` are RWS 2.0 only: the RobotWare 7/8 `/ctrl/restart`
+ * form advertises all six, while the RWS 1.0 panel form lists only the first
+ * four (live-verified 2026-08 by reading each controller's own OPTIONS form).
+ */
+export type RestartMode = 'restart' | 'istart' | 'pstart' | 'bstart' | 'shutdown' | 'xstart';
 
 export interface FileEntry {
   name: string;
@@ -301,6 +310,7 @@ export type RwsErrorCode =
   | 'MASTERSHIP_REQUIRED'  // write needs mastership, or another client holds it
   | 'GRANT_DENIED'         // controller rejected the operation (RMMP not granted / UAS grant missing)
   | 'WRONG_MODE'           // operation not allowed in the current controller state or op-mode
+  | 'UNSUPPORTED_OPERATION' // this protocol generation / controller does not have the operation
   | 'RATE_LIMITED'
   | 'CONTROLLER_BUSY'
   | 'NETWORK_ERROR'

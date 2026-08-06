@@ -290,6 +290,14 @@ export class RwsClient {
    * @param mode - Restart mode; default 'restart'
    */
   async restartController(mode: RestartMode = 'restart'): Promise<void> {
+    // 'shutdown' and 'xstart' exist only on the RWS 2.0 restart form; the RWS 1.0
+    // panel form advertises restart/istart/pstart/bstart (live-verified 2026-08).
+    if (mode === 'shutdown' || mode === 'xstart') {
+      throw new RwsError(
+        `restartController: '${mode}' is a RobotWare 7/8 (RWS 2.0) restart mode and is not available on this IRC5 controller`,
+        'UNSUPPORTED_OPERATION',
+      );
+    }
     try {
       const { path, body } = mapRestartController(mode);
       await this.session.post(path, body);

@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Resource-tree crawl batch. Crawling what the controllers advertise about
+  themselves surfaced resources no documentation lists: `listEventLogDomains`
+  (a live controller carries events in six domains, while `getEventLog`
+  defaults to domain 0 alone), `getCyclicBrakeCheckStatus` (the resource
+  requires a `drivenum` query parameter, which is why the old call never
+  worked), `listInstructionCategories` and `listInstructions` (the pendant's
+  RAPID instruction catalog, 20 categories - useful for editors),
+  `getRegistryFile` (the eleven controller registry files, content inline),
+  and `getTaskChangeCount`.
+- `RestartMode` now includes `shutdown` and `xstart`, which RobotWare 7/8
+  accept; calling either against an IRC5 throws `UNSUPPORTED_OPERATION` (a new
+  error code) rather than failing at the controller.
+
+### Fixed
+
+- `getTaskStructuralChangeCount` returned the wrong number: the resource
+  carries both a structural and an any-edit counter, and it read the latter
+  (215 instead of 6966 on a live controller). It now returns the structural
+  count, with `getTaskChangeCount` for the other one.
+- `getTaskSelection` parsed a class the controller never sends, so it always
+  returned empty lists. It now reads the real entries, including which tasks
+  are ON.
+- `runCyclicBrakeCheck` documented as unavailable on virtual controllers
+  (the resource answers 404 there, and the status resource is read-only).
+
+### Added (continued)
+
 - Deep-coverage read batch, shapes captured live and identical on RW7.21 and
   RW8.1: `getModuleText` (full source straight from program memory, no TEMP
   round trip), `getModuleTextRange`, `searchModuleText` (query param is `text`;
