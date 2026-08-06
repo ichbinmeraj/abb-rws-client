@@ -637,7 +637,7 @@ export class RwsClient2 {
     // (NOT a `task` field - that returns 400 "Invalid parameter").
     // It returns one <li> per match. The `class` of the <li> tells you the kind:
     //   rap-sympropvar-li  → variable (VAR)
-    //   rap-syproppers-li  → persistent (PERS)
+    //   rap-symproppers-li → persistent (PERS)
     //   rap-sympropconst-li → constant (CONST)
     //   rap-sympropproc-li → procedure (PROC)
     //   rap-sympropfun-li  → function (FUNC)
@@ -659,7 +659,11 @@ export class RwsClient2 {
     const xhtml = await this.req('POST', '/rw/rapid/symbols/search', body);
     const liClasses = [
       'rap-sympropvar-li',
-      'rap-syproppers-li',
+      // 'rap-symproppers-li' was spelled 'rap-syproppers-li' here (missing the
+      // 'm'), so persistents - tool0, wobj0, load0, the most common symbols on
+      // any controller - were silently dropped from every search result.
+      // Live-verified spelling 2026-08 on RW7.21/RW8.1.1.
+      'rap-symproppers-li',
       'rap-sympropconst-li',
       'rap-sympropproc-li',
       'rap-sympropfun-li',

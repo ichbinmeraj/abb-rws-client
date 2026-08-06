@@ -193,7 +193,7 @@ export function parseExecutionInfo(xml: string): ExecutionInfo {
 
 /**
  * Parse a /rw/mechunit/{unit}/joint-target XML response into a JointTarget.
- * XML: <li class="rap-jointtarget">
+ * XML: <li class="ms-jointtarget">
  *        <span class="rax_1">10.00</span> ... <span class="rax_6">-90.00</span>
  *      </li>
  */
@@ -225,7 +225,7 @@ export function parseJointTarget(xml: string): JointTarget {
 
 /**
  * Parse a /rw/mechunit/{unit}/robtarget XML response into a RobTarget.
- * XML: <li class="rap-robtarget">
+ * XML: <li class="ms-robtargets">
  *        <span class="x">...</span><span class="y">...</span>...
  *      </li>
  */

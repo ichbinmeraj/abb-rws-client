@@ -841,6 +841,26 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 12, symbol-search persistents)', () => {
+    it('searchRapidSymbols returns PERS symbols (rap-symproppers-li)', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        // Live shape from RW7.21/RW8.1.1: BASE holds three persistents.
+        res.end('{"_links":{"base":{"href":"https://x/rw/rapid/"}},"status":{"code":294912},"_embedded":{"resources":['
+          + '{"_type":"rap-symproppers-li","_title":"RAPID/T_ROB1/BASE/tool0","symburl":"RAPID/T_ROB1/BASE/tool0","name":"tool0","symtyp":"per","dattyp":"tooldata","ndim":"0"},'
+          + '{"_type":"rap-symproppers-li","_title":"RAPID/T_ROB1/BASE/wobj0","symburl":"RAPID/T_ROB1/BASE/wobj0","name":"wobj0","symtyp":"per","dattyp":"wobjdata","ndim":"0"}]}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const syms = await client.searchRapidSymbols({ blockurl: 'RAPID/T_ROB1/BASE' });
+        // The class was misspelled 'rap-syproppers-li' (no 'm'), so persistents -
+        // tool0/wobj0/load0, the most common symbols anywhere - were dropped.
+        expect(syms.map(s => s.name)).toEqual(['tool0', 'wobj0']);
+        expect(syms[0].dattyp).toBe('tooldata');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

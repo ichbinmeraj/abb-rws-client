@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **RAPID symbol search silently dropped every persistent.** The PERS result
+  class was spelled `rap-syproppers-li` (missing an "m"), so `tool0`, `wobj0`,
+  `load0` and every other PERS never appeared in `searchRapidSymbols` or
+  `listModuleSymbols` results. Searching the BASE module now returns all three
+  on both RobotWare 7.21 and 8.1.1 where it returned nothing.
 - **Ten methods were parsing classes the controllers never send, so they
   returned empty or wrong data on every controller.** Found by harvesting every
   class the three controllers actually emit and diffing it against what the
