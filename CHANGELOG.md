@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Six controller error codes were unmapped, so callers got `UNKNOWN`.** Found
+  by triggering safe rejected operations on all three generations and recording
+  every native code each returns. `unloadModule` on a module that is not loaded
+  now reports `MODULE_NOT_FOUND` instead of `UNKNOWN`, and a bad volume in a
+  file path reports `RESOURCE_NOT_FOUND` on RWS 2.0 as it already did on RWS
+  1.0 (same call, two different codes, because the controller answers 400 on
+  one protocol and 404 on the other).
+- Classification no longer trusts the controller code alone where the
+  controller overloads it. `-1073442816` covers at least three distinct
+  conditions with different wording and HTTP status: "Unknown module name",
+  "Symbol not found", and an untranslated "org_code: -517". Mapping the number
+  straight to `MODULE_NOT_FOUND` made every missing *symbol* look like a
+  missing *module*, so the message decides where it is specific. Both meanings
+  are pinned by live-captured fixtures.
 - **Signal subscriptions never worked on RWS 2.0.** The builder asked for
   `/rw/iosystem/signals/{sig};lvalue`, which OmniCore rejects with HTTP 400
   "Invalid resource URI in Create Subscription request", so every attempt to

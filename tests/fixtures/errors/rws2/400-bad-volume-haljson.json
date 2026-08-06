@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "400-bad-volume-haljson",
+  "request": {
+    "method": "GET",
+    "path": "/fileservice/NOVOL:/NO_SUCH"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\" : { \"base\" : { \"href\" : \"https://127.0.0.1:9403/\" } } ,\"status\" : {\"code\":-1073438716, \"msg\": \"rapi_file_service.cpp[237] Virtual root does not exist -1073438716 -704\"}}"
+  }
+}

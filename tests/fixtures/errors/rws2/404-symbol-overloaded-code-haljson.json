@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "404-symbol-overloaded-code-haljson",
+  "request": {
+    "method": "GET",
+    "path": "/rw/rapid/symbol/RAPID/T_ROB1/BASE/no_such_var/data"
+  },
+  "response": {
+    "status": 404,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:9403/\" } } ,\"status\" : {\"code\":-1073442816, \"msg\":\"rws_resource_rapid_symbol_data.cpp[254] Symbol not found code:-1073442816 icode:-1\"}}"
+  }
+}

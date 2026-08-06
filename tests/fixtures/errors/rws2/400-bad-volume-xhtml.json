@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "400-bad-volume-xhtml",
+  "request": {
+    "method": "GET",
+    "path": "/fileservice/NOVOL:/NO_SUCH"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/xhtml+xml;v=2.0",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"> <head> <base href=\"https://127.0.0.1:9403/\"/> </head> <body> <div class=\"status\"> <span class=\"code\">-1073438716</span> <span class=\"msg\">rapi_file_service.cpp[237] Virtual root does not exist -1073438716 -704</span></div> </body></html>"
+  }
+}
