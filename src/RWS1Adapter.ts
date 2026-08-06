@@ -2,7 +2,7 @@ import { RwsClient } from './RwsClient.js';
 import type {
   ExecutionCycle, JointTarget, RobTarget, RapidSymbolSearchParams,
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
-  ElogMessage,
+  ElogMessage, ReturnCodeInfo,
 } from './types.js';
 import { decodeElogArgs, RwsError } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
@@ -907,6 +907,25 @@ export class RWS1Adapter implements IRWSAdapter {
    *  compatibility; expect the controller's 400 until the form is found. */
   async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
     await this.rws1Post(`/rw/rapid/tasks/${task}?action=holdtorun`, `action=${action}`);
+  }
+
+  /**
+   * Translate a controller status code using the controller's own dictionary.
+   * Same resource and same `err-desc` shape as RWS 2.0, live-verified
+   * 2026-08-06 on RW6.16. Null when the code is unknown to this controller.
+   */
+  async describeReturnCode(code: number): Promise<ReturnCodeInfo | null> {
+    try {
+      const r = await this.rws1Get(`/rw/retcode?code=${code}`);
+      const d = (r.state as Record<string, string>) ?? {};
+      if (!d.name) { return null; }
+      return {
+        code: Number(d.code ?? code),
+        name: d.name ?? '',
+        severity: d.severity ?? '',
+        description: d.description ?? '',
+      };
+    } catch { return null; }
   }
 
   /** One event-log message by domain and sequence number. Live-verified

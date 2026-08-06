@@ -1001,6 +1001,39 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('describeReturnCode', () => {
+    it('reads the controller error dictionary', async () => {
+      const { server, port } = await startServer((req, res) => {
+        expect(req.url).toBe('/rw/retcode?code=-1073442816');
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"err-desc",'
+          + '"_title":"-1073442816","name":"SYS_CTRL_E_NO_SUCH_SYMBOL","code":"-1073442816",'
+          + '"severity":"Error","description":"RAPID symbol was not found."}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.describeReturnCode(-1073442816)).toEqual({
+          code: -1073442816,
+          name: 'SYS_CTRL_E_NO_SUCH_SYMBOL',
+          severity: 'Error',
+          description: 'RAPID symbol was not found.',
+        });
+      } finally { server.close(); }
+    });
+
+    it('returns null for a code this controller does not know', async () => {
+      // The dictionary is per-generation: an RW8 code is unknown to RW7.
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(400, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"status":{"code":-1073445879,"msg":"Error code not found"}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.describeReturnCode(-1)).toBeNull();
+      } finally { server.close(); }
+    });
+  });
+
   describe('request pacing', () => {
     it('keeps 55 ms between concurrent request starts, not just sequential ones', async () => {
       // The old code read lastReqTime, awaited a timer, then wrote it back, so

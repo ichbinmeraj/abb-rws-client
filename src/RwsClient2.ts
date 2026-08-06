@@ -5,7 +5,7 @@ import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
 import * as R2 from './ResourceMapper2.js';
 import { Logger } from './Logger.js';
-import { RwsError, stripRapidDomain, decodeElogArgs, type RwsErrorCode } from './types.js';
+import { RwsError, stripRapidDomain, decodeElogArgs, type RwsErrorCode, type ReturnCodeInfo } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
 import type { WsSubscribeOptions } from './WsSubscriber.js';
 import type {
@@ -1313,6 +1313,32 @@ export class RwsClient2 {
     const p = RwsClient2.parse(await this.req('GET', `/ctrl/registry/${encodeURIComponent(name)}`));
     const d = p.getState('ctrl-reg-file-li');
     return d[name] ?? Object.values(d).find(v => typeof v === 'string' && v.startsWith('<?xml')) ?? '';
+  }
+
+  /**
+   * Translate a controller status code into the controller's own description.
+   *
+   * Every RwsError carries a `controllerCode` such as -1073442816, and the
+   * controller ships the dictionary for them: this returns ABB's symbolic name
+   * (`SYS_CTRL_E_NO_SUCH_SYMBOL`), a severity and a sentence of prose. Useful
+   * for anything that reports an error to a human, and for codes this client
+   * has never seen. Returns null when the controller does not know the code -
+   * the dictionary is per-generation, so an RW8 code is unknown to RW7.
+   *
+   * Live-verified 2026-08-06 on RW6.16, RW7.21 and RW8.1.1, class err-desc.
+   */
+  async describeReturnCode(code: number): Promise<ReturnCodeInfo | null> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', `/rw/retcode?code=${code}`));
+      const d = p.getState('err-desc');
+      if (!d['name']) { return null; }
+      return {
+        code:        Number(d['code'] ?? code),
+        name:        d['name'] ?? '',
+        severity:    d['severity'] ?? '',
+        description: d['description'] ?? '',
+      };
+    } catch { return null; }
   }
 
   /**

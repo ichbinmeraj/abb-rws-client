@@ -143,6 +143,19 @@ export interface ElogMessage {
   args: ElogArg[];
 }
 
+/**
+ * A controller status code translated by the controller's own dictionary
+ * (`GET /rw/retcode?code=N`). Available on every generation.
+ */
+export interface ReturnCodeInfo {
+  code: number;
+  /** ABB's symbolic name, e.g. 'SYS_CTRL_E_NO_SUCH_SYMBOL'. */
+  name: string;
+  /** e.g. 'Error', 'Warning'. */
+  severity: string;
+  description: string;
+}
+
 /** Controller clock date/time. */
 export interface ControllerClock {
   /** Format: 'YYYY-MM-DD T HH:MM:SS' */

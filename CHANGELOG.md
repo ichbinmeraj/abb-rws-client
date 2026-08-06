@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RestartMode` now includes `shutdown` and `xstart`, which RobotWare 7/8
   accept; calling either against an IRC5 throws `UNSUPPORTED_OPERATION` (a new
   error code) rather than failing at the controller.
+- `describeReturnCode` translates a controller status code through the
+  controller's own dictionary, returning ABB's symbolic name
+  (`SYS_CTRL_E_NO_SUCH_SYMBOL`), a severity and a sentence of prose. Every
+  `RwsError` already carries a `controllerCode`; this turns it into something
+  worth showing a person, including for codes this client has never seen. It
+  works on all three generations, and the dictionary is per-generation, so a
+  RobotWare 8 code comes back null on RobotWare 7.
 - Certificate store, backup state and controller device inventory, found by
   crawling what the controllers advertise and diffing it against every path
   the client references. `getBackupState` closes a real hole: `createBackup`

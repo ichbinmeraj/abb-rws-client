@@ -5,7 +5,7 @@ import type {
   ElogMessage, Signal, IoNetwork, IoDevice, FileEntry,
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
   UiInstruction, RestartMode, MastershipDomain,
-  SubscriptionResource, SubscriptionEvent,
+  SubscriptionResource, SubscriptionEvent, ReturnCodeInfo,
 } from './types.js';
 
 /** Common interface for both RWS1Adapter (IRC5 / RW6) and RWS2Adapter (OmniCore / RW7). */
@@ -170,6 +170,8 @@ export interface IRWSAdapter {
   getTaskSelection?(): Promise<{ selected: string[]; available: string[] }>;
   setTaskSelection?(tasks: string[]): Promise<void>;
   /** Program-pointer position for a task. */
+  /** Translate a controller status code via GET /rw/retcode. Both protocols. */
+  describeReturnCode?(code: number): Promise<ReturnCodeInfo | null>;
   getProgramPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;
   /** Motion-pointer (ahead of PP - what the motion planner is executing). */
   getMotionPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;
