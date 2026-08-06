@@ -937,6 +937,35 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 15, representation equivalence)', () => {
+    it('listAllGrants reads the JSON class and the different XHTML class alike', async () => {
+      // ONE resource, two representations, two class names: hal+json answers
+      // grant-info with grant-description, XHTML answers uas-grant with
+      // description. Parsing only the JSON spelling emptied the list on any
+      // controller served over XHTML.
+      const json = '{"_links":{"base":{"href":"https://x/uas/grants/"}},"state":[{"_type":"grant-info","_title":"g","grant-name":"UAS_BACKUP","grant-description":"HLP_BACKUP","display-name":"BACKUP"}]}';
+      const xhtml = '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><base href="https://x/uas/grants/"/></head><body><div class="state"><ul>'
+        + '<li class="uas-grant" title="UAS_BACKUP"><span class="grant-name">UAS_BACKUP</span><span class="display-name">BACKUP</span><span class="description">HLP_BACKUP</span></li>'
+        + '</ul></div></body></html>';
+      for (const [label, body, type] of [
+        ['hal+json', json, 'application/hal+json;v=2.0'],
+        ['xhtml', xhtml, 'application/xhtml+xml;v=2.0'],
+      ] as const) {
+        const { server, port } = await startServer((_req, res) => {
+          res.writeHead(200, { 'Content-Type': type });
+          res.end(body);
+        });
+        try {
+          const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+          const grants = await client.listAllGrants();
+          expect(grants, label).toHaveLength(1);
+          expect(grants[0].name, label).toBe('UAS_BACKUP');
+          expect(grants[0].description, label).toBe('HLP_BACKUP');
+        } finally { server.close(); }
+      }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

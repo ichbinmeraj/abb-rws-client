@@ -3083,10 +3083,23 @@ export class RwsClient2 {
   /** All grants DEFINED on the controller (name, description, display name).
    *  Live-verified 2026-08-04 (RW7.21), class grant-info. (The _title of each
    *  entry is an unrendered controller template - fields are correct.) */
+  /**
+   * All grants DEFINED on the controller.
+   *
+   * The two representations of this ONE resource disagree: hal+json returns
+   * class `grant-info` with a `grant-description` span, while XHTML returns
+   * class `uas-grant` with a `description` span (live-verified 2026-08 on
+   * RW7.21). Parsing only the JSON spelling made this return an empty list on
+   * any controller served over XHTML - the fallback older RobotWare 7 releases
+   * use. Both spellings are accepted now.
+   */
   async listAllGrants(): Promise<Array<{ name: string; description?: string; displayName?: string }>> {
     const p = RwsClient2.parse(await this.req('GET', '/uas/grants'));
-    return p.getAllStates('grant-info').map(g => ({
-      name: g['grant-name'] ?? '', description: g['grant-description'], displayName: g['display-name'],
+    const rows = [...p.getAllStates('grant-info'), ...p.getAllStates('uas-grant')];
+    return rows.map(g => ({
+      name: g['grant-name'] ?? g['grantname'] ?? '',
+      description: g['grant-description'] ?? g['description'],
+      displayName: g['display-name'],
     })).filter(g => g.name);
   }
 

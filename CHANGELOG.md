@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `listAllGrants` returned an empty list whenever a controller served XHTML.
+  The two representations of that one resource use different class and field
+  names (`grant-info`/`grant-description` in JSON, `uas-grant`/`description` in
+  XHTML), and only the JSON spelling was handled. Both are accepted now. Every
+  other read was checked the same way: 80 of 81 parse identically in both
+  representations, so this was the only gap.
 - **`listAllSignals` and `getEventLog` were silently truncating.** The
   controller caps a page (100 signals, 50 log messages) and ignores a larger
   `limit`, advertising a `next` link instead. Both read a single page, so
