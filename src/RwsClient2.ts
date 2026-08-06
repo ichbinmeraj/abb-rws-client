@@ -796,24 +796,47 @@ export class RwsClient2 {
 
   // ─── Event log ───────────────────────────────────────────────────────────────
 
-  async getEventLog(domain = 0): Promise<ElogMessage[]> {
-    // lang=en required to get title/desc/causes/actions (confirmed by live probe)
-    const p = RwsClient2.parse(await this.req('GET', R2.elogMessages(domain)));
-    return p.getAllStates('elog-message-li').map(m => {
-      const parts = (m['_title'] ?? '').split('/');
-      return {
-        seqnum:       Number(parts[parts.length - 1] ?? 0),
-        code:         Number(m['code']    ?? 0),
-        msgtype:      Number(m['msgtype'] ?? 1) as 1 | 2 | 3,
-        timestamp:    m['tstamp']  ?? '',
-        srcName:      m['src-name'] ?? '',
-        title:        m['title']   ?? `Event ${m['code']}`,
-        desc:         m['desc']    ?? '',
-        causes:       m['causes']  ?? '',
-        consequences: m['conseqs'] ?? '',
-        actions:      m['actions'] ?? '',
-      };
-    });
+  /**
+   * Event-log messages for a domain, following the controller's pagination.
+   *
+   * The controller serves 50 messages per page and advertises a `next` link;
+   * reading one page returned 50 of the 146 messages a live controller held.
+   * This walks `next` until the log is exhausted. Note that a domain can hold
+   * far more than one page - use listEventLogDomains() to see the counts, and
+   * `maxPages` to bound the walk.
+   *
+   * @param domain Log domain (0 = the common controller log).
+   * @param lang Message language (default 'en').
+   * @param maxPages Safety bound on pages to walk (default 20, so up to ~1000).
+   */
+  async getEventLog(domain = 0, lang = 'en', maxPages = 20): Promise<ElogMessage[]> {
+    // lang required to get title/desc/causes/actions (confirmed by live probe)
+    const out: ElogMessage[] = [];
+    const visited = new Set<string>();
+    let path = R2.elogMessages(domain, lang);
+    for (let page = 0; path && page < maxPages; page++) {
+      if (visited.has(path)) { break; }   // guard against a self-referential `next`
+      visited.add(path);
+      const body = await this.req('GET', path);
+      const p = RwsClient2.parse(body);
+      for (const m of p.getAllStates('elog-message-li')) {
+        const parts = (m['_title'] ?? '').split('/');
+        out.push({
+          seqnum:       Number(parts[parts.length - 1] ?? 0),
+          code:         Number(m['code']    ?? 0),
+          msgtype:      Number(m['msgtype'] ?? 1) as 1 | 2 | 3,
+          timestamp:    m['tstamp']  ?? '',
+          srcName:      m['src-name'] ?? '',
+          title:        m['title']   ?? `Event ${m['code']}`,
+          desc:         m['desc']    ?? '',
+          causes:       m['causes']  ?? '',
+          consequences: m['conseqs'] ?? '',
+          actions:      m['actions'] ?? '',
+        });
+      }
+      path = RwsClient2.nextPagePath(body, `/rw/elog/${domain}`);
+    }
+    return out;
   }
 
   clearEventLog(domain = 0): Promise<void> {
@@ -871,14 +894,39 @@ export class RwsClient2 {
 
   // ─── I/O signals ─────────────────────────────────────────────────────────────
 
-  async listAllSignals(start = 0, limit = 200): Promise<Signal[]> {
-    const p = RwsClient2.parse(await this.req('GET', `/rw/iosystem/signals?start=${start}&limit=${limit}`));
-    return p.getAllStates('ios-signal-li').map(s => {
-      const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
-      const parts = (s['_title'] ?? '').split('/');
-      if (parts.length >= 3) { this.sigCoords.set(name, { n: parts[0], d: parts[1] }); }
-      return { name, value: s['lvalue'] ?? '0', type: (s['type'] ?? 'DI') as Signal['type'], lvalue: s['lvalue'] ?? '0' };
-    });
+  /**
+   * Every configured IO signal, following the controller's pagination.
+   *
+   * The controller caps a page at 100 signals and IGNORES a larger `limit`:
+   * asking for 200, 500 or 1000 all return 100 plus a `next` link. Reading a
+   * single page therefore silently truncated the list (100 of 130 on a stock
+   * VC). This now walks `next` to the end, like listCfgTypes already did.
+   * Live-verified 2026-08 on RW7.21 and RW8.1.1.
+   *
+   * @param start Index of the first signal (default 0).
+   * @param limit Page size hint; the controller may cap it (default 200).
+   * @param maxPages Safety bound on how many pages to walk (default 50).
+   */
+  async listAllSignals(start = 0, limit = 200, maxPages = 50): Promise<Signal[]> {
+    const out: Signal[] = [];
+    const visited = new Set<string>();
+    let path = `/rw/iosystem/signals?start=${start}&limit=${limit}`;
+    for (let page = 0; path && page < maxPages; page++) {
+      // A controller that advertises a `next` pointing back at the current page
+      // would otherwise spin until maxPages, silently duplicating entries.
+      if (visited.has(path)) { break; }
+      visited.add(path);
+      const body = await this.req('GET', path);
+      const p = RwsClient2.parse(body);
+      for (const s of p.getAllStates('ios-signal-li')) {
+        const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
+        const parts = (s['_title'] ?? '').split('/');
+        if (parts.length >= 3) { this.sigCoords.set(name, { n: parts[0], d: parts[1] }); }
+        out.push({ name, value: s['lvalue'] ?? '0', type: (s['type'] ?? 'DI') as Signal['type'], lvalue: s['lvalue'] ?? '0' });
+      }
+      path = RwsClient2.nextPagePath(body, '/rw/iosystem/signals');
+    }
+    return out;
   }
 
   async readSignal(network: string, device: string, name: string): Promise<Signal> {

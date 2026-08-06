@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`listAllSignals` and `getEventLog` were silently truncating.** The
+  controller caps a page (100 signals, 50 log messages) and ignores a larger
+  `limit`, advertising a `next` link instead. Both read a single page, so
+  callers saw 100 of 130 signals and 50 of 148 messages without any indication
+  that more existed. Both now follow `next` to the end, with a page bound and a
+  guard against a controller that points `next` at the current page. Verified
+  live: 130 and 141 signals on the two OmniCore controllers, and event-log
+  counts that match what the controller reports for the domain.
 - **`copyFile` never worked on RWS 2.0.** It sent a `destination` field, which
   the controller rejects with HTTP 400; the copy endpoint takes `fs-newname`
   (a bare target name) plus an optional `fs-overwrite`. Copying now works on

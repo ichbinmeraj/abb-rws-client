@@ -893,6 +893,50 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 14, list pagination)', () => {
+    /** Serve `total` signals in pages of `pageSize`, advertising `next` like the
+     *  real controller (which caps a page and ignores a larger requested limit). */
+    const pagedSignals = (total: number, pageSize: number): ReturnType<typeof startServer> =>
+      startServer((req, res) => {
+        const start = Number(new URL(req.url ?? '', 'http://x').searchParams.get('start') ?? 0);
+        const items = [];
+        for (let i = start; i < Math.min(start + pageSize, total); i++) {
+          items.push(`{"_type":"ios-signal-li","_title":"Net/Dev/sig${i}","name":"sig${i}","type":"DI","lvalue":"0"}`);
+        }
+        const next = start + pageSize < total
+          ? `,"next":{"href":"signals?start=${start + pageSize}&limit=${pageSize}"}` : '';
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end(`{"_links":{"base":{"href":"http://x/rw/iosystem/"}${next}},"_embedded":{"resources":[${items.join(',')}]}}`);
+      });
+
+    it('listAllSignals follows next instead of returning only the first page', async () => {
+      const { server, port } = await pagedSignals(130, 100);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        // The controller caps at 100 per page and ignores a larger limit, so a
+        // single request returned 100 of 130 signals.
+        const sigs = await client.listAllSignals();
+        expect(sigs).toHaveLength(130);
+        expect(sigs[129].name).toBe('sig129');
+      } finally { server.close(); }
+    });
+
+    it('listAllSignals stops if a controller advertises a next pointing at itself', async () => {
+      const { server, port, requests } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"http://x/rw/iosystem/"},"next":{"href":"signals?start=0&limit=200"}},'
+          + '"_embedded":{"resources":[{"_type":"ios-signal-li","_title":"Net/Dev/a","name":"a","type":"DI","lvalue":"0"}]}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const sigs = await client.listAllSignals();
+        // Must not spin to the page cap: the repeated path is detected.
+        expect(requests.length).toBeLessThanOrEqual(2);
+        expect(sigs.length).toBeLessThanOrEqual(2);
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
