@@ -1315,6 +1315,67 @@ export class RwsClient2 {
     return d[name] ?? Object.values(d).find(v => typeof v === 'string' && v.startsWith('<?xml')) ?? '';
   }
 
+  /**
+   * Backup progress/state, e.g. 'Backup Ready'. `createBackup` answers 202 and
+   * runs asynchronously, so this is how a caller knows it finished.
+   * Live-verified 2026-08-06 on RW7.21 and RW8.1.1, class ctrl-backup-state.
+   */
+  async getBackupState(): Promise<string> {
+    const p = RwsClient2.parse(await this.req('GET', '/ctrl/backup/state'));
+    return p.getState('ctrl-backup-state')['backup-state'] ?? '';
+  }
+
+  /**
+   * Names under a certificate-store path. `listCertificateStores()` gives the
+   * top level ('controller', 'system'); passing one of those gives its stores
+   * ('trust_ca_store' for controller, 'robapi_store' and 'rws_store' for
+   * system). Live-verified 2026-08-06 on RW7.21 and RW8.1.1,
+   * class ctrl-certstore-li.
+   */
+  async listCertificateStores(path = ''): Promise<string[]> {
+    const suffix = path ? `/${path.replace(/^\/+/, '')}` : '';
+    const p = RwsClient2.parse(await this.req('GET', `/ctrl/certstore${suffix}`));
+    return p.getAllStates('ctrl-certstore-li')
+      .map(s => s['store-name'] ?? s['_title'] ?? '')
+      .filter(Boolean);
+  }
+
+  /**
+   * The PEM certificates held in one store, e.g.
+   * `getCertificates('system/rws_store')` for the certificate RWS itself
+   * presents. Live-verified 2026-08-06, class ctrl-certstore-cert.
+   */
+  async getCertificates(storePath: string): Promise<string[]> {
+    const p = RwsClient2.parse(await this.req('GET', `/ctrl/certstore/${storePath.replace(/^\/+/, '')}`));
+    return p.getAllStates('ctrl-certstore-cert')
+      .map(s => s['cert-pem'] ?? '')
+      .filter(Boolean);
+  }
+
+  /** Device groups the controller reports, e.g. HW_DEVICES and SW_RESOURCES. */
+  async listDeviceGroups(): Promise<string[]> {
+    const p = RwsClient2.parse(await this.req('GET', '/rw/devices'));
+    return p.getAllStates('dev-group-li')
+      .concat(p.getAllStates('dev-id-li'))
+      .map(s => s['_title'] ?? '')
+      .filter(Boolean);
+  }
+
+  /**
+   * Devices in one controller device group: HW_DEVICES lists the drive links,
+   * mechanical units and FlexPendant; SW_RESOURCES lists RobAPI, System, RAPID
+   * and the rest. Distinct from `listDevices`, which lists I/O devices on a
+   * fieldbus network.
+   * Live-verified 2026-08-06 on RW7.21 and RW8.1.1, class dev-id-li.
+   */
+  async listControllerDevices(group: string): Promise<Array<{ id: string; name: string }>> {
+    const p = RwsClient2.parse(await this.req('GET', `/rw/devices/${encodeURIComponent(group)}`));
+    return p.getAllStates('dev-id-li').map(s => ({
+      id: s['_title'] ?? '',
+      name: s['name'] ?? '',
+    }));
+  }
+
   /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
    *  (RW7.21), class ios-network-li. */
   async getIoNetwork(network: string): Promise<Record<string, string>> {

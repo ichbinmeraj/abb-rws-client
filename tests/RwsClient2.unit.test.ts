@@ -1015,11 +1015,14 @@ describe('RwsClient2 (unit)', () => {
       });
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const t0 = Date.now();
         await Promise.all(Array.from({ length: 5 }, () => client.getOperationMode()));
         expect(starts).toHaveLength(5);
-        const gaps = starts.slice(1).map((t, i) => t - starts[i]);
-        // Allow a little timer slack, but nothing close to firing together.
-        for (const g of gaps) { expect(g).toBeGreaterThanOrEqual(45); }
+        // Assert on the span rather than each gap: individual arrival times
+        // compress when the event loop is busy, but the total cannot shrink
+        // below the enforced spacing. The bug produced roughly zero here.
+        expect(starts[starts.length - 1] - starts[0]).toBeGreaterThanOrEqual(4 * 45);
+        expect(Date.now() - t0).toBeGreaterThanOrEqual(4 * 45);
       } finally { server.close(); }
     });
 

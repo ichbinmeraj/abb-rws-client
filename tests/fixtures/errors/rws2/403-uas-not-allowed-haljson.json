@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-uas-not-allowed-haljson",
+  "request": {
+    "method": "GET",
+    "path": "/uas/ldap/enabled"
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\" : { \"base\" : { \"href\" : \"https://127.0.0.1:9403/\" } } ,\"status\" : {\"code\":-1073445867, \"msg\": \"rapi_uas_resource.cpp[2995] The user is not allowed access -1073445867 -757\"}}"
+  }
+}

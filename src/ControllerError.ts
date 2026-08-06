@@ -82,7 +82,10 @@ function cleanMsg(msg: string | null): string | null {
  */
 const CODE_MAP: ReadonlyArray<{ codes: number[]; rws: RwsErrorCode }> = [
   { codes: [-1073445862, -1073445859], rws: 'MASTERSHIP_REQUIRED' },
-  { codes: [-1073445881, -1073435873, -1073435870], rws: 'GRANT_DENIED' },
+  // -1073445867 "The user is not allowed access": returned for UAS-gated
+  // resources such as /uas/ldap/*. Without it a 403 fell through to UNKNOWN,
+  // because the HTTP fallback below only promotes 404.
+  { codes: [-1073445881, -1073435873, -1073435870, -1073445867], rws: 'GRANT_DENIED' },
   { codes: [-1073442809],              rws: 'WRONG_MODE' },
   { codes: [-1073442813],              rws: 'MODULE_NOT_FOUND' },
   // Everything below means "the thing you named is not there". Notes on the

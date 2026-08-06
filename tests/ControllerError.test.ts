@@ -66,6 +66,9 @@ const EXPECTED: Record<string, { code: RwsErrorCode; controllerCode: number }> =
   // Same controller code as rws1/400-unload-unknown-module, different meaning.
   // Pinning both proves the number alone is not classified on.
   'rws2/404-symbol-overloaded-code-haljson':   { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073442816 },
+  // A UAS-gated resource. Without this code mapped a 403 fell to UNKNOWN,
+  // because the HTTP fallback only promotes 404.
+  'rws2/403-uas-not-allowed-haljson':          { code: 'GRANT_DENIED',        controllerCode: -1073445867 },
 };
 
 describe('classifyControllerError - fixture-driven (live-captured payloads)', () => {

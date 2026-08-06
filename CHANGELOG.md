@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RestartMode` now includes `shutdown` and `xstart`, which RobotWare 7/8
   accept; calling either against an IRC5 throws `UNSUPPORTED_OPERATION` (a new
   error code) rather than failing at the controller.
+- Certificate store, backup state and controller device inventory, found by
+  crawling what the controllers advertise and diffing it against every path
+  the client references. `getBackupState` closes a real hole: `createBackup`
+  answers 202 and finishes asynchronously, and there was no way to tell when.
+  `listCertificateStores` and `getCertificates` read the PEM the controller
+  presents for RWS and the CA store it trusts. `listDeviceGroups` and
+  `listControllerDevices` list the drive links, mechanical units and
+  FlexPendant, and the software resources. After this the only advertised
+  resource the client does not touch is `/uas/ldap`, whose sub-resources
+  answer 403 for a normal user, so its success shape cannot be verified here
+  and it is deliberately not implemented blind.
 - `getEventLog` can list newest-first: pass `'newest'` as the fourth argument.
   Paging from the oldest end meant a controller with a long log handed back
   boot messages instead of what just happened, which is backwards for
@@ -81,7 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing. Validation also moved ahead of the write-access acquire, so a bad
   argument costs no controller round trip and its error is not masked by an
   unrelated write-access failure on RW8.
-- **Six controller error codes were unmapped, so callers got `UNKNOWN`.** Found
+- Seven controller error codes were unmapped, so callers got `UNKNOWN`. Found
   by triggering safe rejected operations on all three generations and recording
   every native code each returns. `unloadModule` on a module that is not loaded
   now reports `MODULE_NOT_FOUND` instead of `UNKNOWN`, and a bad volume in a
