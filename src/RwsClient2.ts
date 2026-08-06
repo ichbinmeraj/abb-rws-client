@@ -2021,14 +2021,31 @@ export class RwsClient2 {
 
   // ─── Vision `/rw/vision` ────────────────────────────────────────────────────
 
+  /**
+   * List connected Integrated Vision cameras. The /rw/vision root carries a
+   * `number-of-cameras-li` state plus one link per camera resource - there is no
+   * `vision-system-li` class (that name was a guess and never matched, so this
+   * always returned an empty list; corrected 2026-08 after reading the real
+   * response on RW7.21 and RW8.1.1, both reporting 0 cameras on a VC).
+   */
   async listVisionSystems(): Promise<Array<{ name: string; status?: string }>> {
     try {
       const p = RwsClient2.parse(await this.req('GET', '/rw/vision'));
-      return p.getAllStates('vision-system-li').map(s => ({
-        name: s['_title'] ?? s['name'] ?? '',
-        status: s['status'],
-      }));
+      // Prefer explicit camera entries when a controller has cameras attached.
+      const cams = [...p.getAllStates('vision-system-li'), ...p.getAllStates('camera-info-li')]
+        .map(s => ({ name: s['_title'] ?? s['name'] ?? '', status: s['status'] }))
+        .filter(c => c.name && !c.name.includes('{'));
+      return cams;
     } catch { return []; }
+  }
+
+  /** How many Integrated Vision cameras the controller reports
+   *  (class number-of-cameras-li). 0 on a VC without cameras. */
+  async getVisionCameraCount(): Promise<number> {
+    try {
+      const p = RwsClient2.parse(await this.req('GET', '/rw/vision'));
+      return Number(p.getState('number-of-cameras-li')['number-of-cameras'] ?? 0);
+    } catch { return 0; }
   }
 
   async getVisionSystemInfo(name: string): Promise<Record<string, string>> {
@@ -2864,7 +2881,17 @@ export class RwsClient2 {
    * Returns 'none' if another user holds it (we'd need to re-request for our own session).
    */
   async getRmmpPrivilege(): Promise<string> {
-    const xml = await this.req('GET', '/users/rmmp');
+    let xml: string;
+    try {
+      xml = await this.req('GET', '/users/rmmp');
+    } catch (e) {
+      // The whole RMMP service answers HTTP 500 on RobotWare 8.1.1 (GET, POST
+      // and poll alike - live-verified 2026-08 against RW8.1.1 vs a working
+      // RW7.21). Report "no privilege held" rather than surfacing a raw 500 to
+      // every caller that merely polls this.
+      if (e instanceof RwsError && e.httpStatus === 500) { return 'none'; }
+      throw e;
+    }
     const p = RwsClient2.parse(xml);
     const priv     = p.get('privilege') ?? 'none';
     const heldByMe = (p.get('rmmpheldbyme') ?? 'false').toLowerCase() === 'true';
@@ -2873,9 +2900,21 @@ export class RwsClient2 {
     return heldByMe ? priv : 'none';
   }
 
-  /** Request 'modify' privilege. Triggers a FlexPendant approval popup. */
+  /** Request 'modify' privilege. Triggers a FlexPendant approval popup.
+   *  On RobotWare 8.1.1 the RMMP service is broken (every verb answers HTTP
+   *  500), so this reports UNSUPPORTED_OPERATION there instead of a bare 500. */
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
-    await this.req('POST', '/users/rmmp', { privilege: level });
+    try {
+      await this.req('POST', '/users/rmmp', { privilege: level });
+    } catch (e) {
+      if (e instanceof RwsError && e.httpStatus === 500) {
+        throw new RwsError(
+          'requestRmmp: the controller\'s RMMP service returned HTTP 500. RobotWare 8.1.1 ships with this service broken (all RMMP verbs fail); use the FlexPendant to grant privileges there.',
+          'UNSUPPORTED_OPERATION', 500,
+        );
+      }
+      throw e;
+    }
   }
 
   /** Info about the logged-in user session (uas-id, user-name, locale,

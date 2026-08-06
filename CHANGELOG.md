@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **RobotWare 8.1.1 ships with its RMMP service broken** - every verb answers
+  HTTP 500 (verified back to back against a working RobotWare 7.21). The client
+  no longer surfaces a bare 500: `getRmmpPrivilege` reports no privilege held,
+  and `requestRmmp` explains the situation with `UNSUPPORTED_OPERATION`.
+- `listVisionSystems` parsed a class the controller never sends, so it always
+  returned an empty list. It now reads the real camera entries, with
+  `getVisionCameraCount` for the camera count.
 - `getTaskStructuralChangeCount` returned the wrong number: the resource
   carries both a structural and an any-edit counter, and it read the latter
   (215 instead of 6966 on a live controller). It now returns the structural

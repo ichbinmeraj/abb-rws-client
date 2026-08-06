@@ -732,6 +732,47 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 10, RW8 RMMP regression and vision)', () => {
+    it('getRmmpPrivilege reports none when the controller RMMP service 500s (RW8.1.1)', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"rapi_user_resource.cpp[1088] Unspecified Error"}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        // A raw 500 must not escape to every caller that merely polls this.
+        expect(await client.getRmmpPrivilege()).toBe('none');
+      } finally { server.close(); }
+    });
+
+    it('requestRmmp reports UNSUPPORTED_OPERATION on the broken RW8 service', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"Unspecified Error"}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.requestRmmp('modify').then(() => null, (e: unknown) => e as RwsError);
+        expect(err).toBeInstanceOf(RwsError);
+        expect(err!.code).toBe('UNSUPPORTED_OPERATION');
+        expect(err!.message).toContain('RobotWare 8.1.1');
+      } finally { server.close(); }
+    });
+
+    it('getVisionCameraCount reads number-of-cameras-li', async () => {
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/rw/vision/"}},"state":[{"_type":"number-of-cameras-li","_title":"number-of-cameras","number-of-cameras":"2"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        expect(await client.getVisionCameraCount()).toBe(2);
+        // The template placeholders in the camera links must never become "systems"
+        expect(await client.listVisionSystems()).toEqual([]);
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
