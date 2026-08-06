@@ -27,6 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Signal subscriptions never worked on RWS 2.0.** The builder asked for
+  `/rw/iosystem/signals/{sig};lvalue`, which OmniCore rejects with HTTP 400
+  "Invalid resource URI in Create Subscription request", so every attempt to
+  watch an I/O signal in real time failed at subscribe time on RobotWare 7 and
+  8. The suffix is `;state` (`lvalue` is the field the event carries, not the
+  resource to subscribe on). RWS 1.0 had it right all along. Verified against
+  RW7.21 and RW8.1.1.
+- **Persistent-variable subscriptions never worked on RWS 2.0 either.** The
+  builder used the RWS 1.0 shape `/rw/rapid/symbol/data/RAPID/{sym};value`.
+  RobotWare 7 answers that with HTTP 500 "RW-Subscription service is down" (a
+  misleading message - the service is fine) and RobotWare 8 with HTTP 400. The
+  RWS 2.0 shape puts `data` after the symbol path:
+  `/rw/rapid/symbol/RAPID/{task}/{module}/{symbol}/data;value`.
+- **The same `{ type: 'persvar' }` resource no longer behaves differently per
+  adapter.** RWS 1.0 requires the leading `RAPID/` domain and rejects the bare
+  path with HTTP 400; RWS 2.0 wants it bare. Both builders now normalize, so
+  one resource object works on either protocol with or without the prefix -
+  which matters because `MultiRobotManager` switches adapters underneath a
+  single contract. The full 12-resource subscription surface is now accepted on
+  RW6.16, RW7.21 and RW8.1.1 alike.
 - `RobotManager` no longer pages over `listAllSignals` itself. That loop was
   correct while the adapter returned a single page, but once the adapter began
   following the controller's pagination it re-fetched from an offset and
@@ -128,8 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RWS 1.0 `holdToRun` marked unverified: its wire form answers 400 on RW6.16.
 - Niche coverage batch, forms taken from each endpoint's own `OPTIONS` response
   and cross-checked live on RW7.21: motion supervision (`setMotionSupervisionMode`,
-  `setMotionSupervisionSensitivity` — the controller field is `sensitivity`, not
-  `level`; `setPathSupervisionMode` — all gated behind the Collision Detection
+  `setMotionSupervisionSensitivity`, where the controller field is `sensitivity`,
+  not `level`; `setPathSupervisionMode`, all gated behind the Collision Detection
   option), IO (`setSignalSimulated`, `unblockSignals`, `setNetworkLState`,
   `setIoDeviceLState`), `searchDevices` (the field is `property`, not the
   OPTIONS-advertised `properties`), program-pointer navigation (`ppPrevInst`,

@@ -5,7 +5,7 @@ import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
 import * as R2 from './ResourceMapper2.js';
 import { Logger } from './Logger.js';
-import { RwsError, type RwsErrorCode } from './types.js';
+import { RwsError, stripRapidDomain, type RwsErrorCode } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
 import type { WsSubscribeOptions } from './WsSubscriber.js';
 import type {
@@ -2635,8 +2635,15 @@ export class RwsClient2 {
     switch (r.type) {
       case 'execycle':   return '/rw/rapid/execution;rapidexeccycle';
       case 'elog':       return `/rw/elog/${r.domain}`;
-      case 'signal':     return `/rw/iosystem/signals/${r.name};lvalue`;
-      case 'persvar':    return `/rw/rapid/symbol/data/RAPID/${r.name};value`;
+      // Signals subscribe on `;state`, NOT `;lvalue`: the controller answers
+      // 400 "Invalid resource URI in Create Subscription request" for lvalue,
+      // so signal subscriptions never worked on RWS 2.0 (fixed 2026-08, live
+      // -verified on RW7.21 and RW8.1.1). The event still carries lvalue.
+      case 'signal':     return `/rw/iosystem/signals/${r.name};state`;
+      // Symbol paths are suffix-style on RWS 2.0 (/symbol/{url}/data), not the
+      // RWS 1.0 prefix form (/symbol/data/{url}). Subscribing with the RWS 1.0
+      // shape answers HTTP 500 "RW-Subscription service is down".
+      case 'persvar':    return `/rw/rapid/symbol/RAPID/${stripRapidDomain(r.name)}/data;value`;
       case 'taskchange': return `/rw/rapid/tasks/${r.task};taskchange`;
       default:           return null;
     }

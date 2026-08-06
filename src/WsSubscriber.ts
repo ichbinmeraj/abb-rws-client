@@ -34,7 +34,7 @@
 import { createRequire } from 'module';
 import type { HttpSession } from './HttpSession.js';
 import type { SubscriptionResource, SubscriptionEvent } from './types.js';
-import { RwsError } from './types.js';
+import { RwsError, stripRapidDomain } from './types.js';
 import { subscriptions } from './ResourceMapper.js';
 import { parseSubscriptionId } from './ResponseParser.js';
 import { Logger } from './Logger.js';
@@ -117,6 +117,11 @@ function resolveWebSocket(): WebSocketCtor {
 
 // ─── Path builder for subscription resources ─────────────────────────────────
 
+/** Ensure a symbol path carries the leading `RAPID/` domain that RWS 1.0 requires. */
+function withRapidDomain(name: string): string {
+  return `RAPID/${stripRapidDomain(name)}`;
+}
+
 /**
  * Map a SubscriptionResource to its RWS 1.0 event path (with ;state suffix where needed).
  * Paths are NOT percent-encoded - semicolons must be literal in the subscription body.
@@ -134,8 +139,12 @@ function resourceToPath(resource: SubscriptionResource): string {
     return `/rw/iosystem/signals/${resource.name};state`;
   }
   if (resource.type === 'persvar') {
-    // RAPID persistent variable subscription path (full path: RAPID/task/module/symbol)
-    return `/rw/rapid/symbol/data/${resource.name};value`;
+    // RAPID persistent variable subscription path (full path: RAPID/task/module/symbol).
+    // RWS 1.0 needs the leading RAPID/ domain; without it the controller answers
+    // 400 "Resource does not exist on the controller" (live-verified 2026-08 on
+    // RW6.16). Callers may pass it either way - RWS 2.0 takes the bare form, so
+    // normalize here and the same resource object works on both protocols.
+    return `/rw/rapid/symbol/data/${withRapidDomain(resource.name)};value`;
   }
   if (resource.type === 'taskchange') {
     return `/rw/rapid/tasks/${encodeURIComponent(resource.task)};taskchange`;

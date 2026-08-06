@@ -284,6 +284,20 @@ export type SubscriptionResource =
   | { type: 'execycle' }
   | { type: 'elog'; domain: number };
 
+/**
+ * Strip a leading `RAPID/` from a symbol path.
+ *
+ * The two protocols disagree on the shape of a persistent-variable subscription:
+ * RWS 1.0 wants `/rw/rapid/symbol/data/RAPID/{task}/{module}/{sym};value` and
+ * RWS 2.0 wants `/rw/rapid/symbol/RAPID/{task}/{module}/{sym}/data;value`, and
+ * each rejects the other's shape. Both builders normalize through this helper so
+ * one `{ type: 'persvar', name }` works on either adapter, with or without the
+ * prefix. Live-verified 2026-08 on RW6.16, RW7.21 and RW8.1.1.
+ */
+export function stripRapidDomain(name: string): string {
+  return name.replace(/^\/?RAPID\//i, '');
+}
+
 export interface SubscriptionEvent {
   resource: string;
   value: string;

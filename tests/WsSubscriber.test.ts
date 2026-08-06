@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WebSocketServer } from 'ws';
 import type { AddressInfo } from 'node:net';
 import { WsSubscriber } from '../src/WsSubscriber.js';
-import { RwsError } from '../src/types.js';
+import { RwsError, type SubscriptionResource } from '../src/types.js';
 import type { HttpSession } from '../src/HttpSession.js';
 
 // ─── Fakes ───────────────────────────────────────────────────────────────────
@@ -242,6 +242,54 @@ describe('WsSubscriber - transport selection', () => {
     const options2 = captured[1].options as { handshakeTimeout?: number };
     expect(options2.handshakeTimeout).toBe(1234);
     await unsubscribe2();
+  });
+});
+
+describe('WsSubscriber - subscription resource paths', () => {
+  /** Fake session that records the form body posted to /subscription. */
+  function makeBodyCapturingSession() {
+    const bodies: string[] = [];
+    const session = {
+      post: async (_url: string, body: string) => {
+        bodies.push(body);
+        return {
+          status: 201,
+          body: '',
+          headers: new Headers({ location: 'http://127.0.0.1:1/subscription/42' }),
+        };
+      },
+      delete: async () => ({ status: 200, body: '', headers: new Headers() }),
+      getCookieHeader: () => COOKIE,
+    } as unknown as HttpSession;
+    return { session, bodies };
+  }
+
+  async function pathFor(resource: SubscriptionResource): Promise<string> {
+    const { session, bodies } = makeBodyCapturingSession();
+    const { FakeWs } = makeFakeWs('open');
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const unsubscribe = await subscriber.subscribe([resource], () => undefined);
+    await unsubscribe();
+    return decodeURIComponent(bodies[0].match(/&1=([^&]*)/)![1]);
+  }
+
+  it('subscribes signals on ;state', async () => {
+    expect(await pathFor({ type: 'signal', name: 'NET/DEV/di_1' }))
+      .toBe('/rw/iosystem/signals/NET/DEV/di_1;state');
+  });
+
+  it('prefixes persistent variables with the RAPID domain', async () => {
+    // Without RAPID/ the controller answers 400 "Resource does not exist on the
+    // controller" (live-verified on RW6.16).
+    expect(await pathFor({ type: 'persvar', name: 'T_ROB1/BASE/tool0' }))
+      .toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/BASE/tool0;value');
+  });
+
+  it('does not double the RAPID prefix when the caller already supplied it', async () => {
+    // The RWS 2.0 builder takes the bare form, so the same resource object has
+    // to survive both adapters.
+    expect(await pathFor({ type: 'persvar', name: 'RAPID/T_ROB1/BASE/tool0' }))
+      .toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/BASE/tool0;value');
   });
 });
 

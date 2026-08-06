@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { RwsClient2 } from '../src/RwsClient2.js';
-import { RwsError } from '../src/types.js';
+import { RwsError, type SubscriptionResource } from '../src/types.js';
 import { TEST_TLS_KEY, TEST_TLS_CERT } from './TlsFixture.js';
 
 /**
@@ -53,15 +53,50 @@ describe('RwsClient2 (unit)', () => {
   });
 
   describe('rws2ResourcePath (subscription URL builder)', () => {
-    it('maps string resources to known panel paths', () => {
-      // The static method is private - exercise it via known inputs/outputs.
-      // We can't import it directly; instead verify the names exist on the class.
-      // (If this drifts the live subscribe tests catch it.)
-      expect('rws2ResourcePath' in RwsClient2).toBe(true);
+    // The builder is a private static; reach it through a cast. Every expected
+    // string below was accepted with HTTP 201 by a live controller, and the
+    // rejected forms noted in the comments were observed returning 400/500.
+    const build = (r: SubscriptionResource): string | null =>
+      (RwsClient2 as unknown as {
+        rws2ResourcePath(r: SubscriptionResource): string | null;
+      }).rws2ResourcePath(r);
+
+    it('maps string resources to their panel paths', () => {
+      expect(build('controllerstate')).toBe('/rw/panel/ctrl-state;ctrlstate');
+      expect(build('operationmode')).toBe('/rw/panel/opmode;opmode');
+      expect(build('speedratio')).toBe('/rw/panel/speedratio;speedratio');
+      expect(build('execution')).toBe('/rw/rapid/execution;ctrlexecstate');
+      expect(build('coldetstate')).toBe('/rw/panel/coldetstate;coldetstate');
+      expect(build('uiinstr')).toBe('/rw/rapid/uiinstr;uievent');
     });
 
-    it('maps signal subscription objects to /rw/iosystem/signals path', () => {
-      expect('resourcePathToName' in RwsClient2).toBe(true);
+    it('subscribes signals on ;state, never ;lvalue', () => {
+      // ;lvalue is rejected with 400 "Invalid resource URI in Create
+      // Subscription request" on RW7.21 and RW8.1.1 - signal subscriptions
+      // silently never worked while the builder emitted it.
+      const path = build({ type: 'signal', name: 'NET/DEV/di_1' });
+      expect(path).toBe('/rw/iosystem/signals/NET/DEV/di_1;state');
+      expect(path).not.toContain(';lvalue');
+    });
+
+    it('uses the RWS 2.0 suffix shape for persistent variables', () => {
+      // The RWS 1.0 prefix shape (/rw/rapid/symbol/data/RAPID/...) answers
+      // 500 "RW-Subscription service is down" on RW7.21 and 400 on RW8.1.1.
+      expect(build({ type: 'persvar', name: 'T_ROB1/BASE/tool0' }))
+        .toBe('/rw/rapid/symbol/RAPID/T_ROB1/BASE/tool0/data;value');
+    });
+
+    it('accepts a persvar name with or without the RAPID/ prefix', () => {
+      // Same resource object has to work on both adapters - RWS 1.0 requires
+      // the prefix, RWS 2.0 rejects it doubled.
+      expect(build({ type: 'persvar', name: 'RAPID/T_ROB1/BASE/tool0' }))
+        .toBe('/rw/rapid/symbol/RAPID/T_ROB1/BASE/tool0/data;value');
+    });
+
+    it('maps the remaining object resources', () => {
+      expect(build({ type: 'execycle' })).toBe('/rw/rapid/execution;rapidexeccycle');
+      expect(build({ type: 'elog', domain: 0 })).toBe('/rw/elog/0');
+      expect(build({ type: 'taskchange', task: 'T_ROB1' })).toBe('/rw/rapid/tasks/T_ROB1;taskchange');
     });
   });
 
