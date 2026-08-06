@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `listCurrentUserGrants` now works on RobotWare 6 as well: RWS 1.0 serves the
+  logged-in user's grants at `/users/grants` (26 grants on a live IRC5), so the
+  method name is the same on both protocols. Only the `/uas/*` tree is genuinely
+  RWS 2.0 only. `listNetworkInterfaces` added for the full interface list.
 - Resource-tree crawl batch. Crawling what the controllers advertise about
   themselves surfaced resources no documentation lists: `listEventLogDomains`
   (a live controller carries events in six domains, while `getEventLog`

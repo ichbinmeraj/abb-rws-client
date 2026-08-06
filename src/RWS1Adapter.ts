@@ -945,6 +945,36 @@ export class RWS1Adapter implements IRWSAdapter {
     return out;
   }
 
+  /**
+   * Grants held by the logged-in user. RWS 1.0 serves these at /users/grants
+   * (class user-grant, the grant name in the title) - the /uas/* tree is the
+   * one that does not exist on RobotWare 6, so this parity with the RWS 2.0
+   * listCurrentUserGrants() is available after all. Found 2026-08 by crawling
+   * the RW6.16 resource tree; previously assumed protocol-absent.
+   */
+  async listCurrentUserGrants(): Promise<string[]> {
+    try {
+      const r = await this.rws1Get('/users/grants');
+      return r.states
+        .filter(s => (s as Record<string, string>)['_type'] === 'user-grant')
+        .map(s => (s as Record<string, string>)['_title'] ?? (s as Record<string, string>)['grantname'])
+        .filter(Boolean) as string[];
+    } catch { return []; }
+  }
+
+  /**
+   * Every configured network interface, not just the first. RWS 1.0 returns one
+   * `ctrl-netw` entry per interface with addr / mask / name (live-verified
+   * 2026-08 on RW6.16). getNetworkConfig() keeps returning the first entry for
+   * backwards compatibility.
+   */
+  async listNetworkInterfaces(): Promise<Array<Record<string, string>>> {
+    try {
+      const r = await this.rws1Get('/ctrl/network');
+      return r.states.filter(s => (s as Record<string, string>)['_type'] === 'ctrl-netw') as Array<Record<string, string>>;
+    } catch { return []; }
+  }
+
   /** Save a task's program to disk. Wire form verified 2026-08-04 on RW6.16
    *  (a bogus path root fails with a file error, proving action and field parse):
    *  POST /rw/rapid/tasks/{task}/program?action=save, body path=. */
