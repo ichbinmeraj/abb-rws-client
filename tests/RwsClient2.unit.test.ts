@@ -861,6 +861,38 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('coverage additions (batch 13, write-path audit)', () => {
+    it('copyFile sends fs-newname (a bare name), not the rejected destination field', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.copyFile('TEMP/a.txt', 'b.txt');
+        // 'destination' answers HTTP 400 "Invalid/No Query Parameter" live.
+        expect(requests[0].url).toBe('/fileservice/TEMP/a.txt/copy');
+        expect(requests[0].body).toBe('fs-newname=b.txt');
+      } finally { server.close(); }
+    });
+
+    it('copyFile drops any directory part and can request overwrite', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.copyFile('TEMP/a.txt', 'TEMP/sub/b.txt', true);
+        expect(requests[0].body).toBe('fs-newname=b.txt&fs-overwrite=true');
+      } finally { server.close(); }
+    });
+
+    it('setProgramPointer sends only the fields the pcp form accepts', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.setProgramPointer('T_ROB1', { module: 'mod', routine: 'main', row: 5, col: 1 });
+        // The form is routine/module/userlevel - no row or column.
+        expect(requests[0].body).toBe('routine=main&module=mod');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

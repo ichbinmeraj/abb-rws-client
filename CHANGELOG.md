@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`copyFile` never worked on RWS 2.0.** It sent a `destination` field, which
+  the controller rejects with HTTP 400; the copy endpoint takes `fs-newname`
+  (a bare target name) plus an optional `fs-overwrite`. Copying now works on
+  RobotWare 7.21 and 8.1.1, verified by reading the copy back. A directory part
+  in the destination is dropped, matching the RWS 1.0 behavior, and an
+  `overwrite` argument was added.
+- `setProgramPointer` no longer sends row and column fields that the endpoint's
+  form does not accept (a source position is set through the cursor endpoint);
+  `userlevel`, which the form does accept, can now be passed.
 - **RWS 1.0 symbol properties threw for every persistent.** The parser required
   the VAR list class, but the class encodes the symbol kind, so reading the
   properties of `tool0`, `wobj0` or any PERS raised `PARSE_ERROR` on RobotWare 6.

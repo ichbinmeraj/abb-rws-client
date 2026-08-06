@@ -1323,8 +1323,19 @@ export class RwsClient2 {
     return this.req('POST', `/fileservice/${this.rws2Path(parentPath)}/create`, { 'fs-newname': dirName }).then(() => {});
   }
 
-  copyFile(sourcePath: string, destPath: string): Promise<void> {
-    return this.req('POST', `/fileservice/${this.rws2Path(sourcePath)}/copy`, { destination: destPath }).then(() => {});
+  /**
+   * Copy a file within its directory. The body field is `fs-newname` (a bare
+   * target NAME, like rename) plus an optional `fs-overwrite` - the previously
+   * sent `destination` is rejected with HTTP 400 "Invalid/No Query Parameter",
+   * so this never worked on RWS 2.0 (fixed 2026-08 after reading the endpoint's
+   * own OPTIONS form; verified live: copy created with matching content).
+   * Any directory part of `destPath` is dropped, matching the RWS 1.0 behavior.
+   */
+  copyFile(sourcePath: string, destPath: string, overwrite = false): Promise<void> {
+    const destName = destPath.replace(/^.*[\\/]/, '');
+    const body: Record<string, string> = { 'fs-newname': destName };
+    if (overwrite) { body['fs-overwrite'] = 'true'; }
+    return this.req('POST', `/fileservice/${this.rws2Path(sourcePath)}/copy`, body).then(() => {});
   }
 
   /** Rename a file in place (same directory). The body field is `fs-newname` -
@@ -2269,11 +2280,18 @@ export class RwsClient2 {
 
   // ─── PP control & RAPID debugger backbone ─────────────────────────────────
 
-  async setProgramPointer(task: string, params: { module?: string; routine: string; row?: number; col?: number }): Promise<void> {
+  /**
+   * Set the program pointer to a routine. The endpoint's own OPTIONS form
+   * accepts `routine`, `module` and `userlevel` only - it has no row/column
+   * fields, so the previously sent begin-position-row/col were not part of the
+   * form (use setPPToCursor for a source position). They are no longer sent;
+   * the parameters stay in the signature for source compatibility and now map
+   * to the cursor endpoint's job. Verified against the live form 2026-08.
+   */
+  async setProgramPointer(task: string, params: { module?: string; routine: string; row?: number; col?: number; userlevel?: string }): Promise<void> {
     const body: Record<string, string> = { routine: params.routine };
     if (params.module) { body['module'] = params.module; }
-    if (params.row !== undefined) { body['begin-position-row'] = String(params.row); }
-    if (params.col !== undefined) { body['begin-position-col'] = String(params.col); }
+    if (params.userlevel) { body['userlevel'] = params.userlevel; }
     await this.req('POST', `/rw/rapid/tasks/${task}/pcp/routine`, body);
   }
 
