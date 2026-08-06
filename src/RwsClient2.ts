@@ -1316,6 +1316,49 @@ export class RwsClient2 {
   }
 
   /**
+   * The LDAP sub-resources the controller advertises. This listing answers 200
+   * for a normal user even where the resources themselves do not, so it is the
+   * one part of the LDAP surface that can be verified without the option
+   * installed. Live-verified 2026-08-06 on RW7.21 and RW8.1.1.
+   */
+  async listLdapResources(): Promise<string[]> {
+    const p = RwsClient2.parse(await this.req('GET', '/uas/ldap'));
+    const names: string[] = [];
+    for (const t of ['enabled', 'searchpassword', 'configuration', 'settings', 'certificate', 'verify']) {
+      const title = p.getState(`uas-ldap-${t}-li`)['_title'];
+      if (title) { names.push(title); }
+    }
+    return names;
+  }
+
+  /**
+   * Read one LDAP resource, e.g. `getLdapResource('configuration')`.
+   *
+   * Deliberately a pass-through: it returns whatever fields the controller
+   * sends rather than mapping them onto a shape of our own. The field names
+   * could not be learned here, because both VCs refuse every `/uas/ldap/*`
+   * read with HTTP 403 (`SYS_CTRL_E_UAS_REJECT`) in both representations, even
+   * for a user holding UAS_UAS_ADMINISTRATION, and neither carries an LDAP
+   * option - so the feature is unlicensed rather than merely ungranted. Its
+   * `OPTIONS` answers 204 with an `Allow` header and no form, so the usual
+   * trick of reading the controller's own field list does not work either.
+   *
+   * The resource names and classes below were read off a live `GET /uas/ldap`,
+   * which does answer 200, so they are observed rather than guessed. The
+   * per-field shape is whatever the controller returns.
+   *
+   * NOT verified against a controller with LDAP licensed. On these VCs it
+   * throws GRANT_DENIED, which is the honest answer.
+   */
+  async getLdapResource(name: string): Promise<Record<string, string>> {
+    const p = RwsClient2.parse(await this.req('GET', `/uas/ldap/${encodeURIComponent(name)}`));
+    // List entries carry the `-li` suffix; detail resources on RWS 2.0
+    // sometimes drop it (elog-message-li vs elog-message), so accept both.
+    const d = p.getState(`uas-ldap-${name}-li`);
+    return Object.keys(d).length ? d : p.getState(`uas-ldap-${name}`);
+  }
+
+  /**
    * Translate a controller status code into the controller's own description.
    *
    * Every RwsError carries a `controllerCode` such as -1073442816, and the
