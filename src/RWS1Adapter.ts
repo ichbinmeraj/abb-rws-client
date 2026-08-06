@@ -962,6 +962,31 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   /**
+   * Event-log domains the controller serves. Parity with the RWS 2.0 method:
+   * getEventLog() defaults to domain 0, while a live IRC5 exposes fourteen.
+   * RobotWare 6 does not report per-domain counts (the RWS 2.0 listing carries
+   * numevts and buffsize), so those come back as 0 here.
+   *
+   * Checked 2026-08 on RW6.16: signal and event-log listings arrive complete
+   * with no `next` link, so unlike RWS 2.0 there is nothing to paginate.
+   */
+  async listEventLogDomains(): Promise<Array<{ domain: number; events: number; bufferSize: number }>> {
+    try {
+      const r = await this.rws1Get('/rw/elog');
+      return r.states
+        .filter(s => (s as Record<string, string>)['_type'] === 'elog-domain-li')
+        .map(s => {
+          const d = s as Record<string, string>;
+          return {
+            domain: Number(d['_title'] ?? 0),
+            events: Number(d['numevts'] ?? 0),
+            bufferSize: Number(d['buffsize'] ?? 0),
+          };
+        });
+    } catch { return []; }
+  }
+
+  /**
    * Structural change count of a task - name parity with the RWS 2.0 method.
    * NOTE: `/rw/rapid/tasks/{task}/structural-changecount` does not exist on
    * RobotWare 6.16 (HTTP 404, live-probed 2026-08), so this reports 0 there.

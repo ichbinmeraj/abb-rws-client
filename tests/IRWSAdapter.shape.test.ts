@@ -37,6 +37,7 @@ describe('IRWSAdapter shape', () => {
       'saveProgram', 'loadCfgFile', 'saveCfgFile', 'setActiveTool', 'setActiveWobj',
       'loadProgram', 'setProgramPointer', 'getEventLogMessage', 'listCurrentUserGrants',
       'getTaskStructuralChangeCount', 'getTaskMotion', 'getTaskActivationRecord',
+      'listEventLogDomains',
     ];
     const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
