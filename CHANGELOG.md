@@ -24,9 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RestartMode` now includes `shutdown` and `xstart`, which RobotWare 7/8
   accept; calling either against an IRC5 throws `UNSUPPORTED_OPERATION` (a new
   error code) rather than failing at the controller.
-
-### Added
-
 - `getEventLog` can list newest-first: pass `'newest'` as the fourth argument.
   Paging from the oldest end meant a controller with a long log handed back
   boot messages instead of what just happened, which is backwards for
