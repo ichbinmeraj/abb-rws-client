@@ -174,3 +174,50 @@ describe('RWS1Adapter.subscribe', () => {
     expect(captured[0]?.onRestored).toBe(onRestored);
   });
 });
+
+// ─── Live-audit fixes (RobotWare 6.16) ───────────────────────────────────────
+
+describe('RWS1Adapter live-audit fixes', () => {
+  it('listControllerOptions reads /rw/system/options, not the empty /ctrl/options', async () => {
+    const { calls, client } = makeFake((_m, url) => {
+      // RobotWare 6 answers 204 No Content on /ctrl/options, exactly like RW7/8.
+      if (url.startsWith('/ctrl/options')) { return { status: 204, body: '' }; }
+      if (url.startsWith('/rw/system/options')) {
+        return { status: 200, body: JSON.stringify({ _embedded: { _state: [
+          { _type: 'sys-option-li', _title: '0', option: 'RobotWare Base' },
+          { _type: 'sys-option-li', _title: '1', option: 'English' },
+        ] } }) };
+      }
+      return undefined;
+    });
+    const a = new RWS1Adapter(client);
+    const opts = await a.listControllerOptions();
+    expect(opts.map(o => o.name)).toEqual(['RobotWare Base', 'English']);
+    expect(calls.some(c => c.what.includes('/rw/system/options'))).toBe(true);
+  });
+
+  it('reads resources that answer with a top-level state array', async () => {
+    // /rw/system/products replies in the RWS 2.0 shape on RobotWare 6; reading
+    // only _embedded._state made it look empty.
+    const { client } = makeFake((_m, url) => url.startsWith('/rw/system/products')
+      ? { status: 200, body: JSON.stringify({ state: [
+        { _type: 'sys-product-li', _title: 'RobotWare', 'version-name': '6.16.03.00' },
+      ] }) }
+      : undefined);
+    const a = new RWS1Adapter(client);
+    const products = await a.listProducts();
+    expect(products).toHaveLength(1);
+    expect(products[0]['version-name']).toBe('6.16.03.00');
+  });
+
+  it('listCurrentUserGrants reads /users/grants (present on RobotWare 6)', async () => {
+    const { client } = makeFake((_m, url) => url.startsWith('/users/grants')
+      ? { status: 200, body: JSON.stringify({ _embedded: { _state: [
+        { _type: 'user-grant', _title: 'UAS_FULL_ACCESS' },
+        { _type: 'user-grant', _title: 'UAS_BACKUP' },
+      ] } }) }
+      : undefined);
+    const a = new RWS1Adapter(client);
+    expect(await a.listCurrentUserGrants()).toEqual(['UAS_FULL_ACCESS', 'UAS_BACKUP']);
+  });
+});

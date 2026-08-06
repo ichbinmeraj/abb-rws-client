@@ -581,23 +581,42 @@ export function parseCollisionDetectionState(xml: string): CollisionDetectionSta
 
 /**
  * Parse a /rw/rapid/symbol/properties/... response into RapidSymbolProperties.
- * XML: <li class="rap-sympropvar" title="RAPID/T_ROB1/user/reg1">...</li>
+ *
+ * The list-item class encodes the symbol KIND, so a single class never covers
+ * every symbol: variables are rap-sympropvar, PERSISTENTS are rap-symproppers
+ * (tool0, wobj0, load0 - live-verified 2026-08 on RW6.16), constants
+ * rap-sympropconst, routines rap-sympropproc / -fun / -trap, modules
+ * rap-sympropmod. Requiring only the VAR spelling made this THROW
+ * PARSE_ERROR for every persistent, which is most of what BASE holds.
+ *
+ * XML: <li class="rap-symproppers" title="RAPID/T_ROB1/BASE/tool0">...</li>
  */
+const SYMBOL_PROP_CLASSES = [
+  'rap-sympropvar', 'rap-symproppers', 'rap-sympropconst',
+  'rap-sympropproc', 'rap-sympropfun', 'rap-symproptrap', 'rap-sympropmod',
+];
+
 export function parseRapidSymbolProperties(xml: string): RapidSymbolProperties {
-  const liPattern = /<li[^>]*class="[^"]*\brap-sympropvar\b[^"]*"[^>]*>(.*?)<\/li>/is;
-  const liMatch = xml.match(liPattern);
-  if (!liMatch) {
-    throw new RwsError('PARSE_ERROR: missing <li class="rap-sympropvar">', 'PARSE_ERROR');
+  let block: string | undefined;
+  let matchedClass = '';
+  for (const cls of SYMBOL_PROP_CLASSES) {
+    const m = xml.match(new RegExp(`<li[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>(.*?)</li>`, 'is'));
+    if (m) { block = m[1]; matchedClass = cls; break; }
   }
-  const block = liMatch[1];
+  if (block === undefined) {
+    throw new RwsError(
+      `PARSE_ERROR: missing symbol-properties <li> (looked for ${SYMBOL_PROP_CLASSES.join(', ')})`,
+      'PARSE_ERROR',
+    );
+  }
 
   function get(cls: string): string {
-    const m = block.match(new RegExp(`<span[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>(.*?)</span>`, 'is'));
+    const m = block!.match(new RegExp(`<span[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>(.*?)</span>`, 'is'));
     return m ? decodeEntities(m[1].trim()) : '';
   }
 
   // Extract symburl from the <li title="..."> attribute
-  const titleMatch = xml.match(/<li[^>]*class="[^"]*\brap-sympropvar\b[^"]*"[^>]*title="([^"]*)"[^>]*>/i);
+  const titleMatch = xml.match(new RegExp(`<li[^>]*class="[^"]*\\b${matchedClass}\\b[^"]*"[^>]*title="([^"]*)"[^>]*>`, 'i'));
   const symburl = titleMatch ? titleMatch[1] : get('symburl');
 
   return {

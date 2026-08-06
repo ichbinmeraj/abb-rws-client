@@ -631,6 +631,15 @@ export class RwsClient {
    * // Find all persistent variables in T_ROB1
    * const persistents = await client.searchRapidSymbols({ task: 'T_ROB1', symtyp: 'per' });
    * ```
+   *
+   * CAUTION (RobotWare 6.16, live-probed 2026-08): this controller rejects the
+   * documented `POST /rw/rapid/symbols?action=search-symbol` with HTTP 400
+   * "Invalid argument" for every body tried, including an empty one and each
+   * documented parameter combination; the resource advertises only
+   * `action=show` in its own listing. The wire form for symbol search on this
+   * RobotWare 6 release is therefore unresolved and the call is expected to
+   * throw there. The RWS 2.0 side (`RwsClient2.searchRapidSymbols`) is verified
+   * working, and `getRapidSymbolProperties` works on both.
    */
   async searchRapidSymbols(params: RapidSymbolSearchParams): Promise<RapidSymbolInfo[]> {
     try {

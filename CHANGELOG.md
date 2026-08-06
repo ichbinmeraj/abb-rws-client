@@ -27,6 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **RWS 1.0 symbol properties threw for every persistent.** The parser required
+  the VAR list class, but the class encodes the symbol kind, so reading the
+  properties of `tool0`, `wobj0` or any PERS raised `PARSE_ERROR` on RobotWare 6.
+  All symbol kinds are now accepted (a test that had been marked as a known
+  failure now passes).
+- RWS 1.0 `listControllerOptions` returned nothing: `/ctrl/options` answers 204
+  No Content on RobotWare 6 too. It now reads `/rw/system/options` and returns
+  the installed options.
+- RWS 1.0 resources that reply in the RobotWare 7 shape (a top-level `state`
+  array rather than `_embedded._state`) are now read correctly - `listProducts`
+  was empty for this reason.
 - **RAPID symbol search silently dropped every persistent.** The PERS result
   class was spelled `rap-syproppers-li` (missing an "m"), so `tool0`, `wobj0`,
   `load0` and every other PERS never appeared in `searchRapidSymbols` or

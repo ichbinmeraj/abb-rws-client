@@ -636,9 +636,9 @@ describe('parseRapidSymbolProperties', () => {
   });
 
   // Live-verified 2026-07-09 on IRC5 RW6.16: persistents (tool0) return
-  // <li class="rap-symproppers"> - the parser only matches rap-sympropvar and
-  // currently throws PARSE_ERROR for them.
-  it.fails('parses a PERS properties response (rap-symproppers li)', () => {
+  // <li class="rap-symproppers">. The parser matched only rap-sympropvar and
+  // threw PARSE_ERROR for them until 2026-08; it now accepts every symbol kind.
+  it('parses a PERS properties response (rap-symproppers li)', () => {
     const p = parseRapidSymbolProperties(SYMBOL_PROPERTIES_PERS_XML);
     expect(p.symtyp).toBe('per');
     expect(p.dattyp).toBe('tooldata');

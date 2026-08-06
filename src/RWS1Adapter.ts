@@ -278,9 +278,16 @@ export class RWS1Adapter implements IRWSAdapter {
       try { msg = JSON.parse(res.body)._embedded?.status?.msg ?? msg; } catch { /* ok */ }
       throw new Error(msg);
     }
-    let parsed: { _embedded?: { _state?: Array<Record<string, unknown>> } } = {};
+    let parsed: {
+      _embedded?: { _state?: Array<Record<string, unknown>>; resources?: Array<Record<string, unknown>> };
+      state?: Array<Record<string, unknown>>;
+    } = {};
     try { parsed = JSON.parse(res.body); } catch { /* non-JSON ok */ }
-    const states = parsed._embedded?._state ?? [];
+    // RobotWare 6 mostly nests entries under _embedded._state, but some
+    // resources (e.g. /rw/system/products) answer with a top-level `state`
+    // array and others with _embedded.resources - the RWS 2.0 shapes. Reading
+    // only _embedded._state made those look empty (live-verified 2026-08).
+    const states = parsed._embedded?._state ?? parsed.state ?? parsed._embedded?.resources ?? [];
     return { status: res.status, state: states[0] ?? null, states, raw: parsed };
   }
 
@@ -336,13 +343,22 @@ export class RWS1Adapter implements IRWSAdapter {
 
   // ── Controller detail ──────────────────────────────────────────────────
 
+  /**
+   * Installed RobotWare options. /ctrl/options answers 204 No Content on
+   * RobotWare 6 (live-verified 2026-08 on RW6.16) - exactly as on RobotWare
+   * 7/8 - so this returned an empty list. The real list is /rw/system/options,
+   * class sys-option-li with an `option` span.
+   */
   async listControllerOptions(): Promise<Array<{ name: string; description?: string }>> {
     try {
-      const r = await this.rws1Get('/ctrl/options');
-      return r.states.map(o => ({
-        name: (o.option ?? o.name ?? '') as string,
-        description: o.description as string | undefined,
-      }));
+      const r = await this.rws1Get('/rw/system/options');
+      return r.states
+        .filter(o => (o as Record<string, string>)['_type'] === 'sys-option-li')
+        .map(o => ({
+          name: (o.option ?? o.name ?? '') as string,
+          description: o.description as string | undefined,
+        }))
+        .filter(o => o.name);
     } catch { return []; }
   }
 
