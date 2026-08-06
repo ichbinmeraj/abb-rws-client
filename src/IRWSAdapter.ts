@@ -170,6 +170,10 @@ export interface IRWSAdapter {
   getTaskSelection?(): Promise<{ selected: string[]; available: string[] }>;
   setTaskSelection?(tasks: string[]): Promise<void>;
   /** Program-pointer position for a task. */
+  /** Controller device groups (HW_DEVICES, SW_RESOURCES). Both protocols. */
+  listDeviceGroups?(): Promise<string[]>;
+  /** Devices in one controller device group. Not the same as listDevices, which is I/O. */
+  listControllerDevices?(group: string): Promise<Array<{ id: string; name: string }>>;
   /** Translate a controller status code via GET /rw/retcode. Both protocols. */
   describeReturnCode?(code: number): Promise<ReturnCodeInfo | null>;
   getProgramPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;

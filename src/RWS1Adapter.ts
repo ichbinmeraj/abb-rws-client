@@ -910,6 +910,38 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   /**
+   * Device groups the controller reports, e.g. HW_DEVICES and SW_RESOURCES.
+   * Live-verified 2026-08-06 on RW6.16.
+   */
+  async listDeviceGroups(): Promise<string[]> {
+    // Same nested `devices` shape as a group page, so reuse the walker.
+    return (await this.listControllerDevices('')).map(d => d.id);
+  }
+
+  /**
+   * Devices in one controller device group. RWS 1.0 nests the entries in a
+   * `devices` array inside the state object rather than in `_embedded`, which
+   * is why the RWS 2.0 parsing does not carry over, and it goes a level deeper:
+   * HW_DEVICES holds CONTROLLER and MECH_UNITS, and CONTROLLER in turn holds
+   * COMPUTER_SYSTEM. Pass a nested path to walk down, e.g.
+   * `listControllerDevices('HW_DEVICES/CONTROLLER')`.
+   * Live-verified 2026-08-06 on RW6.16, class dev-id-li.
+   */
+  async listControllerDevices(group: string): Promise<Array<{ id: string; name: string }>> {
+    const suffix = group ? `/${group.replace(/^\/+/, '')}` : '';
+    const r = await this.rws1Get(`/rw/devices${suffix}`);
+    const out: Array<{ id: string; name: string }> = [];
+    for (const st of r.states) {
+      const devices = (st as Record<string, unknown>)['devices'];
+      if (!Array.isArray(devices)) { continue; }
+      for (const d of devices as Array<Record<string, unknown>>) {
+        out.push({ id: String(d['_title'] ?? ''), name: String(d['name'] ?? '') });
+      }
+    }
+    return out;
+  }
+
+  /**
    * Translate a controller status code using the controller's own dictionary.
    * Same resource and same `err-desc` shape as RWS 2.0, live-verified
    * 2026-08-06 on RW6.16. Null when the code is unknown to this controller.

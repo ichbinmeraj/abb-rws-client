@@ -38,7 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `listCertificateStores` and `getCertificates` read the PEM the controller
   presents for RWS and the CA store it trusts. `listDeviceGroups` and
   `listControllerDevices` list the drive links, mechanical units and
-  FlexPendant, and the software resources. After this the only advertised
+  FlexPendant, and the software resources. RobotWare 6 serves the same
+  inventory in a different body shape and one level deeper (HW_DEVICES holds
+  CONTROLLER, which holds COMPUTER_SYSTEM), so it has its own walker and a
+  nested path reads any level. After this the only advertised
   resource the client does not touch is `/uas/ldap`, whose sub-resources
   answer 403 for a normal user, so its success shape cannot be verified here
   and it is deliberately not implemented blind.
