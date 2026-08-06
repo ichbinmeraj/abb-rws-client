@@ -343,6 +343,7 @@ export type RwsErrorCode =
   | 'WRONG_MODE'           // operation not allowed in the current controller state or op-mode
   | 'UNSUPPORTED_OPERATION' // this protocol generation / controller does not have the operation
   | 'INVALID_ARGUMENT'     // caller passed a value the controller cannot accept; nothing was sent
+  | 'NOT_CONNECTED'        // connect() has not run (or the manager has no adapter yet)
   | 'RATE_LIMITED'
   | 'CONTROLLER_BUSY'
   | 'NETWORK_ERROR'

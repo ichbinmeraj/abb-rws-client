@@ -41,6 +41,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The RWS 2.0 rate limit did not hold under concurrency.** Pacing read the
+  last-request timestamp, awaited a timer, then wrote it back, so callers that
+  arrived together all saw the same stale value and all fired at once: five
+  concurrent reads went out in 81 ms against the controller's documented
+  ceiling of 20 per second. Exceeding that ceiling is exactly what makes a
+  controller start answering 503. Request starts are now chained, so the gap
+  holds however calls arrive; the requests themselves still overlap, so a call
+  that blocks server-side cannot stall the ones behind it. RWS 1.0 had a
+  proper queue all along.
+- **About a hundred public methods threw a plain `Error`,** so
+  `catch (e) { if (e.code === ...) }` silently matched nothing on those paths
+  even though every method is documented to throw `RwsError`. The worst of it
+  was `RWS1Adapter`'s two generic `?json=1` helpers, which back roughly fifty
+  endpoints and turned every controller failure into an untyped error. They
+  now classify through the same taxonomy as the rest. `RobotManager` and
+  `MultiRobotManager` guards carry codes too: `NOT_CONNECTED` (new),
+  `UNSUPPORTED_OPERATION`, and, where the manager already knew the reason,
+  `MOTORS_OFF`, `WRONG_MODE` and `GRANT_DENIED`. Messages are unchanged, so
+  anything matching on text still works. A test now fails the build if a plain
+  `Error` reappears on a public path.
 - `XhtmlParser` dropped every `<span>` that carried attributes beyond `class`.
   The pattern required `>` immediately after the class, and event-log
   arguments are served as `<span class="arg1" type="long">100</span>`, so they

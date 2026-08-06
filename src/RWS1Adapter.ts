@@ -4,7 +4,8 @@ import type {
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
   ElogMessage,
 } from './types.js';
-import { decodeElogArgs } from './types.js';
+import { decodeElogArgs, RwsError } from './types.js';
+import { classifyControllerError } from './ControllerError.js';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import type { IRWSAdapter } from './IRWSAdapter.js';
@@ -14,6 +15,25 @@ interface RWS1Credentials {
   port: number;
   username: string;
   password: string;
+}
+
+/**
+ * Build a typed error for the `?json=1` endpoints this adapter adds on top of
+ * RwsClient.
+ *
+ * Those endpoints used to throw a plain `Error` carrying only the controller's
+ * message, so roughly fifty methods produced errors with no `code` at all and
+ * a caller's `catch (e) { if (e.code === 'RESOURCE_NOT_FOUND') ... }` silently
+ * never matched. The endpoints RwsClient itself implements were classified all
+ * along; only this side was missing. `classifyControllerError` already reads
+ * the RWS 1.0 `_embedded.status` shape, so it just needed to be called.
+ */
+function rws1Error(method: string, path: string, status: number, body: string): RwsError {
+  const info = classifyControllerError({ httpStatus: status, body: body ?? '', method, path });
+  return new RwsError(
+    info.message, info.code, status, body,
+    info.controllerCode ?? undefined, info.controllerMsg ?? undefined,
+  );
 }
 
 /**
@@ -198,7 +218,7 @@ export class RWS1Adapter implements IRWSAdapter {
     tool = 'tool0',
     wobj = 'wobj0',
   ): Promise<RobTarget> {
-    if (!this.creds) { throw new Error('FK requires credentials in adapter constructor'); }
+    if (!this.creds) { throw new RwsError('FK requires credentials in the adapter constructor', 'INVALID_ARGUMENT'); }
     const { host, port, username, password } = this.creds;
     const body = [
       `curr_joints=[${joints.rax_1},${joints.rax_2},${joints.rax_3},${joints.rax_4},${joints.rax_5},${joints.rax_6}]`,
@@ -209,7 +229,7 @@ export class RWS1Adapter implements IRWSAdapter {
     const path = `/rw/motionsystem/mechunits/${mechunit}?action=CalcRobTFromJoints&json=1`;
     const result = await this.digestPost(host, port, path, body, username, password) as { _embedded?: { _state?: Array<Record<string, string>> } };
     const state = result._embedded?._state?.[0];
-    if (!state) { throw new Error('FK: no result in response'); }
+    if (!state) { throw new RwsError('FK: no result in response', 'PARSE_ERROR'); }
     return {
       x: +state.x, y: +state.y, z: +state.z,
       q1: +state.q1, q2: +state.q2, q3: +state.q3, q4: +state.q4,
@@ -237,7 +257,7 @@ export class RWS1Adapter implements IRWSAdapter {
     mechunit?: string;
   }): Promise<void> {
     if (!this.creds) {
-      throw new Error('Jog requires credentials - reconnect to enable');
+      throw new RwsError('Jog requires credentials - reconnect to enable', 'INVALID_ARGUMENT');
     }
     const { mode, axes, speed } = params;
     const mechunit = params.mechunit ?? 'ROB_1';
@@ -257,7 +277,7 @@ export class RWS1Adapter implements IRWSAdapter {
     // Successful jog has no useful body - only check for error status.
     const status = (result._embedded as { status?: { msg?: string } } | undefined)?.status;
     if (status?.msg && status.msg.length > 0 && /error|fail/i.test(status.msg)) {
-      throw new Error(status.msg);
+      throw new RwsError(status.msg, 'UNKNOWN');
     }
   }
 
@@ -274,11 +294,7 @@ export class RWS1Adapter implements IRWSAdapter {
     if (res.status === 204 || !res.body) {
       return { status: res.status, state: null, states: [], raw: null };
     }
-    if (res.status >= 400) {
-      let msg = `HTTP ${res.status}`;
-      try { msg = JSON.parse(res.body)._embedded?.status?.msg ?? msg; } catch { /* ok */ }
-      throw new Error(msg);
-    }
+    if (res.status >= 400) { throw rws1Error('GET', url, res.status, res.body); }
     let parsed: {
       _embedded?: { _state?: Array<Record<string, unknown>>; resources?: Array<Record<string, unknown>> };
       state?: Array<Record<string, unknown>>;
@@ -296,11 +312,7 @@ export class RWS1Adapter implements IRWSAdapter {
   private async rws1Post(path: string, body?: string): Promise<unknown> {
     const url = path + (path.includes('?') ? '&' : '?') + 'json=1';
     const res = await this.client.request('POST', url, body);
-    if (res.status >= 400) {
-      let msg = `HTTP ${res.status}`;
-      try { msg = JSON.parse(res.body)._embedded?.status?.msg ?? msg; } catch { /* ok */ }
-      throw new Error(msg);
-    }
+    if (res.status >= 400) { throw rws1Error('POST', url, res.status, res.body); }
     try { return JSON.parse(res.body); } catch { return null; }
   }
 
@@ -583,12 +595,9 @@ export class RWS1Adapter implements IRWSAdapter {
   async removeCfgInstance(domain: string, type: string, instance: string): Promise<void> {
     await this.client.requestMastership('cfg');
     try {
-      const res = await this.client.request('DELETE', `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?json=1`);
-      if (res.status >= 400) {
-        let msg = `HTTP ${res.status}`;
-        try { msg = JSON.parse(res.body)._embedded?.status?.msg ?? msg; } catch { /* ok */ }
-        throw new Error(msg);
-      }
+      const url = `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?json=1`;
+      const res = await this.client.request('DELETE', url);
+      if (res.status >= 400) { throw rws1Error('DELETE', url, res.status, res.body); }
     } finally {
       await this.client.releaseMastership('cfg').catch(() => {});
     }
@@ -1084,7 +1093,7 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   async setProgramPointer(task: string, params: { module?: string; routine: string; row?: number; col?: number }): Promise<void> {
     if (!params.module) {
-      throw new Error('RWS 1.0 set-pp-routine requires the module name (module + routine)');
+      throw new RwsError('RWS 1.0 set-pp-routine requires the module name (module + routine)', 'INVALID_ARGUMENT');
     }
     await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/pcp?action=set-pp-routine`,
       `module=${encodeURIComponent(params.module)}&routine=${encodeURIComponent(params.routine)}`);
@@ -1221,7 +1230,7 @@ export class RWS1Adapter implements IRWSAdapter {
     mechunit = 'ROB_1',
   ): Promise<JointTarget> {
     if (!this.creds) {
-      throw new Error('IK requires credentials - reconnect to enable');
+      throw new RwsError('IK requires credentials - reconnect to enable', 'INVALID_ARGUMENT');
     }
     const { host, port, username, password } = this.creds;
     const seed = seedJoints
@@ -1247,7 +1256,7 @@ export class RWS1Adapter implements IRWSAdapter {
     const result = await this.digestPost(host, port, path, bodyStr, username, password);
     // RWS 1.0 IK response shape: { _embedded: { _state: [{ rax_1, rax_2, ... }] } }
     const state = (result as { _embedded?: { _state?: Array<Record<string, string>> } })._embedded?._state?.[0];
-    if (!state) { throw new Error('IK: no result in response'); }
+    if (!state) { throw new RwsError('IK: no result in response', 'PARSE_ERROR'); }
     return {
       rax_1: +state.rax_1, rax_2: +state.rax_2, rax_3: +state.rax_3,
       rax_4: +state.rax_4, rax_5: +state.rax_5, rax_6: +state.rax_6,

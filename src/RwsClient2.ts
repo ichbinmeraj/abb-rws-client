@@ -41,6 +41,8 @@ import type {
 export class RwsClient2 {
   private lastReqTime = 0;
   private static readonly MIN_MS = 55;
+  /** Tail of the pacing chain; see takeRequestSlot. */
+  private reqSlot: Promise<void> = Promise.resolve();
   private readonly authHeader: string;
   private readonly httpsAgent: https.Agent;
   private readonly httpAgent: http.Agent;
@@ -133,6 +135,34 @@ export class RwsClient2 {
   }
 
   /**
+   * Wait for this request's turn to start, keeping at least MIN_MS between the
+   * starts of any two requests from this client.
+   *
+   * This used to read `lastReqTime`, await a timer, then write it back. Two
+   * callers that arrived together both saw the old timestamp, both computed a
+   * zero wait, and both fired: a check-then-act race, not a rate limit. Five
+   * concurrent reads went out in 81 ms against a documented ceiling of 20
+   * requests per second, and going over that ceiling is what makes the
+   * controller answer 503. RWS 1.0's HttpSession always had a proper queue.
+   *
+   * Only the slot is chained, not the request itself, so a call that blocks
+   * server-side (a DIPC read with `dipc-timeout`, say) still cannot stall
+   * everything queued behind it.
+   */
+  private takeRequestSlot(): Promise<void> {
+    const previous = this.reqSlot;
+    let release!: () => void;
+    this.reqSlot = new Promise<void>(resolve => { release = resolve; });
+    return (async () => {
+      try { await previous; } catch { /* a failed slot must not wedge the chain */ }
+      const wait = RwsClient2.MIN_MS - (Date.now() - this.lastReqTime);
+      if (wait > 0) { await new Promise(r => setTimeout(r, wait)); }
+      this.lastReqTime = Date.now();
+      release();
+    })();
+  }
+
+  /**
    * Core HTTP request. acceptExtra lists additional success status codes beyond 200/204.
    * Used by subscribe() to accept HTTP 201 (Created) from POST /subscription.
    * acceptOverride pins the Accept header for callers that must not negotiate
@@ -147,9 +177,7 @@ export class RwsClient2 {
     acceptExtra: number[] = [],
     acceptOverride?: string,
   ): Promise<string> {
-    const wait = RwsClient2.MIN_MS - (Date.now() - this.lastReqTime);
-    if (wait > 0) { await new Promise(r => setTimeout(r, wait)); }
-    this.lastReqTime = Date.now();
+    await this.takeRequestSlot();
 
     const url = new URL(path, this.baseUrl);
     const bodyStr = rawBody ?? (body ? new URLSearchParams(body).toString() : undefined);
@@ -1887,7 +1915,7 @@ export class RwsClient2 {
   async requestMastershipWithId(domain: MastershipDomain): Promise<number> {
     const xhtml = await this.req('POST', `/rw/mastership/${this.rws2Domain(domain)}/request-with-id`);
     const id = RwsClient2.parse(xhtml).get('mastership-id');
-    if (!id) { throw new Error('RWS2 request-with-id: no mastership-id in response'); }
+    if (!id) { throw new RwsError('RWS2 request-with-id: no mastership-id in response', 'PARSE_ERROR'); }
     return Number(id);
   }
 
@@ -2100,7 +2128,7 @@ export class RwsClient2 {
     const xhtml = await this.req('POST', `/rw/motionsystem/mechunits/${mechunit}?action=CalcRobTFromJoints`, undefined, body);
     const p = RwsClient2.parse(xhtml);
     if (p.getError()) {
-      throw new Error(`FK rejected: ${p.getError()?.msg ?? 'unknown'} (likely missing PC Interface 616-1 license)`);
+      throw new RwsError(`FK rejected: ${p.getError()?.msg ?? 'unknown'} (likely missing PC Interface 616-1 license)`, 'UNSUPPORTED_OPERATION');
     }
     // RWS 2.0 sometimes returns HTTP 200 with the error embedded as
     // `<a href="…/retcode?code=N" rel="error"/>` - no <span class="code"> block.
@@ -2108,12 +2136,12 @@ export class RwsClient2 {
     const errLink = xhtml.match(/<a [^>]*retcode\?code=(-?\d+)[^>]*rel="error"|<a [^>]*rel="error"[^>]*retcode\?code=(-?\d+)/);
     if (errLink) {
       const code = errLink[1] ?? errLink[2];
-      throw new Error(`FK rejected: controller return code ${code} (likely missing PC Interface 616-1 license, or pose unreachable)`);
+      throw new RwsError(`FK rejected: controller return code ${code} (likely missing PC Interface 616-1 license, or pose unreachable)`, 'UNSUPPORTED_OPERATION');
     }
     const d = p.getState('ms-robtarget') || p.getState('ms-cartesian');
     const x = +d['x'];
     if (Number.isNaN(x)) {
-      throw new Error(`FK returned no valid pose data (response had no <li class="ms-robtarget|ms-cartesian">; check controller logs)`);
+      throw new RwsError(`FK returned no valid pose data (response had no <li class="ms-robtarget|ms-cartesian">; check controller logs)`, 'PARSE_ERROR');
     }
     return {
       x, y: +d['y'], z: +d['z'],
@@ -3499,7 +3527,7 @@ export class RwsClient2 {
     );
     const p = RwsClient2.parse(html);
     const d = p.getState('ms-jointtarget');
-    if (!d['rax_1']) { throw new Error('IK: no joint values in response'); }
+    if (!d['rax_1']) { throw new RwsError('IK: no joint values in response', 'PARSE_ERROR'); }
     return {
       rax_1: +d['rax_1'], rax_2: +d['rax_2'], rax_3: +d['rax_3'],
       rax_4: +d['rax_4'], rax_5: +d['rax_5'], rax_6: +d['rax_6'],

@@ -520,7 +520,7 @@ export class RobotManager {
       if (!found) {
         const err = `No ABB RWS controller found at ${host}.\nChecked ports: 80, 443, 28447, 9403.\nEnsure the controller is reachable and RWS is enabled.`;
         Logger.error(`auto-detect failed for ${host}`);
-        throw new Error(err);
+        throw new RwsError(err, 'PROTOCOL_DETECT_FAILED');
       }
       probe = found;
       Logger.info(`auto-detected: port ${probe.port} ${probe.useHttps ? 'HTTPS' : 'HTTP'}/${probe.authType}`);
@@ -648,33 +648,33 @@ export class RobotManager {
   // ─── Panel control ──────────────────────────────────────────────────────────
 
   async setMotorsOn(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.requestMastership('rapid');
     try { await this.adapter.setControllerState('motoron'); }
     finally { await this.adapter.releaseMastership('rapid').catch(() => {}); }
   }
 
   async setMotorsOff(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.requestMastership('rapid');
     try { await this.adapter.setControllerState('motoroff'); }
     finally { await this.adapter.releaseMastership('rapid').catch(() => {}); }
   }
 
   async setSpeedRatio(ratio: number): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.setSpeedRatio(ratio);
     this._state.speedRatio = ratio;
     this.notify();
   }
 
   async lockOperationMode(pin: string, permanent?: boolean): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.lockOperationMode(pin, permanent);
   }
 
   async unlockOperationMode(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.unlockOperationMode();
   }
 
@@ -696,8 +696,8 @@ export class RobotManager {
    *     manually (no API path bypasses it - verified live).
    */
   async setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
-    if (!this.adapter.setOperationMode) { throw new Error('setOperationMode not exposed by this adapter'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    if (!this.adapter.setOperationMode) { throw new RwsError('setOperationMode not exposed by this adapter', 'UNSUPPORTED_OPERATION'); }
 
     // Detect "must transit through MANR" pairs (AUTO ↔ MANF) and route via MANR.
     const current = this._state.opmode;
@@ -775,7 +775,7 @@ export class RobotManager {
    * action - but it's a recovery path, not a precondition.
    */
   private async withMastership<T>(fn: () => Promise<T>): Promise<T> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.requestMastership('rapid');
     try { return await fn(); }
     finally { await this.adapter.releaseMastership('rapid').catch(() => {}); }
@@ -789,7 +789,7 @@ export class RobotManager {
   }
   /** Request RMMP - triggers a FlexPendant popup that the operator must approve. */
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
-    if (!this.adapter?.requestRmmp) { throw new Error('RMMP not supported on this controller'); }
+    if (!this.adapter?.requestRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.requestRmmp(level);
   }
 
@@ -822,7 +822,7 @@ export class RobotManager {
    * trap, etc.), we leave it alone.
    */
   async startRapid(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.withMastership(async () => {
       const target = this.lastPPTarget;
       const stopped = this._state.execstate === 'stopped';
@@ -846,65 +846,65 @@ export class RobotManager {
   }
 
   async stopRapid(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.withMastership(() => this.adapter!.stopRapid());
   }
   async resetRapid(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     // PP-to-Main clears the routine target - Start will go to main from now on.
     this.lastPPTarget = null;
     await this.withMastership(() => this.adapter!.resetRapid());
   }
 
   async setExecutionCycle(cycle: 'once' | 'forever' | 'asis'): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.withMastership(() => this.adapter!.setExecutionCycle(cycle));
   }
 
   async activateRapidTask(task: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.activateRapidTask(task);
   }
 
   async deactivateRapidTask(task: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.deactivateRapidTask(task);
   }
 
   async activateAllRapidTasks(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.activateAllRapidTasks();
   }
 
   async deactivateAllRapidTasks(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.deactivateAllRapidTasks();
   }
 
   // ─── RAPID variables ────────────────────────────────────────────────────────
 
   async getRapidVariable(task: string, module: string, symbol: string): Promise<string> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.getRapidVariable(task, module, symbol);
   }
 
   async setRapidVariable(task: string, module: string, symbol: string, value: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.setRapidVariable(task, module, symbol, value);
   }
 
   async validateRapidValue(task: string, value: string, datatype: string): Promise<boolean> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.validateRapidValue(task, value, datatype);
   }
 
   async getRapidSymbolProperties(task: string, module: string, symbol: string): Promise<RapidSymbolProperties> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.getRapidSymbolProperties(task, module, symbol);
   }
 
   async searchRapidSymbols(params: RapidSymbolSearchParams): Promise<RapidSymbolInfo[]> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.searchRapidSymbols(params);
   }
 
@@ -914,7 +914,7 @@ export class RobotManager {
    * Falls back to bare names from `listModules` if the adapter doesn't support details.
    */
   async listModulesDetailed(task: string): Promise<Array<{ name: string; type: string }>> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     if (this.adapter.listModulesDetailed) {
       return this.adapter.listModulesDetailed(task);
     }
@@ -952,7 +952,7 @@ export class RobotManager {
     moduleName: string,
     includeSystem = false,
   ): Promise<Array<{ name: string; symtyp: string; symburl: string; local: boolean }>> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     const symbols = await this.adapter.searchRapidSymbols({
       task,
       blockurl: `RAPID/${task}/${moduleName}`,
@@ -976,8 +976,8 @@ export class RobotManager {
    * will begin at this routine instead of `main`.
    */
   async setPPToRoutine(task: string, moduleName: string, routine: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
-    if (!this.adapter.setProgramPointer) { throw new Error('setProgramPointer not supported on this protocol'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    if (!this.adapter.setProgramPointer) { throw new RwsError('setProgramPointer not supported on this protocol', 'UNSUPPORTED_OPERATION'); }
     await this.withMastership(async () => {
       await this.adapter!.stopRapid().catch(() => {});
       await this.adapter!.setProgramPointer!(task, { module: moduleName, routine });
@@ -987,29 +987,29 @@ export class RobotManager {
   }
 
   async getActiveUiInstruction(): Promise<UiInstruction | null> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.getActiveUiInstruction();
   }
 
   async setUiInstructionParam(stackurl: string, uiparam: string, value: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.setUiInstructionParam(stackurl, uiparam, value);
   }
 
   // ─── File system ────────────────────────────────────────────────────────────
 
   async listDirectory(remotePath: string): Promise<FileEntry[]>  {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.listDirectory(remotePath);
   }
 
   async readFile(remotePath: string): Promise<string> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.readFile(remotePath);
   }
 
   async deleteControllerFile(remotePath: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.deleteFile(remotePath);
   }
 
@@ -1021,7 +1021,7 @@ export class RobotManager {
    * returns 404 "Path does not exist" if any intermediate is missing.
    */
   async createDirectory(parentPath: string, dirName: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     try {
       await this.adapter.createDirectory(parentPath, dirName);
       return;
@@ -1040,7 +1040,7 @@ export class RobotManager {
    * they're controller-managed.
    */
   private async ensureDirectory(targetPath: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     // Strip leading slash if any; first segment is the volume name.
     const cleaned = targetPath.replace(/^\/+/, '');
     const segments = cleaned.split('/').filter(Boolean);
@@ -1065,7 +1065,7 @@ export class RobotManager {
   }
 
   async copyControllerFile(sourcePath: string, destPath: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.copyFile(sourcePath, destPath);
   }
 
@@ -1078,14 +1078,14 @@ export class RobotManager {
   }
 
   async clearEventLog(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.clearEventLog(0);
     this._state.eventLog = [];
     this.notify();
   }
 
   async clearAllEventLogs(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.clearAllEventLogs();
     this._state.eventLog = [];
     this.notify();
@@ -1094,24 +1094,24 @@ export class RobotManager {
   // ─── Controller info ─────────────────────────────────────────────────────────
 
   async restartController(mode: RestartMode): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.restartController(mode);
   }
 
   async getControllerClock(): Promise<string> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return (await this.adapter.getControllerClock()).datetime;
   }
 
   async setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.setControllerClock(year, month, day, hour, min, sec);
   }
 
   // ─── I/O ─────────────────────────────────────────────────────────────────────
 
   async refreshIoSignals(): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     // listAllSignals follows the controller's own pagination now, so one call
     // returns every signal. Looping over it again here re-fetched from an
     // offset and appended duplicates.
@@ -1120,24 +1120,24 @@ export class RobotManager {
   }
 
   async writeIoSignal(name: string, value: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.writeSignal('', '', name, value);
     const sig = this._state.ioSignals.find(s => s.name === name);
     if (sig) { sig.lvalue = value; sig.value = value; this.notify(); }
   }
 
   async readIoSignal(network: string, device: string, name: string): Promise<Signal> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.readSignal(network, device, name);
   }
 
   async listNetworks(): Promise<IoNetwork[]> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.listNetworks();
   }
 
   async listDevices(network: string): Promise<IoDevice[]> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.listDevices(network);
   }
 
@@ -1167,7 +1167,7 @@ export class RobotManager {
    *      program (e.g. OmniCore's `Module1`).
    */
   async loadProgram(localFilePath: string, taskName: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
 
     await this.adapter.requestMastership('rapid');
     try {
@@ -1211,7 +1211,7 @@ export class RobotManager {
    * becomes the program's entry point.
    */
   async unloadModule(taskName: string, moduleName: string): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.requestMastership('rapid');
     try {
       await this.adapter.stopRapid().catch(() => {});
@@ -1251,34 +1251,34 @@ export class RobotManager {
   async listCfgInstances(d: string, t: string) { return this.adapter?.listCfgInstances?.(d, t) ?? []; }
   async getCfgInstance(d: string, t: string, i: string) { return this.adapter?.getCfgInstance?.(d, t, i) ?? {}; }
   async setCfgInstance(d: string, t: string, i: string, attrs: Record<string, string>): Promise<void> {
-    if (!this.adapter?.setCfgInstance) { throw new Error('setCfgInstance not supported'); }
+    if (!this.adapter?.setCfgInstance) { throw new RwsError('setCfgInstance not supported', 'UNSUPPORTED_OPERATION'); }
     await this.withMastership(() => this.adapter!.setCfgInstance!(d, t, i, attrs));
   }
   async createCfgInstance(d: string, t: string, i: string, attrs: Record<string, string>): Promise<void> {
-    if (!this.adapter?.createCfgInstance) { throw new Error('createCfgInstance not supported'); }
+    if (!this.adapter?.createCfgInstance) { throw new RwsError('createCfgInstance not supported', 'UNSUPPORTED_OPERATION'); }
     await this.withMastership(() => this.adapter!.createCfgInstance!(d, t, i, attrs));
   }
   async removeCfgInstance(d: string, t: string, i: string): Promise<void> {
-    if (!this.adapter?.removeCfgInstance) { throw new Error('removeCfgInstance not supported'); }
+    if (!this.adapter?.removeCfgInstance) { throw new RwsError('removeCfgInstance not supported', 'UNSUPPORTED_OPERATION'); }
     await this.withMastership(() => this.adapter!.removeCfgInstance!(d, t, i));
   }
   async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'add'): Promise<void> {
-    if (!this.adapter?.loadCfgFile) { throw new Error('loadCfgFile not supported'); }
+    if (!this.adapter?.loadCfgFile) { throw new RwsError('loadCfgFile not supported', 'UNSUPPORTED_OPERATION'); }
     await this.withMastership(() => this.adapter!.loadCfgFile!(filepath, action));
   }
   async saveCfgFile(domain: string, filepath: string): Promise<void> {
-    if (!this.adapter?.saveCfgFile) { throw new Error('saveCfgFile not supported'); }
+    if (!this.adapter?.saveCfgFile) { throw new RwsError('saveCfgFile not supported', 'UNSUPPORTED_OPERATION'); }
     await this.withMastership(() => this.adapter!.saveCfgFile!(domain, filepath));
   }
 
   // Backup / restore
   async listBackups()      { return this.adapter?.listBackups?.() ?? []; }
   async createBackup(n: string) {
-    if (!this.adapter?.createBackup) { throw new Error('createBackup not supported'); }
+    if (!this.adapter?.createBackup) { throw new RwsError('createBackup not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.createBackup(n);
   }
   async restoreBackup(n: string) {
-    if (!this.adapter?.restoreBackup) { throw new Error('restoreBackup not supported'); }
+    if (!this.adapter?.restoreBackup) { throw new RwsError('restoreBackup not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.restoreBackup(n);
   }
   async getBackupStatus(): Promise<{ active: boolean; progress?: number; phase?: string }> { return this.adapter?.getBackupStatus?.() ?? { active: false }; }
@@ -1291,15 +1291,15 @@ export class RobotManager {
     return this.adapter.getModuleInfo(task, moduleName);
   }
   async callServiceRoutine(task: string, routineName: string, args?: Record<string, string>): Promise<void> {
-    if (!this.adapter?.callServiceRoutine) { throw new Error('callServiceRoutine not supported'); }
+    if (!this.adapter?.callServiceRoutine) { throw new RwsError('callServiceRoutine not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.callServiceRoutine(task, routineName, args);
   }
   async setActiveTool(mechunit: string, toolName: string): Promise<void> {
-    if (!this.adapter?.setActiveTool) { throw new Error('setActiveTool not supported'); }
+    if (!this.adapter?.setActiveTool) { throw new RwsError('setActiveTool not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.setActiveTool(mechunit, toolName);
   }
   async setActiveWobj(mechunit: string, wobjName: string): Promise<void> {
-    if (!this.adapter?.setActiveWobj) { throw new Error('setActiveWobj not supported'); }
+    if (!this.adapter?.setActiveWobj) { throw new RwsError('setActiveWobj not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.setActiveWobj(mechunit, wobjName);
   }
 
@@ -1310,19 +1310,19 @@ export class RobotManager {
     return this.adapter.listDipcQueues();
   }
   async createDipcQueue(name: string, options?: { maxsize?: number; maxmessages?: number }) {
-    if (!this.adapter?.createDipcQueue) { throw new Error('DIPC not supported'); }
+    if (!this.adapter?.createDipcQueue) { throw new RwsError('DIPC not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.createDipcQueue(name, options);
   }
   async sendDipcMessage(queue: string, payload: string, type: 'string' | 'num' | 'dnum' | 'bool' = 'string') {
-    if (!this.adapter?.sendDipcMessage) { throw new Error('DIPC not supported'); }
+    if (!this.adapter?.sendDipcMessage) { throw new RwsError('DIPC not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.sendDipcMessage(queue, payload, type);
   }
   async readDipcMessage(queue: string, timeoutMs?: number) {
-    if (!this.adapter?.readDipcMessage) { throw new Error('DIPC not supported'); }
+    if (!this.adapter?.readDipcMessage) { throw new RwsError('DIPC not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.readDipcMessage(queue, timeoutMs);
   }
   async removeDipcQueue(name: string) {
-    if (!this.adapter?.removeDipcQueue) { throw new Error('DIPC not supported'); }
+    if (!this.adapter?.removeDipcQueue) { throw new RwsError('DIPC not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.removeDipcQueue(name);
   }
 
@@ -1334,7 +1334,7 @@ export class RobotManager {
 
   // (validateRapidValue defined earlier; compressPath kept on adapter only)
   async compressPath(source: string, destination: string): Promise<void> {
-    if (!this.adapter?.compressPath) { throw new Error('Compress not supported on this protocol'); }
+    if (!this.adapter?.compressPath) { throw new RwsError('Compress not supported on this protocol', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.compressPath(source, destination);
   }
 
@@ -1372,13 +1372,13 @@ export class RobotManager {
     seedJoints?: JointTarget,
     mechunit?: string,
   ): Promise<JointTarget> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.calcJointsFromCartesian(pos, seedJoints, mechunit);
   }
 
   async calcCartesianFromJoints(joints: JointTarget, mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): Promise<RobTarget> {
-    if (!this.adapter) { throw new Error('Not connected'); }
-    if (!this.adapter.calcCartesianFromJoints) { throw new Error('Forward kinematics not supported on this protocol'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    if (!this.adapter.calcCartesianFromJoints) { throw new RwsError('Forward kinematics not supported on this protocol', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.calcCartesianFromJoints(joints, mechunit, tool, wobj);
   }
 
@@ -1396,23 +1396,23 @@ export class RobotManager {
   // ─── Mastership extras ───────────────────────────────────────────────────────
 
   async requestMastershipAll(): Promise<void> {
-    if (!this.adapter?.requestMastershipAll) { throw new Error('requestMastershipAll not supported'); }
+    if (!this.adapter?.requestMastershipAll) { throw new RwsError('requestMastershipAll not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.requestMastershipAll();
   }
   async releaseMastershipAll(): Promise<void> {
-    if (!this.adapter?.releaseMastershipAll) { throw new Error('releaseMastershipAll not supported'); }
+    if (!this.adapter?.releaseMastershipAll) { throw new RwsError('releaseMastershipAll not supported', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.releaseMastershipAll();
   }
   async requestMastershipWithId(domain: 'rapid' | 'cfg' | 'motion'): Promise<number> {
-    if (!this.adapter?.requestMastershipWithId) { throw new Error('Token-based mastership requires RWS 2.0'); }
+    if (!this.adapter?.requestMastershipWithId) { throw new RwsError('Token-based mastership requires RWS 2.0', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.requestMastershipWithId(domain);
   }
   async releaseMastershipWithId(domain: 'rapid' | 'cfg' | 'motion', id: number): Promise<void> {
-    if (!this.adapter?.releaseMastershipWithId) { throw new Error('Token-based mastership requires RWS 2.0'); }
+    if (!this.adapter?.releaseMastershipWithId) { throw new RwsError('Token-based mastership requires RWS 2.0', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.releaseMastershipWithId(domain, id);
   }
   async resetMastershipWatchdog(): Promise<void> {
-    if (!this.adapter?.resetMastershipWatchdog) { throw new Error('Mastership watchdog requires RobotWare 7.8+'); }
+    if (!this.adapter?.resetMastershipWatchdog) { throw new RwsError('Mastership watchdog requires RobotWare 7.8+', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.resetMastershipWatchdog();
   }
 
@@ -1440,16 +1440,16 @@ export class RobotManager {
     speed: number;
     mechunit?: string;
   }): Promise<void> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
 
     // Safety: only allow jog in manual modes
     const mode = this._state.opmode;
     if (mode === 'AUTO') {
-      throw new Error(`Jogging is not allowed in AUTO mode. Switch the controller to MANR or MANF first.`);
+      throw new RwsError(`Jogging is not allowed in AUTO mode. Switch the controller to MANR or MANF first.`, 'WRONG_MODE');
     }
     // Safety: motors must be on
     if (this._state.ctrlstate !== 'motoron') {
-      throw new Error(`Motors are off (state: ${this._state.ctrlstate}). Turn motors on before jogging.`);
+      throw new RwsError(`Motors are off (state: ${this._state.ctrlstate}). Turn motors on before jogging.`, 'MOTORS_OFF');
     }
 
     // Ensure RMMP (Remote Mastership Privilege) - required for ANY modify op via RWS.
@@ -1459,10 +1459,10 @@ export class RobotManager {
       if (priv === 'none') {
         await this.adapter.requestRmmp('modify');
         Logger.warn('RMMP requested - open FlexPendant and approve the remote-control popup, then click jog again');
-        throw new Error('Remote control not authorized yet. Open the FlexPendant and approve the popup that asks "Allow remote user to modify?", then click jog again.');
+        throw new RwsError('Remote control not authorized yet. Open the FlexPendant and approve the popup that asks "Allow remote user to modify?", then click jog again.', 'GRANT_DENIED');
       }
       if (priv.startsWith('pending')) {
-        throw new Error('Remote control approval is still pending. Open the FlexPendant and approve the popup, then click jog again.');
+        throw new RwsError('Remote control approval is still pending. Open the FlexPendant and approve the popup, then click jog again.', 'GRANT_DENIED');
       }
       // 'modify' or 'exclusive' - proceed
     }
@@ -1489,7 +1489,7 @@ export class RobotManager {
   }
 
   async downloadModule(moduleName: string): Promise<string> {
-    if (!this.adapter) { throw new Error('Not connected'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.readFile(`$HOME/${moduleName}.mod`);
   }
 

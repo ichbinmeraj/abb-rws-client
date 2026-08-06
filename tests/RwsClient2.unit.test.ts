@@ -1001,6 +1001,44 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('request pacing', () => {
+    it('keeps 55 ms between concurrent request starts, not just sequential ones', async () => {
+      // The old code read lastReqTime, awaited a timer, then wrote it back, so
+      // callers that arrived together all saw the same stale timestamp and all
+      // fired at once. Going over the controller's 20 req/s ceiling is what
+      // makes it answer 503.
+      const starts: number[] = [];
+      const { server, port } = await startServer((_req, res) => {
+        starts.push(Date.now());
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"pnl-opmode","opmode":"AUTO"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await Promise.all(Array.from({ length: 5 }, () => client.getOperationMode()));
+        expect(starts).toHaveLength(5);
+        const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+        // Allow a little timer slack, but nothing close to firing together.
+        for (const g of gaps) { expect(g).toBeGreaterThanOrEqual(45); }
+      } finally { server.close(); }
+    });
+
+    it('a rejected request does not wedge the pacing chain', async () => {
+      let n = 0;
+      const { server, port } = await startServer((_req, res) => {
+        n++;
+        if (n === 1) { res.writeHead(500); res.end('boom'); return; }
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"pnl-opmode","opmode":"AUTO"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await expect(client.getOperationMode()).rejects.toBeInstanceOf(RwsError);
+        await expect(client.getOperationMode()).resolves.toBe('AUTO');
+      } finally { server.close(); }
+    });
+  });
+
   describe('RW8 control station and write-access failover', () => {
     /** Mock an RW8 controller: mastership 410, controlstation endpoints live. */
     const rw8Handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {

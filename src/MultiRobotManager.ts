@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { RobotManager } from './RobotManager.js';
 import type { RobotState, ErrorListener, RobotManagerOptions } from './RobotManager.js';
 import type { FileEntry } from './types.js';
+import { RwsError } from './types.js';
 
 export interface RobotConfig {
   id: string;
@@ -83,7 +84,7 @@ export class MultiRobotManager {
   // Delegated methods for providers that call manager methods directly
   async listDirectory(remotePath: string): Promise<FileEntry[]> {
     const m = this.active;
-    if (!m) { throw new Error('No active robot'); }
+    if (!m) { throw new RwsError('No active robot', 'NOT_CONNECTED'); }
     return m.listDirectory(remotePath);
   }
 
@@ -131,7 +132,7 @@ export class MultiRobotManager {
   async connectRobot(id: string): Promise<void> {
     const mgr = this.managers.get(id);
     const cfg = this.configMap.get(id);
-    if (!mgr || !cfg) { throw new Error(`Robot ${id} not found`); }
+    if (!mgr || !cfg) { throw new RwsError(`Robot ${id} not found`, 'RESOURCE_NOT_FOUND'); }
     // Pass stored port/useHttps so same-host robots go to different ports
     await mgr.connect(cfg.host, cfg.username, cfg.password, cfg.port, cfg.useHttps);
 
