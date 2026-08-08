@@ -352,6 +352,12 @@ Not available on a virtual controller (they answer 403/404 and surface as typed
 `/ctrl/env`, `/ctrl/systems` and `/ctrl/syslog` group. See
 `docs/tasks/endpoint-completion.md` for exactly what each controller answered.
 
+> **These methods are RWS 2.0 only.** Every one of their paths answers 404 on an
+> IRC5, so they are declared optional on `IRWSAdapter` and `RWS1Adapter` does not
+> implement them. Through `RobotManager` the behaviour is explicit: reads return
+> a neutral value on RobotWare 6, and **writes throw `UNSUPPORTED_OPERATION`**
+> rather than quietly doing nothing.
+
 ---
 
 ### RAPID Execution
@@ -552,6 +558,15 @@ await unsubscribe();   // tears down the whole group, as before
 Adding is additive, not a replace. Removing the *last* resource retires the
 group, after which the controller rejects further edits - call the unsubscribe
 handle when you mean to tear everything down.
+
+`RobotManager` owns its own subscription; edit that one through
+`manager.subscriptionGroupPath` (it is `undefined` when the manager is
+polling-only or talking to an IRC5):
+
+```ts
+const group = manager.subscriptionGroupPath;
+if (group) { await manager.updateSubscriptionGroup(group, ['uiinstr']); }
+```
 
 ---
 

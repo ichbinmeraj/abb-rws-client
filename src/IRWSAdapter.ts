@@ -6,6 +6,8 @@ import type {
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
   UiInstruction, RestartMode, MastershipDomain,
   SubscriptionResource, SubscriptionEvent, ReturnCodeInfo,
+  SignalSearchExCriteria, CfgValidateRequest, ModifyPositionOptions,
+  DiagnosticsInfo, UserRegistration,
 } from './types.js';
 
 /** Common interface for both RWS1Adapter (IRC5 / RW6) and RWS2Adapter (OmniCore / RW7). */
@@ -429,5 +431,66 @@ export interface IRWSAdapter {
     onLost?: () => void,
     onRestored?: () => void,
   ): Promise<() => Promise<void>>;
+
+  // ── Endpoint-completion surface (2026-08-09) ──────────────────────────────
+  // All optional, and all RWS 2.0 only: every one of these paths answers 404 on
+  // the IRC5 controllers, so `RWS1Adapter` deliberately does not implement them
+  // and they are absent (not throwing) on a RobotWare 6 connection. Probe with
+  // `adapter.method?.(…)`, or go through `RobotManager`, which reports the
+  // unsupported case as a typed `UNSUPPORTED_OPERATION` error for writes.
+  // Evidence per endpoint: docs/tasks/endpoint-completion.md.
+
+  /** Panel language (form field `lang-code`). RWS 2.0 only. */
+  setPanelLanguage?(langCode: string): Promise<void>;
+  /** Controller language (form field `lang` - note the different name). RWS 2.0 only. */
+  setControllerLanguage?(lang: string): Promise<void>;
+  /** Simulated EXTERNAL emergency-stop circuit. RWS 2.0 only. */
+  setExternalEmergencyStop?(state: 'active' | 'reset'): Promise<void>;
+
+  /**
+   * Two-criteria signal search. The second criteria set NARROWS the first
+   * (logical AND), and there is no glob support. RWS 2.0 only - the RWS 1.0
+   * side has no server-side signal search at all.
+   */
+  searchSignalsEx?(criteria: SignalSearchExCriteria[]): Promise<Signal[]>;
+  /** Validate CFG instances that already exist. RWS 2.0 only. */
+  validateCfgInstances?(request: CfgValidateRequest): Promise<boolean>;
+
+  /** Collision-prediction model name; robot numbering is zero-based. RWS 2.0 only. */
+  getCollisionPredictionModelName?(robotNumber?: number): Promise<string>;
+  /** Write a collision-avoidance snapshot to a controller file. RWS 2.0 only. */
+  saveCollisionAvoidanceSnapshot?(filePath: string, motionGroup: string): Promise<void>;
+  /** Reload the collision-avoidance configuration. RWS 2.0 only, option-gated. */
+  loadCollisionAvoidanceConfig?(): Promise<void>;
+
+  /** ModPos - rewrite a robtarget in place. Requires RAPID mastership. RWS 2.0 only. */
+  modifyPosition?(task: string, module: string, opts: ModifyPositionOptions): Promise<void>;
+  /** Reset ONE task's program pointer (not the global resetpp). RWS 2.0 only. */
+  resetTaskProgramPointer?(task: string): Promise<void>;
+
+  /** Saved controller diagnostics; `empty` when the controller has none. RWS 2.0 only. */
+  getDiagnostics?(): Promise<DiagnosticsInfo>;
+  /** Ask the controller to save a diagnostics bundle. RWS 2.0 only. */
+  saveDiagnostics?(destination?: string): Promise<void>;
+  /** Write a system-information report to a controller file. RWS 2.0 only. */
+  saveSystemInfo?(path: string, fileType: string): Promise<void>;
+
+  /** Register this application as an RWS user session. RWS 2.0 only. */
+  registerUser?(reg: UserRegistration): Promise<void>;
+  /** Impersonate another UAS user. RWS 2.0 only. */
+  impersonateUser?(uid: string): Promise<void>;
+  /** Whether the current user may change their own password. RWS 2.0 only. */
+  isPasswordChangeAllowed?(): Promise<boolean>;
+  /** Change the current user's password. RWS 2.0 only. */
+  changePassword?(oldPassword: string, newPassword: string): Promise<void>;
+
+  /**
+   * Add resources to a live subscription group, or change their priorities,
+   * without tearing the group down. Returns the initial-event payload for the
+   * added resources. RWS 2.0 only.
+   */
+  updateSubscriptionGroup?(groupPath: string, resources: SubscriptionResource[]): Promise<string>;
+  /** Drop ONE resource from a live subscription group. RWS 2.0 only. */
+  unsubscribeResource?(groupPath: string, resource: SubscriptionResource): Promise<void>;
 }
 
