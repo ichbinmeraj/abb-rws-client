@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Endpoint-completion sweep. Every remaining endpoint the controllers advertise
+  is now either implemented and live-verified or documented as unreachable with
+  the controller's own refusal as the evidence; `docs/tasks/endpoint-completion.md`
+  carries the per-endpoint record. New methods: `setPanelLanguage`,
+  `setControllerLanguage`, `setExternalEmergencyStop`, `searchSignalsEx`,
+  `validateCfgInstances`, `getCollisionPredictionModelName`,
+  `saveCollisionAvoidanceSnapshot`, `loadCollisionAvoidanceConfig`,
+  `modifyPosition` (ModPos), `resetTaskProgramPointer`, `getDiagnostics`,
+  `saveDiagnostics`, `saveSystemInfo`, `registerUser`, `impersonateUser`,
+  `isPasswordChangeAllowed` and `changePassword`.
+- **Subscription groups can be edited in place.** `updateSubscriptionGroup` adds
+  resources to a live group (the controller answers with the added resource's
+  initial value event, so there is no wait for the first change) and
+  `unsubscribeResource` drops a single resource without tearing the group down.
+  Both clients previously rebuilt the entire group on any change. The group's
+  path is exposed as `groupPath` on the handle `subscribe()` returns — the
+  handle is still callable exactly as before.
+- Several endpoints behave differently from what the specification implies, all
+  live-verified on RobotWare 7.21 and 8.1.1: `signal-search-ex`'s second criteria
+  set **narrows** rather than unions, and it does not glob; `validate-instances`
+  takes a **numeric** `operation` (only 0 or 1) and validates instances that
+  **already exist** rather than proposed ones; `collisionprediction/modelname`
+  numbers robots from **zero**; and `/ctrl/system/info` is a POST that writes a
+  file, not a getter. Each is recorded in the method's doc comment.
 - `listCurrentUserGrants` now works on RobotWare 6 as well: RWS 1.0 serves the
   logged-in user's grants at `/users/grants` (26 grants on a live IRC5), so the
   method name is the same on both protocols. Only the `/uas/*` tree is genuinely
