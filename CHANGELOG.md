@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-09
+
+Everything below accumulated after the 1.1.0 entry was written on 2026-08-02.
+1.1.0 was version-bumped and changelogged but never tagged or published, so npm
+goes 1.0.0 → 1.2.0; the 1.1.0 section is kept as the record of what was true on
+its date rather than being back-filled.
+
 ### Fixed
 
 - **RobotWare 8 no longer throws when releasing write access.** Any write clears

@@ -187,7 +187,14 @@ describe('RWS 2.0 subscription reconnect', () => {
         // flow, not the default schedule. With the default 500 ms exponential
         // base, a couple of slow WS opens under parallel-suite CPU load pushed
         // recovery past the until() budget and flaked.
-        { reconnectBaseMs: 50, reconnectCapMs: 100 },
+        //
+        // openTimeoutMs matters as much as the backoff. It defaults to 8000,
+        // so a single WS open that stalls under load blocks the retry for the
+        // full 8 s - and the waits below used to allow exactly 8000 ms, making
+        // the test unwinnable whenever that happened. Shrink the client's own
+        // open timeout and give the waits the default generous budget, so the
+        // two can no longer race.
+        { reconnectBaseMs: 50, reconnectCapMs: 100, openTimeoutMs: 1000 },
       );
       expect(s.posts.length).toBe(1);
       await until(() => s.sockets.length >= 1);
@@ -196,8 +203,8 @@ describe('RWS 2.0 subscription reconnect', () => {
       s.sockets[0].terminate();
 
       // The client must create a NEW subscription (old WS URL is dead) …
-      await until(() => s.posts.length >= 2, 8000);
-      await until(() => s.sockets.length >= 2, 8000);
+      await until(() => s.posts.length >= 2);
+      await until(() => s.sockets.length >= 2);
 
       // … and events on the new socket must still reach the handler.
       s.sockets[1].send(
