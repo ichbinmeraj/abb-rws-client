@@ -3858,7 +3858,8 @@ export class RwsClient2 {
    * ModPos - rewrite a robtarget in place from the robot's current position.
    * POST /rw/rapid/tasks/{task}/modules/{module}/modify-position, form fields
    * `startrow`, `startcol`, `endrow`, `endcol`, `checklimit`, `checkdeactaxes`,
-   * `text`, `allowdeact` (live-read 2026-08-09 on RW7.21).
+   * `text`, `allowdeact` (live-read 2026-08-09 on RW7.21 AND RW8.1.1 - both
+   * report the identical field set).
    *
    * Requires RAPID mastership. `endrow`/`endcol` default to the start position,
    * which is what the pendant sends when modifying a single target.
