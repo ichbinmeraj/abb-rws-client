@@ -16,6 +16,8 @@ import type {
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
   UiInstruction, RestartMode, MastershipDomain,
   SubscriptionResource, SubscriptionEvent,
+  SignalSearchExCriteria, CfgValidateRequest, ModifyPositionOptions,
+  DiagnosticsInfo, UserRegistration, SubscriptionHandle,
 } from './types.js';
 
 /**
@@ -1000,7 +1002,16 @@ export class RwsClient2 {
    */
   async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
     const { path, body } = R2.searchSignals(criteria);
-    const p = RwsClient2.parse(await this.req('POST', path, body));
+    return this.parseSignalList(await this.req('POST', path, body));
+  }
+
+  /**
+   * Parse an `ios-signal-li` list and remember each signal's network/device
+   * coordinates. Shared by `searchSignals` and `searchSignalsEx` so both
+   * populate the same coordinate cache from the same shape.
+   */
+  private parseSignalList(html: string): Signal[] {
+    const p = RwsClient2.parse(html);
     return p.getAllStates('ios-signal-li').map(s => {
       const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
       const parts = (s['_title'] ?? '').split('/');
@@ -2958,13 +2969,30 @@ export class RwsClient2 {
     });
   }
 
+  /**
+   * Build the `resources=N&1=<path>&1-p=<prio>&...` body shared by the create
+   * POST and the in-place PUT. Returns null when nothing maps to a real path.
+   *
+   * Semicolons inside a resource path must stay LITERAL - percent-encoding them
+   * makes the controller drop the state parameter.
+   */
+  private static buildSubscriptionBody(resources: SubscriptionResource[]): string | null {
+    const paths = resources.map(r => RwsClient2.rws2ResourcePath(r)).filter(Boolean) as string[];
+    if (paths.length === 0) { return null; }
+    const parts = [`resources=${paths.length}`];
+    paths.forEach((p, i) => {
+      parts.push(`${i + 1}=${p}&${i + 1}-p=1`);
+    });
+    return parts.join('&');
+  }
+
   async subscribe(
     resources: SubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
     onLost?: () => void,
     onRestored?: () => void,
     opts?: Omit<WsSubscribeOptions, 'onLost' | 'onRestored'>,
-  ): Promise<() => Promise<void>> {
+  ): Promise<SubscriptionHandle> {
     // Effective tuning: per-call opts win over the class defaults.
     const reconnectBaseMs = opts?.reconnectBaseMs ?? RwsClient2.WS_RECONNECT_BASE_MS;
     const reconnectCapMs = opts?.reconnectCapMs ?? RwsClient2.WS_RECONNECT_CAP_MS;
@@ -2972,16 +3000,15 @@ export class RwsClient2 {
     const pingIntervalMs = opts?.pingIntervalMs ?? RwsClient2.WS_PING_INTERVAL_MS;
     const openTimeoutMs = opts?.openTimeoutMs ?? RwsClient2.WS_OPEN_TIMEOUT_MS;
     // 1. Build subscription body
-    const paths = resources.map(r => RwsClient2.rws2ResourcePath(r)).filter(Boolean) as string[];
-    if (paths.length === 0) { return async () => {}; }
-
-    const parts = [`resources=${paths.length}`];
-    paths.forEach((p, i) => {
-      // Format: <idx>=<path;stateParam>&<idx>-p=<priority>
-      // Semicolons must be LITERAL - do NOT encodeURIComponent
-      parts.push(`${i + 1}=${p}&${i + 1}-p=1`);
-    });
-    const bodyStr = parts.join('&');
+    const bodyStr = RwsClient2.buildSubscriptionBody(resources);
+    if (bodyStr === null) {
+      // Nothing subscribable was asked for: hand back an inert handle with no
+      // group, rather than failing - same behaviour as before, richer type.
+      const noop = async (): Promise<void> => {};
+      return Object.defineProperty(noop, 'groupPath', {
+        value: '', enumerable: true,
+      }) as SubscriptionHandle;
+    }
 
     // We dynamically import 'ws' so callers who never subscribe don't pay for it.
     // (ESM-safe; the package is `"type": "module"`, so `require` is undefined.)
@@ -3202,14 +3229,24 @@ export class RwsClient2 {
 
     await open();
 
-    // 5. Return unsubscribe - close WS and DELETE the subscription group
-    return async () => {
+    // 5. Return unsubscribe - close WS and DELETE the subscription group.
+    // The group resource path rides along on the returned function so callers
+    // can edit the group in place (updateSubscriptionGroup /
+    // unsubscribeResource) instead of tearing it down. Attaching it keeps the
+    // return assignable to the previous `() => Promise<void>` signature.
+    const stop = async (): Promise<void> => {
       conn.closed = true;
       if (conn.reconnectTimer) { clearTimeout(conn.reconnectTimer); }
       if (conn.pingTimer) { clearInterval(conn.pingTimer); conn.pingTimer = null; }
       conn.ws?.close();
       await dropGroup(conn.deleteUrl);
     };
+    // Reconnects mint a new group, so read it live rather than snapshotting.
+    Object.defineProperty(stop, 'groupPath', {
+      get: () => conn.deleteUrl,
+      enumerable: true,
+    });
+    return stop as SubscriptionHandle;
   }
 
   // ─── Remote Mastership Privilege (RMMP) ────────────────────────────────────────
@@ -3662,6 +3699,402 @@ export class RwsClient2 {
       rax_1: +d['rax_1'], rax_2: +d['rax_2'], rax_3: +d['rax_3'],
       rax_4: +d['rax_4'], rax_5: +d['rax_5'], rax_6: +d['rax_6'],
     };
+  }
+
+  // ─── Endpoint completion (2026-08-09) ──────────────────────────────────────
+  // Every method below was built from the controller's own OPTIONS form, read
+  // with Accept: application/xhtml+xml;v=2.0 - the ONLY representation that
+  // serves forms. `*/*` and bare `application/xhtml+xml` both answer 406, which
+  // is why an earlier pass recorded several of these as "406 / unsupported"
+  // when in fact the request was simply mis-negotiated.
+  // Evidence and per-endpoint status: docs/tasks/endpoint-completion.md.
+
+  /**
+   * Panel language. POST /rw/panel/lang, form field `lang-code`
+   * (live-read 2026-08-09 on RW7.21 and RW8.1.1; `Allow: POST,OPTIONS`).
+   *
+   * There is no getter: GET answers 405 even though the Allow header
+   * mistakenly lists an empty first entry (`,POST,OPTIONS`). Read the active
+   * language from `getControllerLanguage()`-adjacent system resources instead.
+   */
+  async setPanelLanguage(langCode: string): Promise<void> {
+    await this.req('POST', '/rw/panel/lang', { 'lang-code': langCode });
+  }
+
+  /**
+   * Simulated EXTERNAL emergency stop. POST /rw/panel/external-emergency-stop,
+   * form field `state` (live-read 2026-08-09). Sibling of the already-covered
+   * e-stop simulation; this one models the external circuit rather than the
+   * pendant button.
+   *
+   * Absent on RWS 1.0 - the IRC5 controllers answer 404 for this path.
+   */
+  async setExternalEmergencyStop(state: 'active' | 'reset'): Promise<void> {
+    await this.req('POST', '/rw/panel/external-emergency-stop', { state });
+  }
+
+  /**
+   * Extended signal search. POST /rw/iosystem/signals/signal-search-ex.
+   *
+   * The OPTIONS form advertises each criterion twice (`name`/`name2`,
+   * `device`/`device2`, ...), so the controller accepts up to two criteria sets.
+   * The second set NARROWS the first - it is a logical AND, not a union.
+   * Live-verified 2026-08-09 on RW8.1.1: DI alone 33 signals, DO alone 39,
+   * DI∩DI 33, DI∩DO 0. The form has no third set, so more than two criteria
+   * cannot be expressed and this refuses them client-side rather than silently
+   * dropping the extras.
+   *
+   * Note the controller does NOT glob: `name: '*'` matches nothing. Pass no
+   * criteria fields at all to list everything.
+   */
+  async searchSignalsEx(criteria: SignalSearchExCriteria[]): Promise<Signal[]> {
+    if (criteria.length === 0 || criteria.length > 2) {
+      throw new RwsError(
+        `signal-search-ex takes 1 or 2 criteria sets, got ${criteria.length}`,
+        'INVALID_ARGUMENT',
+      );
+    }
+    const parts: string[] = [];
+    criteria.forEach((c, i) => {
+      const sfx = i === 0 ? '' : '2';
+      const put = (k: string, v: string | undefined): void => {
+        if (v !== undefined && v !== '') { parts.push(`${k}${sfx}=${encodeURIComponent(v)}`); }
+      };
+      put('name', c.name);
+      put('device', c.device);
+      put('network', c.network);
+      put('category', c.category);
+      put('category-pon', c.categoryPon);
+      put('type', c.type);
+      if (c.invert !== undefined) { parts.push(`invert${sfx}=${c.invert}`); }
+      if (c.blocked !== undefined) { parts.push(`blocked${sfx}=${c.blocked}`); }
+    });
+    const html = await this.req(
+      'POST', '/rw/iosystem/signals/signal-search-ex',
+      undefined, parts.join('&'), 'application/x-www-form-urlencoded;v=2.0',
+    );
+    return this.parseSignalList(html);
+  }
+
+  /**
+   * Validate CFG instances that already exist on the controller.
+   * POST /rw/cfg/validate-instances, form fields
+   * `operation`, `cfgdomain`, `cfgtype`, `instances`, `instancescount`
+   * (live-read 2026-08-09 on RW7.21 and RW8.1.1).
+   *
+   * This is NOT a dry run for instances you are about to create. Live-verified
+   * on RW8.1.1: an existing signal name answers 204 (valid), while a synthetic
+   * name - or a full `-Name "..." -SignalType "..."` instance body - answers 200
+   * with "Instance name not found, or the type is not named".
+   *
+   * `instancescount` is derived from the array rather than taken from the
+   * caller, so the count can never disagree with the payload.
+   *
+   * @returns `true` when the controller accepted every named instance (204).
+   */
+  async validateCfgInstances(request: CfgValidateRequest): Promise<boolean> {
+    const parts = [
+      `operation=${request.operation}`,
+      `cfgdomain=${encodeURIComponent(request.domain)}`,
+      `cfgtype=${encodeURIComponent(request.type)}`,
+      `instancescount=${request.instances.length}`,
+      ...request.instances.map(i => `instances=${encodeURIComponent(i)}`),
+    ];
+    const html = await this.req(
+      'POST', '/rw/cfg/validate-instances',
+      undefined, parts.join('&'), 'application/x-www-form-urlencoded;v=2.0',
+    );
+    // 204 carries no body; a 200 body means the controller reported a problem.
+    return html.trim().length === 0;
+  }
+
+  /**
+   * Collision-prediction model name for one robot.
+   * GET /rw/motionsystem/collisionprediction/modelname.
+   *
+   * The `robotnumber` query parameter is REQUIRED - without it the controller
+   * answers 400 "robotnumber parameter is required" (live-verified 2026-08-09).
+   *
+   * Robot numbering is ZERO-based: on a single-robot system only `0` is valid
+   * and 1, 2 and -1 all answer 400 "robotnumber parameter is invalid"
+   * (live-verified 2026-08-09 on RW8.1.1). Defaults to 0 for that reason.
+   */
+  async getCollisionPredictionModelName(robotNumber = 0): Promise<string> {
+    const p = RwsClient2.parse(await this.req(
+      'GET', `/rw/motionsystem/collisionprediction/modelname?robotnumber=${robotNumber}`,
+    ));
+    return p.get('modelname') ?? p.get('model-name') ?? '';
+  }
+
+  /**
+   * Write a collision-avoidance snapshot to a file on the controller.
+   * POST /rw/motionsystem/collisionavoidance/snapshot, form fields
+   * `filepath`, `motiongroup` (live-read 2026-08-09).
+   *
+   * The resource exists on the VCs even without the Collision Avoidance option;
+   * a controller lacking the option refuses at execution time, not at OPTIONS.
+   */
+  async saveCollisionAvoidanceSnapshot(filePath: string, motionGroup: string): Promise<void> {
+    await this.req('POST', '/rw/motionsystem/collisionavoidance/snapshot', {
+      filepath: filePath, motiongroup: motionGroup,
+    });
+  }
+
+  /**
+   * Reload the collision-avoidance configuration.
+   * POST /rw/motionsystem/collisionavoidance/loadconfig - the OPTIONS form
+   * advertises `Allow: POST,OPTIONS` and NO fields (live-read 2026-08-09), so
+   * this deliberately sends an empty body.
+   *
+   * Option-gated: both VCs answer 403 "Option is missing" (icode -7301) because
+   * neither carries Collision Avoidance. That is the controller declining a
+   * real endpoint, not a client bug - it surfaces as `RwsError` GRANT_DENIED.
+   */
+  async loadCollisionAvoidanceConfig(): Promise<void> {
+    await this.req('POST', '/rw/motionsystem/collisionavoidance/loadconfig');
+  }
+
+  /**
+   * ModPos - rewrite a robtarget in place from the robot's current position.
+   * POST /rw/rapid/tasks/{task}/modules/{module}/modify-position, form fields
+   * `startrow`, `startcol`, `endrow`, `endcol`, `checklimit`, `checkdeactaxes`,
+   * `text`, `allowdeact` (live-read 2026-08-09 on RW7.21).
+   *
+   * Requires RAPID mastership. `endrow`/`endcol` default to the start position,
+   * which is what the pendant sends when modifying a single target.
+   */
+  async modifyPosition(
+    task: string, module: string, opts: ModifyPositionOptions,
+  ): Promise<void> {
+    const body: Record<string, string> = {
+      startrow: String(opts.startRow),
+      startcol: String(opts.startCol),
+      endrow:   String(opts.endRow ?? opts.startRow),
+      endcol:   String(opts.endCol ?? opts.startCol),
+    };
+    if (opts.checkLimit     !== undefined) { body['checklimit']     = String(opts.checkLimit); }
+    if (opts.checkDeactAxes !== undefined) { body['checkdeactaxes'] = String(opts.checkDeactAxes); }
+    if (opts.allowDeact     !== undefined) { body['allowdeact']     = String(opts.allowDeact); }
+    if (opts.text           !== undefined) { body['text']           = opts.text; }
+    await this.req(
+      'POST',
+      `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/modify-position`,
+      body,
+    );
+  }
+
+  /**
+   * Reset the program pointer of ONE task.
+   * POST /rw/rapid/tasks/{task}/pcp/reset - `Allow: POST,OPTIONS`, no form
+   * fields (live-read 2026-08-09).
+   *
+   * Distinct from the global `resetProgramPointer()`, which drives
+   * /rw/rapid/execution/resetpp and resets every task at once.
+   */
+  async resetTaskProgramPointer(task: string): Promise<void> {
+    await this.req('POST', `/rw/rapid/tasks/${encodeURIComponent(task)}/pcp/reset`);
+  }
+
+  /**
+   * Saved controller diagnostics. GET /ctrl/diagnostics.
+   *
+   * A controller with nothing saved answers HTTP 400 "No Diagnostics Saved on
+   * controller yet" (live-verified 2026-08-09 on both RW7.21 and RW8.1.1) -
+   * that is an empty state, not a failure, so it is reported as
+   * `{ empty: true, entries: [] }` rather than thrown.
+   */
+  async getDiagnostics(): Promise<DiagnosticsInfo> {
+    let xml: string;
+    try {
+      xml = await this.req('GET', '/ctrl/diagnostics');
+    } catch (e) {
+      if (e instanceof RwsError && e.httpStatus === 400
+          && /no diagnostics saved/i.test(e.controllerMsg ?? e.message)) {
+        return { empty: true, entries: [] };
+      }
+      throw e;
+    }
+    const p = RwsClient2.parse(xml);
+    const entries = p.getAllStates('ctrl-diagnostics-li');
+    return { empty: entries.length === 0, entries };
+  }
+
+  /**
+   * Ask the controller to save a diagnostics bundle.
+   * POST /ctrl/diagnostics/save.
+   *
+   * Not reachable on the virtual controllers. The OPTIONS form advertises the
+   * action with NO fields (`<form id="save" method="post" action=""/>`), yet
+   * every request answers 400 "No destination path in the data parameter" -
+   * with an empty body, with `data=`, `path=` or `filepath=` form fields, and
+   * with JSON or text/plain bodies (those add a 406 on top). Live-probed
+   * 2026-08-09 across both RW7.21 and RW8.1.1; nothing the controller describes
+   * satisfies it, so the destination is passed some way the VC does not expose.
+   *
+   * Kept because the path and method are real and a physical controller may
+   * accept it; expect `RwsError` with httpStatus 400 on a VC.
+   */
+  async saveDiagnostics(destination?: string): Promise<void> {
+    await this.req(
+      'POST', '/ctrl/diagnostics/save',
+      destination === undefined ? undefined : { data: destination },
+    );
+  }
+
+  /**
+   * Controller language. POST /ctrl/lang, form field `lang`
+   * (live-read 2026-08-09).
+   *
+   * Write-only in practice: the Allow header claims `GET,POST,OPTIONS` but GET
+   * answers 405 on both RW7.21 and RW8.1.1. The Allow header is wrong; this is
+   * recorded rather than worked around.
+   */
+  async setControllerLanguage(lang: string): Promise<void> {
+    await this.req('POST', '/ctrl/lang', { lang });
+  }
+
+  /**
+   * Write a system-information report to a file on the controller.
+   * POST /ctrl/system/info, form fields `path`, `file-type` (live-read
+   * 2026-08-09).
+   *
+   * Despite the name this is NOT a getter - GET answers 405 and the resource
+   * only accepts POST. Use `getSystemInfo()` for the in-memory system facts.
+   *
+   * Not available on a virtual controller: both VCs answer 403 "Functionality
+   * is not supported on the current platform" (live-verified 2026-08-09 on
+   * RW7.21 and RW8.1.1), surfacing as `RwsError` GRANT_DENIED. Kept because the
+   * form is real and physical controllers do implement it.
+   */
+  async saveSystemInfo(path: string, fileType: string): Promise<void> {
+    await this.req('POST', '/ctrl/system/info', { path, 'file-type': fileType });
+  }
+
+  /**
+   * Register this application as an RWS user session.
+   * POST /users/register, form fields `application`, `username`, `location`,
+   * `ulocale` (live-read 2026-08-09).
+   */
+  async registerUser(reg: UserRegistration): Promise<void> {
+    const body: Record<string, string> = {
+      application: reg.application,
+      username:    reg.username,
+      location:    reg.location,
+    };
+    if (reg.locale !== undefined) { body['ulocale'] = reg.locale; }
+    await this.req('POST', '/users/register', body);
+  }
+
+  /**
+   * Impersonate another UAS user. POST /users/impersonate, form field `uid`
+   * (live-read 2026-08-09).
+   *
+   * Implemented from the live form but NEVER executed against the VCs - UAS
+   * mutation is barred by the endpoint-completion loop's hard rules. Treat as
+   * unverified at runtime.
+   */
+  async impersonateUser(uid: string): Promise<void> {
+    await this.req('POST', '/users/impersonate', { uid });
+  }
+
+  /**
+   * Whether the current user may change their own password.
+   * GET /uas/user/password-change-allow - `Allow: GET`, answers 200
+   * (live-verified 2026-08-09 on RW7.21 and RW8.1.1).
+   */
+  async isPasswordChangeAllowed(): Promise<boolean> {
+    const p = RwsClient2.parse(await this.req('GET', '/uas/user/password-change-allow'));
+    const v = p.get('password-change-allow') ?? p.get('status') ?? p.get('state') ?? 'false';
+    return /^(true|yes|1|allowed)$/i.test(v.replace(/"/g, '').trim());
+  }
+
+  /**
+   * Change the current user's password.
+   * POST /uas/user/password, form fields `old-password`, `new-password`
+   * (live-read 2026-08-09).
+   *
+   * Implemented from the live form but NEVER executed - changing a password on
+   * a controller is barred by the loop's hard rules. Treat as unverified at
+   * runtime.
+   */
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    await this.req('POST', '/uas/user/password', {
+      'old-password': oldPassword, 'new-password': newPassword,
+    });
+  }
+
+  // ─── Subscription group editing ────────────────────────────────────────────
+  // A group can be edited in place instead of being torn down and rebuilt.
+  // The group's own OPTIONS form (live-read 2026-08-09 on RW8.1.1, with the
+  // WebSocket held open - the group does not exist otherwise) advertises three
+  // actions:
+  //   <form method="delete" action="{id}"                 id="unsubscribe-group"/>
+  //   <form method="delete" action="{id}/{resource-path}" id="unsubscribe-resource"/>
+  //   <form method="put"    action="{id}"                 id="update-resource-priority"/>
+  // Both clients previously only ever did the first.
+
+  /**
+   * Add resources to a live subscription group, or change their priorities,
+   * without dropping and rebuilding the whole group.
+   *
+   * PUT /subscription/{group} is ADDITIVE, not a replace. Live-verified
+   * 2026-08-09 on RW8.1.1: a group holding [/rw/panel/ctrl-state] that is sent
+   * a PUT for /rw/panel/speedratio ends up holding BOTH. The 200 response body
+   * carries the added resource's INITIAL value event (`pnl-speedratio-ev`), so
+   * the caller gets its starting state without waiting for the first change.
+   *
+   * @param groupPath the group resource, e.g. `/subscription/2` - take it from
+   *   the `groupPath` on the handle `subscribe()` returned. NOT the
+   *   `wss://.../poll/{id}` URL, which is not an HTTP resource at all (404).
+   * @returns the raw XHTML initial-event payload for the added resources.
+   */
+  async updateSubscriptionGroup(
+    groupPath: string, resources: SubscriptionResource[],
+  ): Promise<string> {
+    const bodyStr = RwsClient2.buildSubscriptionBody(resources);
+    if (bodyStr === null) {
+      throw new RwsError(
+        'updateSubscriptionGroup needs at least one resource that maps to a path',
+        'INVALID_ARGUMENT',
+      );
+    }
+    return this.req(
+      'PUT', groupPath, undefined, bodyStr,
+      'application/x-www-form-urlencoded;v=2.0',
+    );
+  }
+
+  /**
+   * Drop ONE resource from a live subscription group, leaving the group and its
+   * WebSocket intact.
+   *
+   * DELETE /subscription/{group}/{resource-path} - the `unsubscribe-resource`
+   * action from the group's own OPTIONS form (live-read 2026-08-09), whose
+   * action spells the path out verbatim (`action="2/rw/panel/ctrl-state"`).
+   *
+   * Takes the same resource vocabulary as `subscribe()`, and the `;stateParam`
+   * suffix is kept: the controller stores group membership as the EXACT string
+   * it was given, so a group joined as `/rw/panel/speedratio;speedratio` must be
+   * left by that same string. Live-verified 2026-08-09 on RW8.1.1 - PUT with
+   * the suffix stores the suffixed form and a bare DELETE then answers 400
+   * "does not have a resource ... in group", while PUT without it stores the
+   * bare form and a bare DELETE succeeds.
+   *
+   * Removing the LAST resource retires the group - the controller then answers
+   * 400 to any further PUT or DELETE on it. Call the unsubscribe handle instead
+   * when the intent is to tear the whole group down.
+   */
+  async unsubscribeResource(
+    groupPath: string, resource: SubscriptionResource,
+  ): Promise<void> {
+    const mapped = RwsClient2.rws2ResourcePath(resource);
+    if (!mapped) {
+      throw new RwsError(
+        `unsubscribeResource: ${JSON.stringify(resource)} maps to no RWS 2.0 path`,
+        'INVALID_ARGUMENT',
+      );
+    }
+    await this.req('DELETE', `${groupPath}${mapped}`);
   }
 
 }

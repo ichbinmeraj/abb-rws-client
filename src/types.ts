@@ -447,3 +447,108 @@ export function decodeElogArgs(fields: Record<string, unknown>): ElogArg[] {
   }
   return out;
 }
+
+// ─── Endpoint-completion additions (2026-08-09) ──────────────────────────────
+// Every shape below was read off a controller's own OPTIONS form, not the
+// specification. See docs/tasks/endpoint-completion.md for the evidence.
+
+/**
+ * What `RwsClient2.subscribe()` returns: call it to unsubscribe, exactly as
+ * before, but it also carries the group's resource path so the group can be
+ * edited in place via `updateSubscriptionGroup` / `unsubscribeResource`.
+ *
+ * `groupPath` is read live rather than snapshotted - a reconnect mints a new
+ * group - and is `''` while no group is currently held.
+ */
+export type SubscriptionHandle = (() => Promise<void>) & {
+  readonly groupPath: string;
+};
+
+/**
+ * Criteria for POST /rw/iosystem/signals/signal-search-ex.
+ *
+ * The OPTIONS form (live-read 2026-08-09 on RW7.21 and RW8.1.1) advertises every
+ * field twice - `name`/`name2`, `device`/`device2`, ... - so the controller
+ * takes up to TWO criteria sets. The second set NARROWS the first (logical AND),
+ * it does not union with it. Live-verified 2026-08-09 on RW8.1.1:
+ *   type=DI            -> 33 signals
+ *   type=DO            -> 39 signals
+ *   type=DI & type2=DI -> 33 signals   (intersection with itself)
+ *   type=DI & type2=DO ->  0 signals   (nothing is both)
+ * An empty body returns everything. `name` matches literally - there is no glob
+ * support, and `name=*` returns 0 rather than all.
+ */
+export interface SignalSearchExCriteria {
+  name?: string;
+  device?: string;
+  network?: string;
+  category?: string;
+  /** Maps to the form's `category-pon` field. */
+  categoryPon?: string;
+  type?: string;
+  invert?: boolean;
+  blocked?: boolean;
+}
+
+/**
+ * Request for POST /rw/cfg/validate-instances.
+ *
+ * This validates CFG instances that ALREADY EXIST; it is not a dry run for
+ * instances you are about to create. Live-verified 2026-08-09 on RW8.1.1: an
+ * existing signal name (`ASI_C1_PIN8_DI`) answers 204, while every synthetic
+ * name and every `-Name "..." -SignalType "..."` instance body answers 200 with
+ * "Instance name not found, or the type is not named".
+ */
+export interface CfgValidateRequest {
+  /**
+   * The form's `operation` field - numeric, NOT a verb. The controller accepts
+   * only 0 and 1 and rejects every other value (including 'add', 'update',
+   * 'validate' and any integer outside 0..1) with
+   * "Invalid operation parameter value". Live-verified 2026-08-09.
+   */
+  operation: 0 | 1;
+  /** The form's `cfgdomain` field, e.g. 'EIO', 'MOC', 'SYS'. */
+  domain: string;
+  /** The form's `cfgtype` field, e.g. 'EIO_SIGNAL'. */
+  type: string;
+  /** Names of existing instances; sent as `instances`, `instancescount` derived. */
+  instances: string[];
+}
+
+/**
+ * ModPos - POST /rw/rapid/tasks/{task}/modules/{module}/modify-position.
+ * Form fields live-read 2026-08-09 on RW7.21.
+ */
+export interface ModifyPositionOptions {
+  startRow: number;
+  startCol: number;
+  endRow?: number;
+  endCol?: number;
+  /** Form field `checklimit`. */
+  checkLimit?: boolean;
+  /** Form field `checkdeactaxes`. */
+  checkDeactAxes?: boolean;
+  /** Form field `allowdeact`. */
+  allowDeact?: boolean;
+  /** Form field `text`. */
+  text?: string;
+}
+
+/** A saved-diagnostics record from GET /ctrl/diagnostics. */
+export interface DiagnosticsInfo {
+  /** True when the controller has no diagnostics saved yet (it answers 400). */
+  empty: boolean;
+  entries: Array<Record<string, string>>;
+}
+
+/**
+ * POST /users/register - form fields live-read 2026-08-09
+ * (`application`, `username`, `location`, `ulocale`).
+ */
+export interface UserRegistration {
+  application: string;
+  username: string;
+  location: string;
+  /** Form field `ulocale`. */
+  locale?: string;
+}

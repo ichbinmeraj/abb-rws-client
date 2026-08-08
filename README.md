@@ -342,6 +342,15 @@ new RwsClient(options: RwsClientOptions)
 | `setControllerClock(y,mo,d,h,mi,s)` | `void` | Set controller date/time (UTC) |
 | `getRestartCount()` | `number` | Times the controller has restarted, RWS 2.0 |
 | `listProgress()` / `getProgress(id)` | - | Track async operations (backup, log dump) |
+| `setPanelLanguage(code)` | `void` | Panel language, RWS 2.0 (field `lang-code`) |
+| `setControllerLanguage(lang)` | `void` | Controller language, RWS 2.0 (field `lang`) |
+| `setExternalEmergencyStop(state)` | `void` | Simulated **external** e-stop circuit, RWS 2.0 |
+| `getDiagnostics()` | `DiagnosticsInfo` | Saved diagnostics; `empty: true` when none |
+
+Not available on a virtual controller (they answer 403/404 and surface as typed
+`RwsError`s): `saveSystemInfo`, `saveDiagnostics`, and the whole `/ctrl/tpu/*`,
+`/ctrl/env`, `/ctrl/systems` and `/ctrl/syslog` group. See
+`docs/tasks/endpoint-completion.md` for exactly what each controller answered.
 
 ---
 
@@ -425,6 +434,7 @@ new RwsClient(options: RwsClientOptions)
 |--------|---------|-------------|
 | `listAllSignals(start?, limit?)` | `Signal[]` | Paginated flat list of all signals |
 | `searchSignals(criteria)` | `Signal[]` | Server-side search (name substring, type, device, network), RWS 2.0 |
+| `searchSignalsEx(criteria[])` | `Signal[]` | Two-criteria search, RWS 2.0 - the second set **narrows** the first |
 | `readSignal(network, device, name)` | `Signal` | Read a specific signal by address |
 | `getSignalConfig(network, device, name)` | `Record` | Configuration instance of a signal, RWS 2.0 |
 | `writeSignal(network, device, name, value)` | `void` | Write DO/AO/GO - value as string: `'1'`, `'0'`, `'3.14'` |
@@ -519,6 +529,29 @@ const unsub2 = await client2.subscribe(resources, handler, onLost, onRestored, {
 
 `RobotManager` wires this automatically: it resyncs with a full poll on restore and
 falls back to fast polling on loss.
+
+#### Editing a live group (RWS 2.0)
+
+A subscription group can be changed in place instead of being torn down and
+rebuilt. The handle `subscribe()` returns is still just the unsubscribe
+function, but it also carries the group's path:
+
+```ts
+const unsubscribe = await client2.subscribe(['controllerstate'], handler);
+
+// Add a resource. The PUT response carries its INITIAL value event, so you get
+// the starting state without waiting for the first change.
+await client2.updateSubscriptionGroup(unsubscribe.groupPath, ['speedratio']);
+
+// Drop just that one resource; the group and its WebSocket stay up.
+await client2.unsubscribeResource(unsubscribe.groupPath, 'speedratio');
+
+await unsubscribe();   // tears down the whole group, as before
+```
+
+Adding is additive, not a replace. Removing the *last* resource retires the
+group, after which the controller rejects further edits - call the unsubscribe
+handle when you mean to tear everything down.
 
 ---
 
