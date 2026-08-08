@@ -4,7 +4,9 @@ import type {
   FileEntry, SystemInfo, ControllerIdentity, CollisionDetectionState,
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
   UiInstruction, RestartMode, Signal, IoNetwork, IoDevice,
-  SubscriptionEvent, ConnectionQuality,
+  SubscriptionEvent, ConnectionQuality, SubscriptionResource,
+  SignalSearchExCriteria, CfgValidateRequest, ModifyPositionOptions,
+  DiagnosticsInfo, UserRegistration,
 } from './types.js';
 import { RwsError } from './types.js';
 import * as https from 'https';
@@ -124,6 +126,20 @@ export class RobotManager {
   private timer: NodeJS.Timeout | null = null;
   /** Unsubscribe function returned by adapter.subscribe(); null when not using WebSockets. */
   private unsubscribeFn: (() => Promise<void>) | null = null;
+
+  /**
+   * Resource path of the live RWS 2.0 subscription group this manager owns, or
+   * `undefined` when there is no group (not connected, polling-only, or an
+   * RWS 1.0 controller, whose subscriber has no editable group).
+   *
+   * Pass it to `updateSubscriptionGroup` / `unsubscribeResource` to add or drop
+   * resources on the manager's own stream without tearing it down. Read it
+   * fresh each time - a reconnect mints a new group.
+   */
+  get subscriptionGroupPath(): string | undefined {
+    const handle = this.unsubscribeFn as ((() => Promise<void>) & { groupPath?: string }) | null;
+    return handle?.groupPath || undefined;
+  }
   /** True when WebSocket subscriptions are active (drives reduced polling interval). */
   private subscriptionActive = false;
   /** In-flight connect promise - used to dedupe rapid-clicks so we never run two connects in parallel. */
@@ -1364,6 +1380,100 @@ export class RobotManager {
   // Module
   async getModuleSource(t: string, n: string) { return this.adapter?.getModuleSource?.(t, n) ?? ''; }
   async listModuleSymbols(t: string, n: string) { return this.adapter?.listModuleSymbols?.(t, n) ?? []; }
+
+  // ─── Endpoint-completion surface (2026-08-09) ───────────────────────────────
+  // Every endpoint below is RWS 2.0 only - all of them answer 404 on the IRC5
+  // controllers (docs/tasks/endpoint-completion.md). Reads degrade to a neutral
+  // value the way the rest of this class does; WRITES throw instead, because a
+  // write that silently does nothing is worse than one that fails loudly.
+
+  /** Throw a typed error rather than let a write no-op on a controller that lacks it. */
+  private requireOp<T>(op: T | undefined, name: string): NonNullable<T> {
+    if (!this.adapter) {
+      throw new RwsError(`${name}: not connected`, 'NOT_CONNECTED');
+    }
+    if (op === undefined || op === null) {
+      throw new RwsError(
+        `${name} is not available on this controller (RWS 2.0 only)`,
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    return op as NonNullable<T>;
+  }
+
+  // Panel / controller
+  async setPanelLanguage(code: string): Promise<void> {
+    return this.requireOp(this.adapter?.setPanelLanguage, 'setPanelLanguage').call(this.adapter, code);
+  }
+  async setControllerLanguage(lang: string): Promise<void> {
+    return this.requireOp(this.adapter?.setControllerLanguage, 'setControllerLanguage').call(this.adapter, lang);
+  }
+  async setExternalEmergencyStop(state: 'active' | 'reset'): Promise<void> {
+    return this.requireOp(this.adapter?.setExternalEmergencyStop, 'setExternalEmergencyStop').call(this.adapter, state);
+  }
+
+  // I/O and CFG
+  async searchSignalsEx(criteria: SignalSearchExCriteria[]): Promise<Signal[]> {
+    return this.requireOp(this.adapter?.searchSignalsEx, 'searchSignalsEx').call(this.adapter, criteria);
+  }
+  async validateCfgInstances(request: CfgValidateRequest): Promise<boolean> {
+    return this.requireOp(this.adapter?.validateCfgInstances, 'validateCfgInstances').call(this.adapter, request);
+  }
+
+  // Motion
+  async getCollisionPredictionModelName(robotNumber = 0): Promise<string> {
+    return this.adapter?.getCollisionPredictionModelName?.(robotNumber) ?? '';
+  }
+  async saveCollisionAvoidanceSnapshot(filePath: string, motionGroup: string): Promise<void> {
+    return this.requireOp(this.adapter?.saveCollisionAvoidanceSnapshot, 'saveCollisionAvoidanceSnapshot')
+      .call(this.adapter, filePath, motionGroup);
+  }
+  async loadCollisionAvoidanceConfig(): Promise<void> {
+    return this.requireOp(this.adapter?.loadCollisionAvoidanceConfig, 'loadCollisionAvoidanceConfig').call(this.adapter);
+  }
+
+  // RAPID
+  async modifyPosition(task: string, module: string, opts: ModifyPositionOptions): Promise<void> {
+    return this.requireOp(this.adapter?.modifyPosition, 'modifyPosition').call(this.adapter, task, module, opts);
+  }
+  async resetTaskProgramPointer(task: string): Promise<void> {
+    return this.requireOp(this.adapter?.resetTaskProgramPointer, 'resetTaskProgramPointer').call(this.adapter, task);
+  }
+
+  // Diagnostics and system
+  async getDiagnostics(): Promise<DiagnosticsInfo> {
+    return this.adapter?.getDiagnostics?.() ?? { empty: true, entries: [] };
+  }
+  async saveDiagnostics(destination?: string): Promise<void> {
+    return this.requireOp(this.adapter?.saveDiagnostics, 'saveDiagnostics').call(this.adapter, destination);
+  }
+  async saveSystemInfo(path: string, fileType: string): Promise<void> {
+    return this.requireOp(this.adapter?.saveSystemInfo, 'saveSystemInfo').call(this.adapter, path, fileType);
+  }
+
+  // Users and UAS
+  async registerUser(reg: UserRegistration): Promise<void> {
+    return this.requireOp(this.adapter?.registerUser, 'registerUser').call(this.adapter, reg);
+  }
+  async impersonateUser(uid: string): Promise<void> {
+    return this.requireOp(this.adapter?.impersonateUser, 'impersonateUser').call(this.adapter, uid);
+  }
+  async isPasswordChangeAllowed(): Promise<boolean> {
+    return this.adapter?.isPasswordChangeAllowed?.() ?? false;
+  }
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    return this.requireOp(this.adapter?.changePassword, 'changePassword').call(this.adapter, oldPassword, newPassword);
+  }
+
+  // Subscription group editing
+  async updateSubscriptionGroup(groupPath: string, resources: SubscriptionResource[]): Promise<string> {
+    return this.requireOp(this.adapter?.updateSubscriptionGroup, 'updateSubscriptionGroup')
+      .call(this.adapter, groupPath, resources);
+  }
+  async unsubscribeResource(groupPath: string, resource: SubscriptionResource): Promise<void> {
+    return this.requireOp(this.adapter?.unsubscribeResource, 'unsubscribeResource')
+      .call(this.adapter, groupPath, resource);
+  }
 
   // ─── Inverse + Forward Kinematics ───────────────────────────────────────────
 

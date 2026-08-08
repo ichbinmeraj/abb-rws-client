@@ -6,8 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **RobotWare 8 no longer throws when releasing write access.** Any write clears
+  control-station write access as a side effect on RW8 — the status resource
+  reports `held=false` immediately after a write while the session keeps writing
+  successfully — so the release that followed was refused with
+  `403 "The control station does not have SPoC."` and `releaseMastership`
+  propagated it. Because the documented pattern is acquire → try →
+  release-in-finally, that surfaced from the `finally` and masked the caller's
+  real result: a write that had actually succeeded looked like a failure.
+  Nothing ever leaked (`held` reads false throughout, and a fresh acquire always
+  succeeds), so this specific refusal is now treated as "already released".
+  Every other 403 from release still throws. RobotWare 7 was never affected.
+
 ### Added
 
+- **The endpoint-completion surface is reachable from every layer**, not just
+  `RwsClient2`: the 19 methods are declared on `IRWSAdapter` (optional, since
+  all of them answer 404 on IRC5) and wrapped by `RobotManager`. Reads degrade
+  to a neutral value on RobotWare 6; **writes throw a typed
+  `UNSUPPORTED_OPERATION`** rather than silently doing nothing. A shape test
+  asserts the RWS 2.0-only asymmetry so it stays a deliberate decision.
+- `RobotManager.subscriptionGroupPath` exposes the manager's own live
+  subscription group, so `updateSubscriptionGroup` / `unsubscribeResource` can
+  add or drop resources on the manager's stream without tearing it down.
 - Endpoint-completion sweep. Every remaining endpoint the controllers advertise
   is now either implemented and live-verified or documented as unreachable with
   the controller's own refusal as the evidence; `docs/tasks/endpoint-completion.md`

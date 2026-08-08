@@ -48,6 +48,30 @@ describe('IRWSAdapter shape', () => {
     }
   });
 
+  it('the endpoint-completion surface is present on RWS 2.0 and absent on RWS 1.0', () => {
+    // These are declared optional on IRWSAdapter precisely because every one of
+    // them answers 404 on the IRC5 controllers. Asserting the asymmetry keeps
+    // "RWS 2.0 only" an explicit decision rather than an accident: if someone
+    // implements one on RWS 1.0, this test tells them to update the docs too.
+    const rws2Only = [
+      'setPanelLanguage', 'setControllerLanguage', 'setExternalEmergencyStop',
+      'searchSignalsEx', 'validateCfgInstances',
+      'getCollisionPredictionModelName', 'saveCollisionAvoidanceSnapshot',
+      'loadCollisionAvoidanceConfig',
+      'modifyPosition', 'resetTaskProgramPointer',
+      'getDiagnostics', 'saveDiagnostics', 'saveSystemInfo',
+      'registerUser', 'impersonateUser', 'isPasswordChangeAllowed', 'changePassword',
+      'updateSubscriptionGroup', 'unsubscribeResource',
+    ];
+    const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
+    const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
+    const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });
+    for (const m of rws2Only) {
+      expect(typeof (c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m} should exist`).toBe('function');
+      expect((a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m} should be absent`).toBeUndefined();
+    }
+  });
+
   it('RwsClient2 has the public surface IRWSAdapter requires (basic methods present)', () => {
     const c = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     // Spot-check a representative slice of required methods.
