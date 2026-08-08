@@ -3749,6 +3749,80 @@ export class RwsClient2 {
   }
 
   /**
+   * Motors on WITHOUT the key switch, via the Keyless Mode Switch option.
+   * POST /rw/panel/ctrl-state/keyless-motoron - `Allow: POST,OPTIONS`, and the
+   * form carries NO fields (`<form id="keyless" method="post"
+   * action="ctrl-state/keyless-motoron"></form>`), so this sends an empty body.
+   *
+   * Note the path: the resource lives UNDER `ctrl-state`, not beside it.
+   * `/rw/panel/keyless-motoron` - the shape most notes record - answers 404 on
+   * every generation. Live-read 2026-08-09 on RW7.21 and RW8.1.1; absent on
+   * RWS 1.0 (404), which has no Keyless Mode Switch resource at all.
+   *
+   * Built from the live form but NOT executed against the VCs: it energises the
+   * drives. Reversible with `setControllerState('motoroff')`.
+   */
+  async setKeylessMotorOn(): Promise<void> {
+    await this.req('POST', '/rw/panel/ctrl-state/keyless-motoron');
+  }
+
+  /**
+   * Replace a module's source text in place.
+   * POST /rw/rapid/tasks/{task}/modules/{module}/text, form fields `task`,
+   * `text`, `path` (live-read 2026-08-09 on RW7.21 and RW8.1.1, form id
+   * `set-module-text`).
+   *
+   * The read side is `getModuleText`. This is the write side, and it edits
+   * program memory directly - no TEMP file round trip, unlike `saveModule`.
+   *
+   * Built from the live form but NOT executed: it rewrites a loaded program.
+   */
+  async setModuleText(task: string, module: string, text: string, path?: string): Promise<void> {
+    const body: Record<string, string> = { task, text };
+    if (path !== undefined) { body['path'] = path; }
+    await this.req(
+      'POST',
+      `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/text`,
+      body,
+    );
+  }
+
+  /**
+   * Replace a ROW/COLUMN range of a module's source in place.
+   * POST /rw/rapid/tasks/{task}/modules/{module}/text/range, form fields `task`,
+   * `replace-mode`, `query-mode`, `startrow`, `startcol`, `endrow`, `endcol`,
+   * `text` (live-read 2026-08-09, form id `set-text-range`; the controller's
+   * defaults are replace-mode "After" and query-mode "Force").
+   *
+   * The form's own `action` attribute says `.../textrange`, with no slash. That
+   * is wrong: `/textrange` answers 404 on both RW7.21 and RW8.1.1, while
+   * `/text/range` - where OPTIONS is served and where `getModuleTextRange`
+   * already reads - answers 200. This is the one place in this sweep where the
+   * controller's form contradicts the live path, so the path wins.
+   *
+   * Built from the live form but NOT executed: it rewrites a loaded program.
+   */
+  async setModuleTextRange(
+    task: string, module: string,
+    range: { startRow: number; startCol: number; endRow: number; endCol: number },
+    text: string,
+    opts?: { replaceMode?: string; queryMode?: string },
+  ): Promise<void> {
+    await this.req(
+      'POST',
+      `/rw/rapid/tasks/${encodeURIComponent(task)}/modules/${encodeURIComponent(module)}/text/range`,
+      {
+        task,
+        'replace-mode': opts?.replaceMode ?? 'After',
+        'query-mode':   opts?.queryMode ?? 'Force',
+        startrow: String(range.startRow), startcol: String(range.startCol),
+        endrow:   String(range.endRow),   endcol:   String(range.endCol),
+        text,
+      },
+    );
+  }
+
+  /**
    * Simulated EXTERNAL emergency stop. POST /rw/panel/external-emergency-stop,
    * form field `state` (live-read 2026-08-09). Sibling of the already-covered
    * e-stop simulation; this one models the external circuit rather than the

@@ -159,6 +159,23 @@ function makeScriptedWs(script: Array<'open' | 'fail'>, opts: { autoPong?: boole
 
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
+/**
+ * Poll until a condition holds, instead of sleeping a fixed span and hoping.
+ *
+ * The heartbeat tests drive a chain of short timers (ping -> pong timeout ->
+ * terminate -> reconnect). A fixed sleep has to be longer than the worst-case
+ * scheduling delay of that whole chain, and under parallel-suite CPU load it
+ * is not - the assertions then fail for a late timer rather than a real bug.
+ * Polling costs nothing when things are fast and simply waits when they are not.
+ */
+async function until(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > timeoutMs) { throw new Error('condition not met in time'); }
+    await wait(5);
+  }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('WsSubscriber - transport selection', () => {
@@ -480,9 +497,13 @@ describe('WsSubscriber - heartbeat', () => {
       reconnectBaseMs: 5,
     });
 
-    await wait(120);
-
+    // Wait for the whole chain to land rather than for a fixed span: ping ->
+    // pong timeout -> terminate -> reconnect -> onRestored.
     const first = instances[0] as { pings: number; terminated: boolean };
+    await until(() =>
+      first.pings > 0 && first.terminated
+      && instances.length > 1 && onRestored.mock.calls.length > 0);
+
     expect(first.pings).toBeGreaterThan(0);
     expect(first.terminated).toBe(true);       // heartbeat killed the frozen socket
     expect(instances.length).toBeGreaterThan(1); // and the reconnect path ran

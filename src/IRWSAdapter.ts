@@ -446,6 +446,21 @@ export interface IRWSAdapter {
   setControllerLanguage?(lang: string): Promise<void>;
   /** Simulated EXTERNAL emergency-stop circuit. RWS 2.0 only. */
   setExternalEmergencyStop?(state: 'active' | 'reset'): Promise<void>;
+  /**
+   * Motors on without the key switch (Keyless Mode Switch option).
+   * Note the resource lives under `ctrl-state`. RWS 2.0 only.
+   */
+  setKeylessMotorOn?(): Promise<void>;
+
+  /** Replace a module's source in place (write side of `getModuleText`). RWS 2.0 only. */
+  setModuleText?(task: string, module: string, text: string, path?: string): Promise<void>;
+  /** Replace a row/column range of a module's source in place. RWS 2.0 only. */
+  setModuleTextRange?(
+    task: string, module: string,
+    range: { startRow: number; startCol: number; endRow: number; endCol: number },
+    text: string,
+    opts?: { replaceMode?: string; queryMode?: string },
+  ): Promise<void>;
 
   /**
    * Two-criteria signal search. The second criteria set NARROWS the first

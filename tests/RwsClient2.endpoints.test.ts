@@ -74,6 +74,46 @@ describe('endpoint completion - panel and controller', () => {
   });
 });
 
+describe('endpoint completion - paths that notes get wrong', () => {
+  it('keyless motor-on posts under ctrl-state, with an empty body', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      await client(port).setKeylessMotorOn();
+      // /rw/panel/keyless-motoron - the shape most notes record - 404s on every
+      // generation; the live resource is under ctrl-state and takes no fields.
+      expect(requests[0].method).toBe('POST');
+      expect(requests[0].url).toBe('/rw/panel/ctrl-state/keyless-motoron');
+      expect(requests[0].body).toBe('');
+    } finally { server.close(); }
+  });
+
+  it('setModuleText posts task/text and omits path when not given', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      await client(port).setModuleText('T_ROB1', 'Module1', 'MODULE m\nENDMODULE');
+      expect(requests[0].url).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/text');
+      expect(requests[0].body).toBe('task=T_ROB1&text=MODULE+m%0AENDMODULE');
+    } finally { server.close(); }
+  });
+
+  it('setModuleTextRange targets /text/range, NOT the textrange the form claims', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      await client(port).setModuleTextRange(
+        'T_ROB1', 'Module1', { startRow: 1, startCol: 1, endRow: 2, endCol: 5 }, 'x',
+      );
+      // The controller's own form says action="…/textrange"; that path 404s on
+      // both RW7.21 and RW8.1.1. The slashed path is the real one.
+      expect(requests[0].url).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/text/range');
+      expect(requests[0].url).not.toContain('textrange');
+      expect(requests[0].body).toContain('replace-mode=After');
+      expect(requests[0].body).toContain('query-mode=Force');
+      expect(requests[0].body).toContain('startrow=1');
+      expect(requests[0].body).toContain('endcol=5');
+    } finally { server.close(); }
+  });
+});
+
 describe('endpoint completion - signal-search-ex', () => {
   const signals = xhtml(
     '<ul><li class="ios-signal-li" title="n/d/sigA"><span class="name">sigA</span>'

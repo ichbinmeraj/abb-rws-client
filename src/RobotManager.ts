@@ -1411,6 +1411,23 @@ export class RobotManager {
   async setExternalEmergencyStop(state: 'active' | 'reset'): Promise<void> {
     return this.requireOp(this.adapter?.setExternalEmergencyStop, 'setExternalEmergencyStop').call(this.adapter, state);
   }
+  async setKeylessMotorOn(): Promise<void> {
+    return this.requireOp(this.adapter?.setKeylessMotorOn, 'setKeylessMotorOn').call(this.adapter);
+  }
+
+  // In-place module source editing (the read side is getModuleText/…Range)
+  async setModuleText(task: string, module: string, text: string, path?: string): Promise<void> {
+    return this.requireOp(this.adapter?.setModuleText, 'setModuleText').call(this.adapter, task, module, text, path);
+  }
+  async setModuleTextRange(
+    task: string, module: string,
+    range: { startRow: number; startCol: number; endRow: number; endCol: number },
+    text: string,
+    opts?: { replaceMode?: string; queryMode?: string },
+  ): Promise<void> {
+    return this.requireOp(this.adapter?.setModuleTextRange, 'setModuleTextRange')
+      .call(this.adapter, task, module, range, text, opts);
+  }
 
   // I/O and CFG
   async searchSignalsEx(criteria: SignalSearchExCriteria[]): Promise<Signal[]> {
