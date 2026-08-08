@@ -29,6 +29,16 @@ its date rather than being back-filled.
 
 ### Added
 
+- **In-place RAPID module source editing**: `setModuleText` replaces a module's
+  source directly in program memory (the write side of the existing
+  `getModuleText`, with no TEMP round trip), and `setModuleTextRange` replaces a
+  row/column range. Both are RWS 2.0 only. Note the controller's own form for the
+  ranged variant advertises `action=".../textrange"`, which 404s — the real path
+  is `/text/range`, the one its OPTIONS is served at.
+- `setKeylessMotorOn` — motors on without the key switch, for controllers with
+  the Keyless Mode Switch option. The resource lives at
+  `/rw/panel/ctrl-state/keyless-motoron`; the widely-recorded
+  `/rw/panel/keyless-motoron` 404s on every generation.
 - **The endpoint-completion surface is reachable from every layer**, not just
   `RwsClient2`: the 19 methods are declared on `IRWSAdapter` (optional, since
   all of them answer 404 on IRC5) and wrapped by `RobotManager`. Reads degrade

@@ -55,6 +55,7 @@ describe('IRWSAdapter shape', () => {
     // implements one on RWS 1.0, this test tells them to update the docs too.
     const rws2Only = [
       'setPanelLanguage', 'setControllerLanguage', 'setExternalEmergencyStop',
+      'setKeylessMotorOn', 'setModuleText', 'setModuleTextRange',
       'searchSignalsEx', 'validateCfgInstances',
       'getCollisionPredictionModelName', 'saveCollisionAvoidanceSnapshot',
       'loadCollisionAvoidanceConfig',

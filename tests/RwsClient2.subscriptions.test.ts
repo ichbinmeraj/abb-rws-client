@@ -183,18 +183,20 @@ describe('RWS 2.0 subscription reconnect', () => {
         ['speedratio'],
         (e: SubscriptionEvent) => events.push({ resource: e.resource, value: e.value }),
         undefined, undefined,
-        // Fast tuning: this test proves the re-POST happens and events still
-        // flow, not the default schedule. With the default 500 ms exponential
-        // base, a couple of slow WS opens under parallel-suite CPU load pushed
-        // recovery past the until() budget and flaked.
+        // This test proves the re-POST happens and events still flow - not the
+        // default schedule, and NOT the give-up budget (a separate test covers
+        // that). So the tuning has to make it impossible for the client to run
+        // out of attempts before the waits below run out of patience:
         //
-        // openTimeoutMs matters as much as the backoff. It defaults to 8000,
-        // so a single WS open that stalls under load blocks the retry for the
-        // full 8 s - and the waits below used to allow exactly 8000 ms, making
-        // the test unwinnable whenever that happened. Shrink the client's own
-        // open timeout and give the waits the default generous budget, so the
-        // two can no longer race.
-        { reconnectBaseMs: 50, reconnectCapMs: 100, openTimeoutMs: 1000 },
+        //   - fast backoff, so recovery is quick when the machine is idle;
+        //   - a moderate open timeout, so one stalled upgrade under
+        //     parallel-suite load costs ~2 s rather than the 8 s default;
+        //   - and a deliberately huge attempt budget. This is the part that was
+        //     still flaking: with the default 6 attempts, six slow upgrades
+        //     exhausted the client's retries in a few seconds and it gave up
+        //     permanently, after which no amount of waiting could succeed.
+        //     Shortening the open timeout alone made that MORE likely, not less.
+        { reconnectBaseMs: 50, reconnectCapMs: 100, openTimeoutMs: 2000, maxReconnectAttempts: 1000 },
       );
       expect(s.posts.length).toBe(1);
       await until(() => s.sockets.length >= 1);
