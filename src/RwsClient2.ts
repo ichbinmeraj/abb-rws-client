@@ -1978,9 +1978,36 @@ export class RwsClient2 {
     this.writeAccessHeld = true;
   }
 
+  /**
+   * True when `e` is RW8's "you already do not hold write access" refusal.
+   *
+   * Live-verified 2026-08-09 on OmniCore VC RW8.1.1: performing ANY write clears
+   * `control-station-write-access-held` back to false while the session keeps
+   * writing successfully (three consecutive speed-ratio writes after a single
+   * acquire all succeed). Releasing afterwards therefore releases something the
+   * controller thinks is already gone and answers
+   *   403 "The control station does not have SPoC." code -1073435873 icode -20107
+   * Nothing leaks - the status resource reports held=false throughout. RW7 does
+   * not do this; its release after a write is a clean 204.
+   */
+  private static isWriteAccessAlreadyReleased(e: unknown): boolean {
+    return e instanceof RwsError
+      && e.httpStatus === 403
+      && (e.controllerCode === -1073435873 || /does not have SPoC/i.test(e.controllerMsg ?? ''));
+  }
+
   private async dropWriteAccess(): Promise<void> {
     const { path } = R2.releaseWriteAccess();
-    await this.req('POST', path);
+    try {
+      await this.req('POST', path);
+    } catch (e) {
+      // The documented usage is acquire -> try -> release-in-finally. Throwing
+      // here would surface from the finally and mask the caller's real result
+      // (or its real error) for a condition that means "already released".
+      if (!RwsClient2.isWriteAccessAlreadyReleased(e)) { throw e; }
+      Logger.trace?.('mastership',
+        'RWS2 control-station write access was already released (RW8 clears it on write)');
+    }
     this.writeAccessHeld = false;
   }
 

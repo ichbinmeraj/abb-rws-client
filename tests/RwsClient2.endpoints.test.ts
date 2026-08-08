@@ -296,6 +296,72 @@ describe('endpoint completion - subscription group editing', () => {
   });
 });
 
+describe('RW8 control-station write access', () => {
+  // RW8 clears control-station write access as a side effect of any write, so
+  // the release that follows is refused with this exact body. Captured live
+  // 2026-08-09 from RW8.1.1.
+  const spocRefusal = xhtml(
+    '<div class="status"><span class="code">-1073435873</span>'
+    + '<span class="msg">The control station does not have SPoC. code:-1073435873 icode:-20107</span></div>',
+  );
+
+  /** Mastership 410 GONE makes the client switch to the control-station path. */
+  function rw8Server() {
+    return startServer((req, res) => {
+      const url = req.url ?? '';
+      if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+      if (url === '/rw/controlstation/register/remote') { res.writeHead(204); res.end(); return; }
+      if (url === '/rw/controlstation/writeaccess/request') { res.writeHead(204); res.end(); return; }
+      if (url === '/rw/controlstation/writeaccess/release') {
+        res.writeHead(403, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end(spocRefusal);
+        return;
+      }
+      res.writeHead(204); res.end();
+    });
+  }
+
+  it('releaseMastership does not throw when RW8 says the station has no SPoC', async () => {
+    const { server, port, requests } = await rw8Server();
+    try {
+      const c = client(port);
+      await c.requestMastership('motion');
+      // Must not reject: the grant is already gone, and throwing here would
+      // surface from the caller's finally and mask their real result.
+      await expect(c.releaseMastership('motion')).resolves.toBeUndefined();
+      expect(requests.some(r => r.url === '/rw/controlstation/writeaccess/release')).toBe(true);
+    } finally { server.close(); }
+  });
+
+  it('still throws on a release 403 that is NOT the SPoC condition', async () => {
+    const { server, port } = await startServer((req, res) => {
+      const url = req.url ?? '';
+      if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+      if (url === '/rw/controlstation/writeaccess/release') {
+        res.writeHead(403, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end(xhtml('<div class="status"><span class="code">-1073445867</span><span class="msg">The user is not allowed access</span></div>'));
+        return;
+      }
+      res.writeHead(204); res.end();
+    });
+    try {
+      const c = client(port);
+      await c.requestMastership('motion');
+      await expect(c.releaseMastership('motion')).rejects.toBeInstanceOf(RwsError);
+    } finally { server.close(); }
+  });
+
+  it('routes to the control station after mastership answers 410 GONE', async () => {
+    const { server, port, requests } = await rw8Server();
+    try {
+      await client(port).requestMastership('motion');
+      const paths = requests.map(r => r.url);
+      expect(paths).toContain('/rw/controlstation/register/remote');
+      expect(paths).toContain('/rw/controlstation/writeaccess/request');
+    } finally { server.close(); }
+  });
+});
+
 describe('endpoint completion - users and UAS', () => {
   it('registerUser omits ulocale when no locale is given', async () => {
     const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
