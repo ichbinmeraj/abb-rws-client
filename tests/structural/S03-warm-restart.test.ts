@@ -266,8 +266,28 @@ for (const generation of ['rws1', 'rws2'] as const) {
         let restored = 0;
         let lost = 0;
 
-        await c.connect();
-        const originalRatio = await c.getSpeedRatio();
+        // Setup tolerates CONTROLLER_BUSY. This cell asserts restart SURVIVAL,
+        // not the controller's momentary availability - and an IRC5 that just
+        // served another structural cell can answer 503 for a stretch while its
+        // session reaper catches up. These two awaits were unwrapped, so a
+        // single transient 503 aborted the cell in ~5 s, before the restart it
+        // exists to test (observed 2026-08-09 on a controller that passed 5/5
+        // connect cycles moments later). Retrying here is not assertion
+        // weakening: nothing this cell asserts has happened yet.
+        let originalRatio = 100;
+        const setupReady = await pollLive(async () => {
+          try {
+            await c.connect();
+            originalRatio = await c.getSpeedRatio();
+            return true;
+          } catch (e) {
+            if (e instanceof RwsError && (e.code === 'CONTROLLER_BUSY' || e.code === 'NETWORK_ERROR')) {
+              return false; // not ready yet - the reaper needs time
+            }
+            throw e; // anything else is a real failure, surface it
+          }
+        }, 120000, 3000);
+        expect(setupReady, 'controller never became available for setup (pre-restart)').toBe(true);
         // Leave the controller as it was found, even if an assertion aborts the
         // test mid-flight: restore the ratio, then drop any hold still open
         // (disconnect() would too, but only if it is reached). The ratio write
