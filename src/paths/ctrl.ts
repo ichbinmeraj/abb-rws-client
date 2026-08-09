@@ -159,10 +159,10 @@ export const CTRL: DomainTable = {
     rws2: { method: 'GET', path: '/ctrl/safety/config/startupstatus' },
     note: 'RWS 2.0 only; controller misspells the response class (…-load-satus), code reads both.',
   },
-  getSafetyStatusRoot: {
-    summary: 'Read the safety root (RWS 1.0 reads this directly; 2.0 composes sub-reads).',
+  getSafetyStatus: {
+    summary: 'Read the aggregate controller safety status.',
     rws1: { method: 'GET', path: '/ctrl/safety' },
-    note: '1.0 reads /ctrl/safety directly; 2.0 has no single URL for the composite.',
+    note: '1.0 reads /ctrl/safety directly; 2.0 has no single URL - it composes getSafetyMode + getSafetyViolationInfo + getSafetyLoadStatus, so no rws2 entry here.',
   },
   listSafetyZones: {
     summary: 'List safety zones.',
@@ -228,6 +228,26 @@ export const CTRL: DomainTable = {
     rws1: { method: 'POST', path: '/ctrl/virtualtime/vtspeed', action: 'set', fields: ['vtcurrspeed'] },
     note: 'same body field; 1.0 adds ?action=set.',
   },
+  getVirtualTimeClock: {
+    summary: 'Read the current virtual time.',
+    // Atomic sub-resource of the getVirtualTime composite (vttime + vtstate +
+    // vtspeed). Added 2026-08-10 after the conformance check flagged
+    // /ctrl/virtualtime/vttime as unmapped - the composite was skipped, but its
+    // atomic reads deserve table entries.
+    rws2: { method: 'GET', path: '/ctrl/virtualtime/vttime' },
+    rws1: { method: 'GET', path: '/ctrl/virtualtime/vttime' },
+    note: 'atomic read; getVirtualTime composes this with vtstate + vtspeed.',
+  },
+  getVirtualTimeState: {
+    summary: 'Read the virtual-time running state.',
+    rws2: { method: 'GET', path: '/ctrl/virtualtime/vtstate' },
+    rws1: { method: 'GET', path: '/ctrl/virtualtime/vtstate' },
+  },
+  getVirtualTimeScale: {
+    summary: 'Read the virtual-time speed.',
+    rws2: { method: 'GET', path: '/ctrl/virtualtime/vtspeed' },
+    rws1: { method: 'GET', path: '/ctrl/virtualtime/vtspeed' },
+  },
   getVirtualTimeTimeslice: {
     summary: 'Read the virtual-time timeslice.',
     rws2: { method: 'GET', path: '/ctrl/virtualtime/vttimeslice' },
@@ -254,7 +274,7 @@ export const CTRL: DomainTable = {
   uploadCertificate: {
     summary: 'Upload a certificate (raw PEM body).',
     rws2: { method: 'POST', path: '/ctrl/certstore/{name}' },
-    note: 'RWS 2.0 only; raw application/x-pem-file body, not a form.',
+    note: 'RWS 2.0 only; raw application/x-pem-file body, not a form. Encoding trap: {name} IS encodeURIComponent-encoded here, unlike getCertificates which keeps slashes in {storePath}.',
   },
   removeCertificate: {
     summary: 'Delete a certificate.',
@@ -283,6 +303,18 @@ export const CTRL: DomainTable = {
     summary: 'Decompress a controller path.',
     rws2: { method: 'POST', path: '/ctrl/decompress', fields: ['srcpath', 'dstpath'] },
     note: 'RWS 2.0 only; sibling of /ctrl/compress, not a subresource.',
+  },
+
+  // ── Options (the controller advertises /ctrl/options, but…) ───────────────
+  ctrlOptionsVerify: {
+    summary: 'Controller options verify-endpoint (NOT used - see listControllerOptions).',
+    // The controller advertises /ctrl/options, but it is an empty verify-style
+    // endpoint (200 no-content on RW7/8, 204 on RW6). The real option list the
+    // client reads is /rw/system/options (systemMastership.listControllerOptions).
+    // Recorded here so the conformance check sees /ctrl/options as a deliberate
+    // gap rather than unmapped drift. Flagged by the check 2026-08-10.
+    rws2: { method: 'GET', path: '/ctrl/options', gap: 'empty verify-endpoint; the real list is /rw/system/options' },
+    note: 'deliberately not used; client reads /rw/system/options instead.',
   },
 
   // ── Features ──────────────────────────────────────────────────────────────

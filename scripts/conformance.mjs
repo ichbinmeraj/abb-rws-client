@@ -179,26 +179,47 @@ function childLinks(body, gen, base) {
   return [...out];
 }
 
-const ROOTS = ['/rw', '/ctrl', '/users', '/uas', '/fileservice', '/subscription'];
+// Crawl the STABLE resource trees only. /fileservice enumerates the controller
+// disk (unbounded, and not an RWS operation surface) and /subscription needs a
+// live WebSocket to exist at all, so both are excluded - their operations live
+// in the tables as fixed paths, not as things to discover.
+const ROOTS = ['/rw', '/ctrl', '/users', '/uas'];
 
-async function crawl(ctl, maxNodes = 400) {
+// Subtrees that expand without bound or stall: instance listings (every signal,
+// every event, every symbol) balloon the crawl without adding new OPERATION
+// paths, and a few resources hang. Prune by path prefix.
+const PRUNE = [
+  /^\/rw\/elog\/\d/,                 // per-message event log
+  /^\/rw\/iosystem\/signals\/[^/]/,  // per-signal instances
+  /^\/rw\/rapid\/symbol\//,          // per-symbol data (huge)
+  /^\/rw\/cfg\/[^/]+\/[^/]/,         // per-cfg-instance
+  /^\/fileservice/, /^\/subscription/, /^\/poll/,
+];
+const pruned = p => PRUNE.some(re => re.test(p));
+
+async function crawl(ctl, { maxNodes = 300, deadlineMs = 180000 } = {}) {
   const seen = new Set();
   const advertised = new Set();
   const queue = [...ROOTS];
-  while (queue.length && seen.size < maxNodes) {
+  const stopAt = Date.now() + deadlineMs;
+  let n = 0;
+  while (queue.length && seen.size < maxNodes && Date.now() < stopAt) {
     const node = normalise(queue.shift());
-    if (seen.has(node)) { continue; }
+    if (seen.has(node) || pruned(node)) { continue; }
     seen.add(node);
     const res = await req(ctl, node);
+    n++;
+    if (n % 25 === 0) { console.log(`    …${n} probed, ${advertised.size} advertised, ${queue.length} queued`); }
     if (res.status >= 200 && res.status < 300) {
       advertised.add(node);
       for (const child of childLinks(res.body, ctl.gen, node)) {
-        if (!seen.has(child) && child.startsWith('/') && child.length > node.length) {
+        if (!seen.has(child) && !pruned(child) && child.startsWith('/') && child.length > node.length) {
           queue.push(child);
         }
       }
     }
   }
+  if (Date.now() >= stopAt) { console.log(`    (deadline hit at ${seen.size} nodes)`); }
   return [...advertised].sort();
 }
 
@@ -266,31 +287,61 @@ if (noCrawl) {
 }
 
 // ─── diff ────────────────────────────────────────────────────────────────────
+//
+// The two sides live at different granularities and a literal set-diff is
+// meaningless: the crawl discovers the RESOURCE DIRECTORY tree (shallow nodes
+// like /rw/rapid/tasks), while the tables encode OPERATIONS - mostly deep,
+// parameterised paths (/rw/rapid/tasks/{task}/pcp/reset) that a directory crawl
+// can never reach because instance subtrees are pruned. So we compare by
+// containment, not equality:
+//
+//   - an advertised resource is COVERED if any table spec sits at or under it
+//     (the client does something in that resource family). One with nothing
+//     at/under it is UNMAPPED - the drift the check exists to catch: a new
+//     resource family after a RobotWare upgrade.
+//   - a table spec is an ORPHAN only if its STATIC prefix (the path up to the
+//     first {param}) is neither advertised nor under an advertised resource.
+//     Deep parameterised paths cannot be confirmed orphan from a directory
+//     crawl, so they are not flagged - only static table paths can be.
+
+const staticPrefix = p => {
+  const i = p.indexOf('{');
+  return normalise(i === -1 ? p : p.slice(0, i));
+};
+const underOrEqual = (a, b) => a === b || a.startsWith(b.endsWith('/') ? b : b + '/');
 
 const rows = [];
 for (const gen of ['rws1', 'rws2']) {
   const advertised = crawlData.byGeneration[gen];
-  if (!advertised) { continue; }
-  const genSpecs = specs.filter(s => s.generation === gen);
-  const matchers = genSpecs.map(s => ({ ...s, re: templateToRegex(s.spec.path) }));
+  if (!advertised || !advertised.length) { continue; }
+  const genSpecs = specs.filter(s => s.generation === gen)
+    .map(s => ({ ...s, prefix: staticPrefix(s.spec.path) }));
 
-  // Which advertised resources does a table entry claim?
-  const claimed = new Set();
+  // Coverage direction: is every advertised resource claimed by some spec at or
+  // under it? (spec.prefix under advertised, OR advertised under spec.prefix -
+  // e.g. advertised /rw/rapid/tasks is covered by a spec whose prefix is
+  // /rw/rapid/tasks/... , and advertised /ctrl/safety/mode is covered by a spec
+  // exactly there.)
   for (const res of advertised) {
-    const hit = matchers.find(m => m.re.test(res));
-    if (hit) {
-      claimed.add(res);
-      rows.push({ gen, resource: res, verdict: hit.spec.gap ? 'deliberate-gap' : 'implemented', by: `${hit.domain}.${hit.operation}` });
-    } else {
-      rows.push({ gen, resource: res, verdict: 'unmapped', by: '' });
-    }
+    const hit = genSpecs.find(s => underOrEqual(s.prefix, res) || underOrEqual(res, s.prefix));
+    rows.push(hit
+      ? { gen, resource: res, verdict: hit.spec.gap ? 'deliberate-gap' : 'implemented', by: `${hit.domain}.${hit.operation}` }
+      : { gen, resource: res, verdict: 'unmapped', by: '' });
   }
-  // Table entries that matched nothing advertised - orphans (typo or removed).
-  for (const m of matchers) {
-    if (m.spec.gap) { continue; } // deliberate gaps need not be advertised
-    const matchedSomething = advertised.some(r => m.re.test(r));
-    if (!matchedSomething) {
-      rows.push({ gen, resource: m.spec.path, verdict: 'orphan', by: `${m.domain}.${m.operation}` });
+
+  // Orphan direction: a STATIC table path (no {param}) that the controller does
+  // not advertise at or under. Skip gap specs (deliberately absent), skip
+  // parameterised paths (unverifiable from a directory crawl), and skip specs
+  // under a PRUNED root - the crawler intentionally does not walk /fileservice
+  // (disk enumeration) or /subscription (needs a live WS), so it cannot vouch
+  // for or against their table entries.
+  for (const s of genSpecs) {
+    if (s.spec.gap) { continue; }
+    if (s.spec.path.includes('{')) { continue; }
+    if (pruned(s.prefix)) { continue; }
+    const known = advertised.some(r => underOrEqual(s.prefix, r) || underOrEqual(r, s.prefix));
+    if (!known) {
+      rows.push({ gen, resource: s.spec.path, verdict: 'orphan', by: `${s.domain}.${s.operation}` });
     }
   }
 }
