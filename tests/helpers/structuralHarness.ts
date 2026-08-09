@@ -13,7 +13,7 @@
  * Test infrastructure only - never shipped in the package.
  */
 
-import { describe } from 'vitest';
+import { describe, afterEach } from 'vitest';
 import { RwsClient } from '../../src/RwsClient.js';
 import { RwsClient2 } from '../../src/RwsClient2.js';
 import { RobotManager } from '../../src/RobotManager.js';
@@ -37,8 +37,30 @@ export function cell(
   body: (ctx: CellContext) => void,
 ): void {
   const title = `${cellId}/${generation}`;
-  if (!STRUCTURAL_ENABLED) { describe.skip(title, () => { body(makeContext(generation)); }); return; }
-  describe(title, () => { body(makeContext(generation)); });
+  const run = (): void => {
+    const ctx = makeContext(generation);
+    // Cleanup belongs to the HARNESS, not to each cell.
+    //
+    // Every client that reaches a live controller holds a session slot, and an
+    // IRC5 caps at 70 with a 300 s expiry. A test that throws before it can
+    // register its own cleanup - `const p = await ctx.proxy(); const c = await
+    // ctx.client(p); open.push({p, c})` strands `p` if ctx.client() throws -
+    // leaves a slot held for five minutes. Across 83 call sites in 14 cells that
+    // is not a thing to get right by discipline: one stranded slot per cell is
+    // enough to starve everything that runs afterwards, and the symptom appears
+    // in a LATER cell as CONTROLLER_BUSY, nowhere near the cause.
+    //
+    // So the context records everything it hands out and tears it down here.
+    // Cells may keep their own bookkeeping; disconnecting twice is harmless.
+    // Generous hook timeout, on purpose. A churn cell creates dozens of clients
+    // inside ONE test, and vitest's default 10 s hook budget is not enough to
+    // log them all out - the hook then times out, which reports as a cell
+    // failure and, worse, abandons the very slots this cleanup exists to free.
+    afterEach(async () => { await ctx.releaseAll(); }, 120000);
+    body(ctx);
+  };
+  if (!STRUCTURAL_ENABLED) { describe.skip(title, run); return; }
+  describe(title, run);
 }
 
 export interface CellContext {
@@ -51,12 +73,21 @@ export interface CellContext {
   client: (p: ChaosProxy, opts?: { timeout?: number }) => Promise<AnyClient>;
   /** A RobotManager connected through `p` - use when asserting quality states. */
   manager: (p: ChaosProxy, opts?: { refreshIntervalMs?: number }) => Promise<RobotManager>;
+  /**
+   * Tear down everything this context handed out. Called automatically after
+   * every test; exposed so a cell that churns clients inside ONE test can free
+   * slots as it goes instead of holding all of them to the end.
+   */
+  releaseAll: () => Promise<void>;
 }
 
 export type AnyClient = RwsClient | RwsClient2;
 
 function makeContext(generation: Generation): CellContext {
   let resolved: LiveController | null = null;
+  const proxies: ChaosProxy[] = [];
+  const clients: AnyClient[] = [];
+  const managers: RobotManager[] = [];
 
   const controller = async (): Promise<LiveController> => {
     if (resolved) { return resolved; }
@@ -68,25 +99,29 @@ function makeContext(generation: Generation): CellContext {
 
   const proxy = async (): Promise<ChaosProxy> => {
     const c = await controller();
-    return startChaosProxy(c.host, c.port);
+    const p = await startChaosProxy(c.host, c.port);
+    proxies.push(p);
+    return p;
   };
+
+  const remember = <T extends AnyClient>(c: T): T => { clients.push(c); return c; };
 
   const client = async (p: ChaosProxy, opts: { timeout?: number } = {}): Promise<AnyClient> => {
     const c = await controller();
     if (generation === 'rws1') {
-      return new RwsClient({
+      return remember(new RwsClient({
         host: '127.0.0.1', port: p.port,
         username: TEST_USER, password: TEST_PASS,
         ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
-      });
+      }));
     }
     // TLS passes through the TCP proxy untouched; the client must be told the
     // scheme of the REAL controller, not of the proxy hop.
     const scheme = c.tls ? 'https' : 'http';
-    return new RwsClient2(
+    return remember(new RwsClient2(
       `${scheme}://127.0.0.1:${p.port}`, TEST_USER, TEST_PASS,
       { ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}) },
-    );
+    ));
   };
 
   const manager = async (
@@ -94,11 +129,46 @@ function makeContext(generation: Generation): CellContext {
   ): Promise<RobotManager> => {
     const c = await controller();
     const m = new RobotManager({ refreshIntervalMs: opts.refreshIntervalMs ?? 400 });
+    // Registered BEFORE connect: a connect that fails partway can still have
+    // taken a session slot on the controller, and an unregistered manager is
+    // one nothing will ever disconnect.
+    managers.push(m);
     await m.connect('127.0.0.1', TEST_USER, TEST_PASS, p.port, c.tls);
     return m;
   };
 
-  return { generation, controller, proxy, client, manager };
+  /**
+   * Free everything, controller-side resources FIRST.
+   *
+   * Order matters: disconnecting a client sends GET /logout, which is the only
+   * thing that frees its session slot, and it has to travel through the proxy.
+   * Closing proxies first would strand every slot for the controller's full
+   * expiry - the exact failure this cleanup exists to prevent.
+   */
+  /**
+   * Release in small parallel batches rather than one at a time.
+   *
+   * A churn cell can hand back fifty clients from a single test, and logging
+   * them out sequentially takes longer than any sane hook budget. Fully
+   * parallel is worse though: fifty simultaneous /logout calls are exactly the
+   * burst the controller's <20 req/s ceiling rejects, and a rejected logout does
+   * not free its slot. A small batch is the middle ground.
+   */
+  const inBatches = async <T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> => {
+    const BATCH = 4;
+    for (let i = 0; i < items.length; i += BATCH) {
+      await Promise.all(items.slice(i, i + BATCH).map(x => fn(x).catch(() => undefined)));
+    }
+  };
+
+  const releaseAll = async (): Promise<void> => {
+    await inBatches(managers.splice(0), m => m.disconnect());
+    await inBatches(clients.splice(0), c =>
+      (c as { disconnect?: () => Promise<void> }).disconnect?.() ?? Promise.resolve());
+    await inBatches(proxies.splice(0), p => p.close());
+  };
+
+  return { generation, controller, proxy, client, manager, releaseAll };
 }
 
 // ─── Assertion helpers ───────────────────────────────────────────────────────
