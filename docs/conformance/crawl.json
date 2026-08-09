@@ -1,6 +1,26 @@
 {
  "crawledAt": "2026-08-09",
  "byGeneration": {
+  "rws1": [
+   "/ctrl",
+   "/ctrl/backup",
+   "/ctrl/clock",
+   "/ctrl/compress",
+   "/ctrl/identity",
+   "/ctrl/network",
+   "/ctrl/options",
+   "/ctrl/safety",
+   "/ctrl/virtualtime",
+   "/ctrl/virtualtime/vtspeed",
+   "/ctrl/virtualtime/vtstate",
+   "/ctrl/virtualtime/vttime",
+   "/ctrl/virtualtime/vttimeslice",
+   "/rw",
+   "/users",
+   "/users/grants",
+   "/users/rmmp",
+   "/users/rmmp/poll"
+  ],
   "rws2": [
    "/ctrl",
    "/ctrl/backup",

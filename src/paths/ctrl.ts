@@ -251,7 +251,11 @@ export const CTRL: DomainTable = {
   getVirtualTimeTimeslice: {
     summary: 'Read the virtual-time timeslice.',
     rws2: { method: 'GET', path: '/ctrl/virtualtime/vttimeslice' },
-    note: 'RWS 2.0 only.',
+    // The IRC5 also advertises this (conformance check, 2026-08-10), but the
+    // client only wraps it on RWS 2.0 - recorded as a gap so the divergence is
+    // documented rather than showing as unmapped drift.
+    rws1: { method: 'GET', path: '/ctrl/virtualtime/vttimeslice', gap: 'advertised on RW6 but the client wraps it only on RWS 2.0' },
+    note: 'wrapped on RWS 2.0; RW6 advertises it too but the client does not use it there.',
   },
   setVirtualTimeTimeslice: {
     summary: 'Set the virtual-time timeslice.',
@@ -297,7 +301,10 @@ export const CTRL: DomainTable = {
     summary: 'Compress a controller path.',
     // Spec field names (source/destination) are WRONG - controller wants srcpath/dstpath.
     rws2: { method: 'POST', path: '/ctrl/compress', fields: ['srcpath', 'dstpath'] },
-    note: 'RWS 2.0 only; fields srcpath/dstpath (spec says source/destination - wrong).',
+    // The IRC5 advertises /ctrl/compress too (conformance check, 2026-08-10),
+    // but the client wraps compress only on RWS 2.0. Recorded as a gap.
+    rws1: { method: 'POST', path: '/ctrl/compress', gap: 'advertised on RW6 but the client wraps compress only on RWS 2.0' },
+    note: 'wrapped on RWS 2.0 (fields srcpath/dstpath, not the spec source/destination); RW6 advertises it too but the client does not use it there.',
   },
   decompressPath: {
     summary: 'Decompress a controller path.',
@@ -314,7 +321,8 @@ export const CTRL: DomainTable = {
     // Recorded here so the conformance check sees /ctrl/options as a deliberate
     // gap rather than unmapped drift. Flagged by the check 2026-08-10.
     rws2: { method: 'GET', path: '/ctrl/options', gap: 'empty verify-endpoint; the real list is /rw/system/options' },
-    note: 'deliberately not used; client reads /rw/system/options instead.',
+    rws1: { method: 'GET', path: '/ctrl/options', gap: 'empty verify-endpoint; the real list is /rw/system/options' },
+    note: 'deliberately not used on either generation; client reads /rw/system/options instead.',
   },
 
   // ── Features ──────────────────────────────────────────────────────────────
