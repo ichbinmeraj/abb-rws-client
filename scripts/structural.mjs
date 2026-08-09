@@ -30,6 +30,26 @@ const RESULTS = path.join(root, 'docs', 'structural', '.vitest-results.json');
 const strict = process.argv.includes('--strict');
 const skipRun = process.argv.includes('--no-run');
 
+/**
+ * Seconds to pause between test FILES, to let the controller reap sessions.
+ *
+ * Fault injection orphans sessions by construction: every connection a cell
+ * deliberately breaks may leave a server-side session behind, and those only
+ * expire on the controller's own timer (300 s on IRC5, which caps at 70). A full
+ * pass outruns the reaper, and once the pool is dry every LATER cell fails with
+ * CONTROLLER_BUSY for a reason that has nothing to do with what it tests - which
+ * is exactly what happened on 2026-08-09, where six cells failed 503 in one run
+ * and every one of them passed individually minutes later.
+ *
+ * A cooldown does not fix that outright - nothing short of the controller's own
+ * expiry does - but it spreads the demand. Use `--cooldown 30` for a full pass on
+ * a shared rig, or restart the IRC5 between passes.
+ */
+const cooldownSec = (() => {
+  const i = process.argv.indexOf('--cooldown');
+  return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) : 0;
+})();
+
 const matrix = JSON.parse(fs.readFileSync(MATRIX, 'utf8'));
 const cellKey = (c) => `${c.id}/${c.generation}`;
 
@@ -47,38 +67,73 @@ if (!skipRun) {
     console.error(`structural: cannot find vitest at ${vitestBin} - run npm ci first`);
     process.exit(2);
   }
-  try {
-    execFileSync(
-      process.execPath,
-      [
-        vitestBin,
-        'run', 'tests/structural',
-        // Cells run SERIALLY. Vitest parallelises test files by default, which
-        // would put several live clients on the same controller at once - each
-        // with its own paced request queue. Independently they respect the
-        // <20 req/s ceiling; together they do not, and the controller answers
-        // 503. That is a property of the rig, not of the client, and it would
-        // show up as phantom cell failures.
-        '--no-file-parallelism',
-        '--reporter=json', `--outputFile=${RESULTS}`,
-      ],
-      {
-        cwd: root, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60 * 60 * 1000,
-        // Structural cells inject faults against live VCs and are slow, so they
-        // stay out of `npm test`. Only this runner turns them on.
-        env: { ...process.env, RWS_STRUCTURAL: '1' },
-      },
-    );
-  } catch (e) {
-    // A non-zero EXIT is expected - it just means cells failed, and the JSON
-    // report is what we read. A spawn failure is not, and silently swallowing it
-    // reports every cell as `untested`, which looks like "no tests written yet"
-    // rather than "the runner never ran". Distinguish them.
-    if (e && typeof e === 'object' && e.status === null) {
-      console.error(`structural: could not run vitest (${e.code ?? e.message})`);
-      if (e.stderr?.length) { console.error(String(e.stderr).slice(0, 1000)); }
-      process.exit(2);
+  // Cells run SERIALLY. Vitest parallelises test files by default, which would
+  // put several live clients on the same controller at once - each respects the
+  // <20 req/s ceiling alone, none of them coordinate, and the controller answers
+  // 503. That is a property of the rig, not of the client, and it surfaces as
+  // phantom cell failures.
+  //
+  // With --cooldown, files are invoked ONE AT A TIME with a pause between, and
+  // the per-file JSON reports are merged. Vitest has no between-files hook, so a
+  // single run cannot pause; this is the only way to give the controller room to
+  // reap orphaned sessions mid-pass.
+  const targets = cooldownSec > 0
+    ? fs.readdirSync(path.join(root, 'tests', 'structural'))
+      .filter(f => f.endsWith('.test.ts')).sort()
+      .map(f => `tests/structural/${f}`)
+    : ['tests/structural'];
+
+  const runVitest = (target, outFile) => {
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          vitestBin, 'run', target,
+          '--no-file-parallelism',
+          '--reporter=json', `--outputFile=${outFile}`,
+        ],
+        {
+          cwd: root, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60 * 60 * 1000,
+          // Structural cells inject faults against live VCs and are slow, so they
+          // stay out of `npm test`. Only this runner turns them on.
+          env: { ...process.env, RWS_STRUCTURAL: '1' },
+        },
+      );
+    } catch (e) {
+      // A non-zero EXIT is expected - it just means cells failed, and the JSON
+      // report is what we read. A spawn failure is not, and silently swallowing
+      // it reports every cell as `untested`, which looks like "no tests written
+      // yet" rather than "the runner never ran". Distinguish them.
+      if (e && typeof e === 'object' && e.status === null) {
+        console.error(`structural: could not run vitest (${e.code ?? e.message})`);
+        if (e.stderr?.length) { console.error(String(e.stderr).slice(0, 1000)); }
+        process.exit(2);
+      }
     }
+  };
+
+  if (targets.length === 1) {
+    runVitest(targets[0], RESULTS);
+  } else {
+    const merged = { testResults: [] };
+    for (const [i, target] of targets.entries()) {
+      const part = `${RESULTS}.part`;
+      console.log(`structural: ${target}  (${i + 1}/${targets.length})`);
+      runVitest(target, part);
+      if (fs.existsSync(part)) {
+        try {
+          const j = JSON.parse(fs.readFileSync(part, 'utf8'));
+          merged.testResults.push(...(j.testResults ?? []));
+        } catch { /* a file that produced no parsable report leaves its cells untested */ }
+        fs.rmSync(part, { force: true });
+      }
+      if (i < targets.length - 1) {
+        console.log(`structural: cooling down ${cooldownSec}s so the controller can reap sessions`);
+        // Synchronous sleep - this script is a sequential driver, not a server.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, cooldownSec * 1000);
+      }
+    }
+    fs.writeFileSync(RESULTS, JSON.stringify(merged));
   }
 }
 
