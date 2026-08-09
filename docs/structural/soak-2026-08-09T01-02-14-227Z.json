@@ -1,0 +1,200 @@
+{
+  "startedAt": "2026-08-09T01:02:14.227Z",
+  "minutes": 2,
+  "scaled": true,
+  "cycles": 8,
+  "faults": 8,
+  "thresholds": {
+    "rssDriftMB": 75,
+    "handleGrowth": 5,
+    "uncaught": 0
+  },
+  "checks": {
+    "rss": {
+      "value": 7.7,
+      "limit": 75,
+      "pass": true
+    },
+    "handles": {
+      "value": 4,
+      "limit": 5,
+      "pass": true,
+      "detail": [
+        {
+          "kind": "TCPSocketWrap",
+          "before": 20,
+          "after": 24,
+          "delta": 4
+        }
+      ]
+    },
+    "uncaught": {
+      "value": 0,
+      "limit": 0,
+      "pass": true,
+      "detail": []
+    },
+    "finalStateTruth": {
+      "value": [
+        {
+          "generation": "rws1",
+          "managerState": "motoron",
+          "controllerState": "motoron",
+          "matched": true
+        },
+        {
+          "generation": "rws2",
+          "managerState": "motoroff",
+          "controllerState": "ERROR: No RWS auth challenge from 127.0.0.1:9805 - controller may be off, wrong port, or non-RWS service",
+          "matched": false
+        }
+      ],
+      "pass": false
+    }
+  },
+  "passed": false,
+  "controllers": [
+    {
+      "generation": "rws1",
+      "port": 35112
+    },
+    {
+      "generation": "rws2",
+      "port": 9805
+    }
+  ],
+  "samples": [
+    {
+      "t": 1786237334227,
+      "phase": "start",
+      "rss": 59219968,
+      "heapUsed": 12907224,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 9,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237349231,
+      "phase": "baseline",
+      "rss": 60321792,
+      "heapUsed": 13628320,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 20,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237349238,
+      "phase": "cycle",
+      "rss": 60403712,
+      "heapUsed": 13654072,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 20,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237364239,
+      "phase": "cycle",
+      "rss": 61763584,
+      "heapUsed": 14930632,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237379246,
+      "phase": "cycle",
+      "rss": 63397888,
+      "heapUsed": 16163944,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 15,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237397282,
+      "phase": "cycle",
+      "rss": 65622016,
+      "heapUsed": 17914232,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237412299,
+      "phase": "cycle",
+      "rss": 67735552,
+      "heapUsed": 19151088,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237427304,
+      "phase": "cycle",
+      "rss": 67395584,
+      "heapUsed": 14145376,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237442318,
+      "phase": "cycle",
+      "rss": 68034560,
+      "heapUsed": 15626448,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 17,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237460339,
+      "phase": "cycle",
+      "rss": 68411392,
+      "heapUsed": 17155672,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 24,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237460340,
+      "phase": "end",
+      "rss": 68411392,
+      "heapUsed": 17160088,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 24,
+        "Timeout": 4
+      }
+    }
+  ]
+}

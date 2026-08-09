@@ -180,9 +180,26 @@ baseline ??= samples[0];
 const truth = [];
 for (const rig of rigs) {
   let managerState = null, controllerState = null, matched = null;
-  // RobotState carries the polled controller state as `ctrlstate`.
+  // RobotState carries the polled controller state as `ctrlstate`. RobotManager
+  // has no direct read method, so force one poll and then compare against a
+  // genuinely INDEPENDENT client - reading through the same manager would only
+  // prove it agrees with itself.
+  try { await rig.manager.refresh(); } catch {}
   try { managerState = rig.manager.state.ctrlstate ?? null; } catch {}
-  try { controllerState = await rig.manager.getControllerState(); } catch (e) { controllerState = `ERROR: ${e?.message}`; }
+  try {
+    // Construct the right client for the generation rather than letting
+    // createClient sniff: the sniffer probes a scheme, and an OmniCore on a TLS
+    // port answers nothing over plain HTTP, which looks like "no controller".
+    const { RwsClient, RwsClient2 } = await import(`file://${root}/dist/index.js`);
+    const user = process.env.RWS_TEST_USER ?? 'Default User';
+    const pass = process.env.RWS_TEST_PASS ?? 'robotics';
+    const fresh = rig.generation === 'rws1'
+      ? new RwsClient({ host: '127.0.0.1', port: rig.port, username: user, password: pass })
+      : new RwsClient2(`${rig.tls ? 'https' : 'http'}://127.0.0.1:${rig.port}`, user, pass);
+    await fresh.connect();
+    controllerState = await fresh.getControllerState();
+    await fresh.disconnect().catch(() => {});
+  } catch (e) { controllerState = `ERROR: ${e?.message}`; }
   matched = managerState === null || controllerState === null ? null : String(managerState) === String(controllerState);
   truth.push({ generation: rig.generation, managerState, controllerState, matched });
 }

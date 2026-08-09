@@ -1,0 +1,193 @@
+{
+  "startedAt": "2026-08-09T00:58:10.504Z",
+  "minutes": 2,
+  "scaled": true,
+  "cycles": 8,
+  "faults": 8,
+  "thresholds": {
+    "rssDriftMB": 75,
+    "handleGrowth": 5,
+    "uncaught": 0
+  },
+  "checks": {
+    "rss": {
+      "value": 7.8,
+      "limit": 75,
+      "pass": true
+    },
+    "handles": {
+      "value": 0,
+      "limit": 5,
+      "pass": true,
+      "detail": []
+    },
+    "uncaught": {
+      "value": 0,
+      "limit": 0,
+      "pass": true,
+      "detail": []
+    },
+    "finalStateTruth": {
+      "value": [
+        {
+          "generation": "rws1",
+          "managerState": "motoron",
+          "controllerState": "ERROR: rig.manager.getControllerState is not a function",
+          "matched": false
+        },
+        {
+          "generation": "rws2",
+          "managerState": "motoroff",
+          "controllerState": "ERROR: rig.manager.getControllerState is not a function",
+          "matched": false
+        }
+      ],
+      "pass": false
+    }
+  },
+  "passed": false,
+  "controllers": [
+    {
+      "generation": "rws1",
+      "port": 35112
+    },
+    {
+      "generation": "rws2",
+      "port": 9805
+    }
+  ],
+  "samples": [
+    {
+      "t": 1786237090504,
+      "phase": "start",
+      "rss": 56811520,
+      "heapUsed": 13199064,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 12,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237105518,
+      "phase": "baseline",
+      "rss": 57876480,
+      "heapUsed": 13388672,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 16,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237105526,
+      "phase": "cycle",
+      "rss": 57888768,
+      "heapUsed": 13400448,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 16,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237120545,
+      "phase": "cycle",
+      "rss": 59314176,
+      "heapUsed": 14682000,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 14,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237135551,
+      "phase": "cycle",
+      "rss": 60190720,
+      "heapUsed": 15479440,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 19,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237153593,
+      "phase": "cycle",
+      "rss": 62566400,
+      "heapUsed": 17154288,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237168609,
+      "phase": "cycle",
+      "rss": 64729088,
+      "heapUsed": 18615144,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237183624,
+      "phase": "cycle",
+      "rss": 66371584,
+      "heapUsed": 19204736,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237198639,
+      "phase": "cycle",
+      "rss": 65609728,
+      "heapUsed": 14185168,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 3
+      }
+    },
+    {
+      "t": 1786237216658,
+      "phase": "cycle",
+      "rss": 66015232,
+      "heapUsed": 15386816,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786237216658,
+      "phase": "end",
+      "rss": 66015232,
+      "heapUsed": 15389808,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    }
+  ]
+}
