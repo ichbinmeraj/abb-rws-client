@@ -16,9 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generations drifted with nothing forcing the difference to be intentional. The
   tables capture the anomalies that made updates expensive - symbol suffix/prefix
   inversion, inverted-polarity stop simulations, field-name-vs-path-segment
-  mismatches, query-action vs plain-POST splits - as data. This is additive: no
-  public API change, no call site rewired yet, and `tests/paths.test.ts` proves
-  the tables are faithful to the shipped mapper functions.
+  mismatches, query-action vs plain-POST splits - as data. **The clients now READ
+  the tables** (~356 `buildPath` call sites across both mappers, both clients and
+  the adapter), so a path change means editing one table row, not a row plus a
+  hidden literal. Additive: no public API change, and the migration is
+  behaviour-preserving - every single-path RWS operation produces the exact URL
+  it did before (locked by `tests/paths.test.ts`'s exact-URL assertions and the
+  endpoint tests). The only literals that remain are genuine exceptions: the
+  fileservice paths and multi-segment cert-store paths (custom per-segment
+  encoding buildPath would break), the unmodelled hardware Devices Service, the
+  non-resource endpoints (`/logout`, `/progress`, the `/rw/retcode` dictionary),
+  and composite fan-outs with dynamic sub-paths.
 - **`npm run conformance` - the drift check.** Crawls each live controller's
   resource tree and diffs it against the path tables, classifying every
   advertised resource as implemented / deliberate-gap / unmapped / orphan. After
