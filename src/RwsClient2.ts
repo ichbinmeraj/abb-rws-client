@@ -3191,22 +3191,63 @@ export class RwsClient2 {
       }
       conn.ws = ws;
 
-      // 3. Heartbeat: PING each interval (controller closes an idle WS at
-      //    30 s), and treat a PING still unanswered at the next tick as a
-      //    half-open connection - terminate so the close event drives the
-      //    reconnect path. Any inbound frame counts as proof of life, so a
-      //    busy event stream can never be killed by a delayed PONG.
-      let awaitingPong = false;
+      // 3. Heartbeat - and the client must NOT send anything on this socket.
+      //
+      //    The previous implementation sent an app-level 'PING' text frame every
+      //    25 s, on the premise that the controller closes an idle WebSocket at
+      //    30 s, and terminated the stream if no 'PONG' came back. Both halves of
+      //    that premise are false on OmniCore RW7.21, live-verified 2026-08-09 by
+      //    structural cell S02:
+      //
+      //      - The controller REJECTS client data on the subscription socket. Any
+      //        frame - 'PING' included - is answered by closing the connection
+      //        with code 1008 "Client cannot send data." So the keep-alive was
+      //        itself killing every subscription roughly every 25 s; the reconnect
+      //        path then rebuilt it, which is why this looked like it worked
+      //        instead of looking broken.
+      //      - The socket does NOT need a keep-alive. With the client sending
+      //        nothing it stayed open well past 75 s, far beyond the 30 s idle
+      //        close the comment claimed.
+      //      - And the controller answers neither app-level 'PING' nor a
+      //        protocol-level ws ping, so a PONG deadline could never have been a
+      //        liveness signal in the first place. On a quiet resource the only
+      //        thing that could clear it was an event that never came.
+      //
+      //    So liveness is established entirely OUT OF BAND: each interval, a cheap
+      //    HTTP GET on the same session. Inbound frames still count as proof of
+      //    life, so a busy stream never needs the probe to vouch for it. Two
+      //    consecutive intervals with neither means the link is genuinely gone -
+      //    a frozen link stalls HTTP too - so terminate and let the close event
+      //    drive the reconnect path. That keeps detection at two intervals, which
+      //    is the bound the freeze cell asserts, while a healthy idle stream is
+      //    left completely alone.
+      const isOpen = (): boolean => (ws as { readyState: number }).readyState === 1;
+      /** Proof of life seen since the previous tick. True now: we just handshook. */
+      let alive = true;
+      let probeInFlight = false;
+
       conn.pingTimer = setInterval(() => {
-        if ((ws as { readyState: number }).readyState !== 1 /* OPEN */) { return; }
-        if (awaitingPong) {
-          Logger.warn('RWS2 heartbeat missed - terminating half-open WebSocket');
+        if (!isOpen()) { return; }
+
+        if (!alive) {
+          // Keep the phrase "heartbeat missed" stable: it is the shared wording
+          // with the RWS 1.0 subscriber and the only externally observable marker
+          // of this decision, so log sinks and tests key on it.
+          Logger.warn('RWS2 heartbeat missed (no inbound frame, liveness probe unanswered) - terminating half-open WebSocket');
           if (conn.pingTimer) { clearInterval(conn.pingTimer); conn.pingTimer = null; }
           ws.terminate();
           return;
         }
-        awaitingPong = true;
-        ws.send('PING');
+
+        alive = false;
+        // Deliberately NO ws.send() here - see above.
+        if (!probeInFlight) {
+          probeInFlight = true;
+          void this.req('GET', R2.controllerState())
+            .then(() => { alive = true; })
+            .catch(() => { /* leave `alive` false - the next tick decides */ })
+            .finally(() => { probeInFlight = false; });
+        }
       }, pingIntervalMs);
 
       // 4. Parse incoming events (same approach as abb-rws-client WsSubscriber).
@@ -3214,7 +3255,9 @@ export class RwsClient2 {
       //    never propagate into the ws emitter (process crash) or kill the
       //    heartbeat/reconnect state machine.
       ws.on('message', (data: Buffer | string) => {
-        awaitingPong = false;
+        // Any inbound frame is proof of life, so a busy event stream never needs
+        // the out-of-band probe to vouch for it.
+        alive = true;
         try {
           const raw = data.toString();
           if (raw === 'PONG') { return; }
