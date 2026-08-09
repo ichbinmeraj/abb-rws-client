@@ -102,9 +102,10 @@
       "id": "S05-session-slot-pressure", "scenario": "Session-slot pressure over reconnect cycles",
       "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
       "properties": [
-        "repeated connect/disconnect reuses slots - controller session count flat",
+        "EXCLUDED sub-property: 'controller session count flat' is NOT OBSERVABLE on RWS 2.0. The cell's own premise guard demonstrated it: connecting a client leaves GET /users unchanged (2 -> 2), so that list enumerates users, not sessions. A measurement that cannot see one deliberate session cannot see twenty accidental ones, and the test correctly refuses to assert a leak it cannot detect rather than reporting a false 'flat'.",
         "credentials are not re-sent once a session cookie is held",
-        "subscription re-POST rides the existing session (no new session per subscribe)"
+        "subscription re-POST rides the existing session (no new session per subscribe)",
+        "OPEN: the two properties above need a mock HTTPS server to assert - a TCP chaos proxy cannot read TLS headers, so wire-level claims are unobservable through it on this generation"
       ]
     },
 

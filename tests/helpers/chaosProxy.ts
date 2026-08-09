@@ -95,6 +95,17 @@ interface Pair {
   /** 1-based index of this connection since the proxy started. */
   index: number;
   bytesDown: number;
+  /**
+   * `bytesDown` at the moment corruption was armed for this pair.
+   *
+   * `afterBytes` counts from HERE, not from the connection's birth, so "cut the
+   * next response after N bytes" behaves the same whether it lands on the
+   * connection that was already carrying traffic or on a fresh one. Metering
+   * from birth made the cut depend on which pooled socket happened to serve the
+   * request - it worked with exactly one connection and silently stopped cutting
+   * with two.
+   */
+  corruptionBase: number;
   script?: ConnectionScript;
 }
 
@@ -176,7 +187,7 @@ export async function startChaosProxy(targetHost: string, targetPort: number): P
     if (refusing || script?.refuse) { client.destroy(); return; }
 
     const upstream = net.connect(currentTargetPort, currentTargetHost);
-    const pair: Pair = { client, upstream, index, bytesDown: 0, script };
+    const pair: Pair = { client, upstream, index, bytesDown: 0, corruptionBase: 0, script };
     pairs.add(pair);
 
     const teardown = (): void => {
@@ -192,7 +203,7 @@ export async function startChaosProxy(targetHost: string, targetPort: number): P
 
     upstream.on('data', d => {
       const mode = pair.script?.corruption ?? corruption;
-      const { out, destroyAfter } = applyCorruption(mode, d, pair.bytesDown);
+      const { out, destroyAfter } = applyCorruption(mode, d, pair.bytesDown - pair.corruptionBase);
       if (out && out.length > 0) {
         pair.bytesDown += out.length;
         bytesDown += out.length;
@@ -235,7 +246,11 @@ export async function startChaosProxy(targetHost: string, targetPort: number): P
     setTarget: (host: string, p: number) => { currentTargetHost = host; currentTargetPort = p; },
     setLatency: (ms: number) => { latencyMs = ms; },
     setBandwidth: (bps: number) => { bandwidthBps = bps; nextSendAt = 0; },
-    setCorruption: (mode: CorruptionMode) => { corruption = mode; },
+    setCorruption: (mode: CorruptionMode) => {
+      corruption = mode;
+      // Re-base every live pair so `afterBytes` measures from now.
+      for (const p of pairs) { p.corruptionBase = p.bytesDown; }
+    },
     script: (nth: number, s: ConnectionScript) => { scripts.set(nth, s); },
     close: () => new Promise<void>(resolve => {
       for (const { client, upstream } of [...pairs]) {

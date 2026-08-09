@@ -490,14 +490,17 @@ for (const generation of ['rws1', 'rws2'] as const) {
       // fault and not a missing option or a wrong path.
       await expect(c.getSystemInfo()).resolves.toBeTruthy();
 
-      // The proxy meters truncation PER CONNECTION while stats() counts bytes
-      // globally, so the arithmetic below only holds while exactly one pair is
-      // carrying traffic. Asserted on OPEN connections, not total: RWS 1.0's
-      // digest handshake may cost a connection the controller then closes, and
-      // bytes spent on a closed pair only push the cut DEEPER into a
-      // multi-kilobyte body - never before it. Two live pairs would split the
-      // count and silently move the cut, so that case fails here instead.
-      expect(proxy.stats().connectionsOpen, 'expected a single live proxied connection').toBe(1);
+      // Truncation is metered PER CONNECTION by the proxy (each pair carries its
+      // own byte counter), so an extra idle pair cannot move the cut: whichever
+      // pair carries the response is cut after the same number of bytes.
+      //
+      // This originally demanded exactly one open pair, which was stricter than
+      // the mechanism requires and failed on RWS 1.0, where undici legitimately
+      // keeps more than one pooled connection after the digest handshake. What
+      // must hold is that traffic is flowing at all - a zero here would mean the
+      // fault is being injected into nothing, and every assertion below would
+      // pass vacuously.
+      expect(proxy.stats().connectionsOpen, 'no live proxied connection to cut').toBeGreaterThanOrEqual(1);
 
       // Cut relative to what has ALREADY flowed, so the knife lands inside the
       // next response rather than before it. Truncating a live keep-alive stream
@@ -505,10 +508,12 @@ for (const generation of ['rws1', 'rws2'] as const) {
       // On RWS 2.0 the proxy sees TLS records, not the document, so the cut
       // lands mid-record rather than mid-element - the byte-exact mid-element
       // case is the mock's job, and this one is about the transport half.
-      proxy.setCorruption({
-        kind: 'truncate-and-drop',
-        afterBytes: proxy.stats().bytesDown + LIVE_CUT_AFTER_BYTES,
-      });
+      // `afterBytes` is measured from the moment corruption is armed, per
+      // connection, so this cuts the NEXT response after N bytes regardless of
+      // which pooled socket carries it. (It used to be derived from the proxy's
+      // GLOBAL byte counter, which only coincided with the per-connection
+      // counter while exactly one pair existed.)
+      proxy.setCorruption({ kind: 'truncate-and-drop', afterBytes: LIVE_CUT_AFTER_BYTES });
 
       const err = await expectRwsError(() => c.getSystemInfo());
       // Either reading is honest - the body could not be parsed, or the

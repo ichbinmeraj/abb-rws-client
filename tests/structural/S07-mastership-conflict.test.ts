@@ -272,7 +272,14 @@ for (const generation of ['rws1', 'rws2'] as const) {
 
     it('quality stays truthful while only WRITE access is contended (S14 cross-cutting)', async () => {
       const proxy = await ctx.proxy();
-      const manager = await ctx.manager(proxy, { refreshIntervalMs: 300 });
+      // Poll gently. This cell needs a manager that is merely CONNECTED while a
+      // second client contends for write access - the polling rate is incidental.
+      // At 300 ms the manager alone peaks near 14 req/s (measured), and a second
+      // client on the same IRC5 pushes the pair past the controller's <20 req/s
+      // ceiling, which answers 503 and fails the cell for a property it is not
+      // testing. Each client paces itself correctly; nothing coordinates across
+      // clients, and nothing can.
+      const manager = await ctx.manager(proxy, { refreshIntervalMs: 1500 });
       const holderClient = await ctx.client(proxy, { timeout: 8000 });
       const probeClient = await ctx.client(proxy, { timeout: 8000 });
       // Clients before the proxy: afterEach drains in push order, so every
