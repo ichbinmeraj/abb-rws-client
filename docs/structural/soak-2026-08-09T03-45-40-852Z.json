@@ -1,0 +1,794 @@
+{
+  "startedAt": "2026-08-09T03:45:40.852Z",
+  "minutes": 15,
+  "scaled": true,
+  "cycles": 58,
+  "faults": 58,
+  "thresholds": {
+    "rssDriftMB": 75,
+    "handleGrowth": 5,
+    "uncaught": 0
+  },
+  "checks": {
+    "rss": {
+      "value": 8.8,
+      "limit": 75,
+      "pass": true
+    },
+    "handles": {
+      "value": 0,
+      "limit": 5,
+      "pass": true,
+      "detail": []
+    },
+    "uncaught": {
+      "value": 0,
+      "limit": 0,
+      "pass": true,
+      "detail": []
+    },
+    "finalStateTruth": {
+      "value": [
+        {
+          "generation": "rws1",
+          "managerState": "motoron",
+          "controllerState": "motoron",
+          "matched": true
+        },
+        {
+          "generation": "rws2",
+          "managerState": "motoroff",
+          "controllerState": "motoroff",
+          "matched": true
+        }
+      ],
+      "pass": true
+    }
+  },
+  "passed": true,
+  "controllers": [
+    {
+      "generation": "rws1",
+      "port": 35112
+    },
+    {
+      "generation": "rws2",
+      "port": 9805
+    }
+  ],
+  "samples": [
+    {
+      "t": 1786247140854,
+      "phase": "start",
+      "rss": 57004032,
+      "heapUsed": 12378088,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 13,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247155861,
+      "phase": "cycle",
+      "rss": 57495552,
+      "heapUsed": 13240576,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 16,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247170891,
+      "phase": "cycle",
+      "rss": 59006976,
+      "heapUsed": 14598880,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 12,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247185898,
+      "phase": "cycle",
+      "rss": 60846080,
+      "heapUsed": 15779240,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 10,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247200906,
+      "phase": "baseline",
+      "rss": 62050304,
+      "heapUsed": 16786776,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 10,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247203918,
+      "phase": "cycle",
+      "rss": 62566400,
+      "heapUsed": 16852016,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247218936,
+      "phase": "cycle",
+      "rss": 64147456,
+      "heapUsed": 17998496,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 10,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247233946,
+      "phase": "cycle",
+      "rss": 64995328,
+      "heapUsed": 18632344,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247248951,
+      "phase": "cycle",
+      "rss": 65769472,
+      "heapUsed": 13252960,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 10,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247266961,
+      "phase": "cycle",
+      "rss": 66101248,
+      "heapUsed": 14109288,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 5,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247281975,
+      "phase": "cycle",
+      "rss": 65880064,
+      "heapUsed": 15469992,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 5
+      }
+    },
+    {
+      "t": 1786247296979,
+      "phase": "cycle",
+      "rss": 65703936,
+      "heapUsed": 16228528,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247311981,
+      "phase": "cycle",
+      "rss": 66461696,
+      "heapUsed": 17509544,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 20,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247330012,
+      "phase": "cycle",
+      "rss": 66469888,
+      "heapUsed": 18648752,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 5
+      }
+    },
+    {
+      "t": 1786247345027,
+      "phase": "cycle",
+      "rss": 67330048,
+      "heapUsed": 20008464,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 5
+      }
+    },
+    {
+      "t": 1786247360037,
+      "phase": "cycle",
+      "rss": 67072000,
+      "heapUsed": 13596088,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 9,
+        "Timeout": 5
+      }
+    },
+    {
+      "t": 1786247375043,
+      "phase": "cycle",
+      "rss": 67260416,
+      "heapUsed": 14914240,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 9,
+        "Timeout": 5
+      }
+    },
+    {
+      "t": 1786247393056,
+      "phase": "cycle",
+      "rss": 67719168,
+      "heapUsed": 16052504,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247408063,
+      "phase": "cycle",
+      "rss": 68050944,
+      "heapUsed": 17225984,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247423111,
+      "phase": "cycle",
+      "rss": 68591616,
+      "heapUsed": 18371288,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 17,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247438126,
+      "phase": "cycle",
+      "rss": 69156864,
+      "heapUsed": 19974216,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247456137,
+      "phase": "cycle",
+      "rss": 70324224,
+      "heapUsed": 21043432,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247471149,
+      "phase": "cycle",
+      "rss": 68440064,
+      "heapUsed": 14953288,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247486155,
+      "phase": "cycle",
+      "rss": 68284416,
+      "heapUsed": 15831264,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247501162,
+      "phase": "cycle",
+      "rss": 68411392,
+      "heapUsed": 16886248,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247519196,
+      "phase": "cycle",
+      "rss": 69165056,
+      "heapUsed": 18576584,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247534212,
+      "phase": "cycle",
+      "rss": 69795840,
+      "heapUsed": 19608728,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247549220,
+      "phase": "cycle",
+      "rss": 70172672,
+      "heapUsed": 21090864,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247564234,
+      "phase": "cycle",
+      "rss": 68231168,
+      "heapUsed": 13047600,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247582245,
+      "phase": "cycle",
+      "rss": 68509696,
+      "heapUsed": 14386312,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 15,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247597258,
+      "phase": "cycle",
+      "rss": 68546560,
+      "heapUsed": 15935632,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 20,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247612262,
+      "phase": "cycle",
+      "rss": 69226496,
+      "heapUsed": 17233640,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 17,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247627265,
+      "phase": "cycle",
+      "rss": 69525504,
+      "heapUsed": 18248080,
+      "handles": {
+        "ConnectWrap": 1,
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247645284,
+      "phase": "cycle",
+      "rss": 70422528,
+      "heapUsed": 19412328,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247660289,
+      "phase": "cycle",
+      "rss": 69218304,
+      "heapUsed": 12629168,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247675296,
+      "phase": "cycle",
+      "rss": 69201920,
+      "heapUsed": 13846064,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247690302,
+      "phase": "cycle",
+      "rss": 69091328,
+      "heapUsed": 15747952,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247708313,
+      "phase": "cycle",
+      "rss": 69226496,
+      "heapUsed": 16455952,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247723329,
+      "phase": "cycle",
+      "rss": 69738496,
+      "heapUsed": 17778576,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 20,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247738347,
+      "phase": "cycle",
+      "rss": 70205440,
+      "heapUsed": 19110192,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247753356,
+      "phase": "cycle",
+      "rss": 71131136,
+      "heapUsed": 20265336,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247771793,
+      "phase": "cycle",
+      "rss": 69476352,
+      "heapUsed": 13978216,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247786810,
+      "phase": "cycle",
+      "rss": 69464064,
+      "heapUsed": 15318144,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 14,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247801820,
+      "phase": "cycle",
+      "rss": 69537792,
+      "heapUsed": 16237656,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247816838,
+      "phase": "cycle",
+      "rss": 70033408,
+      "heapUsed": 17094952,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247834855,
+      "phase": "cycle",
+      "rss": 69992448,
+      "heapUsed": 18686712,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 3,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247849870,
+      "phase": "cycle",
+      "rss": 71065600,
+      "heapUsed": 20086616,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247864885,
+      "phase": "cycle",
+      "rss": 69304320,
+      "heapUsed": 13782856,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247879893,
+      "phase": "cycle",
+      "rss": 69935104,
+      "heapUsed": 14982440,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247897908,
+      "phase": "cycle",
+      "rss": 70381568,
+      "heapUsed": 16305440,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247912916,
+      "phase": "cycle",
+      "rss": 70651904,
+      "heapUsed": 17338000,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 20,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247927931,
+      "phase": "cycle",
+      "rss": 70979584,
+      "heapUsed": 18762392,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 17,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247942954,
+      "phase": "cycle",
+      "rss": 71204864,
+      "heapUsed": 19598656,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 11,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247960987,
+      "phase": "cycle",
+      "rss": 71208960,
+      "heapUsed": 20729144,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247975993,
+      "phase": "cycle",
+      "rss": 70205440,
+      "heapUsed": 13895856,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786247990998,
+      "phase": "cycle",
+      "rss": 70144000,
+      "heapUsed": 14986120,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786248006010,
+      "phase": "cycle",
+      "rss": 70393856,
+      "heapUsed": 16511760,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 6,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786248024022,
+      "phase": "cycle",
+      "rss": 70701056,
+      "heapUsed": 17454056,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 24,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786248039024,
+      "phase": "cycle",
+      "rss": 70852608,
+      "heapUsed": 18938208,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 17,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786248054035,
+      "phase": "cycle",
+      "rss": 71233536,
+      "heapUsed": 20225400,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    },
+    {
+      "t": 1786248054036,
+      "phase": "end",
+      "rss": 71233536,
+      "heapUsed": 20227216,
+      "handles": {
+        "PipeWrap": 2,
+        "TCPServerWrap": 2,
+        "TCPSocketWrap": 8,
+        "Timeout": 4
+      }
+    }
+  ]
+}
