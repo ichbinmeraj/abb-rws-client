@@ -42,6 +42,16 @@ async function startSubscriptionServer(opts: {
    * rejected 401 - matches live RW7.21 behavior across a warm restart.
    */
   rotateCookies?: boolean;
+  /**
+   * When it returns true, accept GETs and never answer them - a frozen link.
+   *
+   * Note a real limitation this makes explicit: on OmniCore the client cannot
+   * send anything on the subscription socket, and an idle subscription sends
+   * nothing back, so a half-open state affecting ONLY that socket while HTTP
+   * still works is undetectable in band. Detection covers a link-level freeze,
+   * which is what this models.
+   */
+  hangRequests?: () => boolean;
 } = {}): Promise<{
   close: () => void;
   port: number;
@@ -49,11 +59,16 @@ async function startSubscriptionServer(opts: {
   posts: string[];
   sockets: ServerWebSocket[];
   protocolsSeen: string[][];
+  /** Frames the CLIENT sent on the subscription socket - must stay 0. */
+  readonly framesFromClient: number;
 }> {
   const requests: RecordedRequest[] = [];
   const posts: string[] = [];
   const sockets: ServerWebSocket[] = [];
   const protocolsSeen: string[][] = [];
+  let framesFromClient = 0;
+  /** Responses deliberately left unanswered; destroyed on close so the server can exit. */
+  const hung: http.ServerResponse[] = [];
   let port = 0;
   let groupId = 0;
   const wsScheme = opts.tls ? 'wss' : 'ws';
@@ -80,6 +95,23 @@ async function startSubscriptionServer(opts: {
         return;
       }
       if (req.method === 'DELETE') { res.writeHead(200); res.end(); return; }
+      // Liveness probe. The client no longer sends anything on the subscription
+      // socket - OmniCore closes it with 1008 "Client cannot send data." - so it
+      // establishes liveness with a cheap GET on the same session instead. A mock
+      // that 404s every GET tells the client the controller is unreachable, and
+      // it will (correctly) tear the healthy stream down.
+      if (req.method === 'GET') {
+        // Half-open simulation: accept the probe and never answer it, the way a
+        // frozen link does. Only GETs stall - the re-POST is left working so the
+        // reconnect path is observable; the full freeze-then-heal sequence is
+        // covered live by structural cell S02.
+        if (opts.hangRequests?.()) { hung.push(res); return; }
+        res.writeHead(200, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end('<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml">'
+          + '<body><div class="state"><ul><li class="pnl-ctrlstate">'
+          + '<span class="ctrlstate">motoron</span></li></ul></div></body></html>');
+        return;
+      }
       res.writeHead(404); res.end();
     });
   };
@@ -108,16 +140,24 @@ async function startSubscriptionServer(opts: {
     });
     wss.on('connection', ws => {
       sockets.push(ws);
-      if (opts.answerPings !== false) {
-        ws.on('message', d => { if (d.toString() === 'PING') { ws.send('PONG'); } });
-      }
+      // Count EVERY inbound frame, answered or not. A real OmniCore rejects
+      // client data on this socket with a 1008 close, so "did the client send
+      // anything at all" is the property worth asserting - not "was it a PING".
+      ws.on('message', d => {
+        framesFromClient++;
+        if (opts.answerPings !== false && d.toString() === 'PING') { ws.send('PONG'); }
+      });
     });
   }
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   port = (server.address() as AddressInfo).port;
   return {
-    close: () => { wss?.close(); server.close(); },
+    close: () => {
+      for (const r of hung) { r.destroy(); }
+      wss?.close(); server.close();
+    },
     port, requests, posts, sockets, protocolsSeen,
+    get framesFromClient() { return framesFromClient; },
   };
 }
 
@@ -311,13 +351,17 @@ describe('RWS 2.0 subscription reconnect', () => {
     } finally { s.close(); }
   }, 30000);
 
-  it('detects a half-open connection via missed PONGs and re-subscribes', async () => {
-    // A controller that stops answering app-level PINGs is half-open (frozen
-    // NAT, yanked cable). The client must terminate the socket and reconnect
-    // within ~2 ping intervals - parity with the RWS 1.0 heartbeat.
-    const s = await startSubscriptionServer({ answerPings: false });
+  it('detects a half-open connection and re-subscribes', async () => {
+    // A half-open link (frozen NAT, yanked cable) is one where the socket looks
+    // open but nothing gets through IN EITHER DIRECTION. This used to be
+    // simulated by withholding PONGs, which no longer means anything: the client
+    // sends nothing on the subscription socket, because OmniCore closes it with
+    // 1008 "Client cannot send data." Liveness now comes from an out-of-band GET,
+    // so a faithful half-open simulation must stall that GET too - which is
+    // exactly what a frozen link does.
+    const s = await startSubscriptionServer({ hangRequests: () => true });
     try {
-      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p', { timeout: 300 });
       let restored = 0;
       const unsubscribe = await client.subscribe(
         ['speedratio'], () => {}, undefined, () => { restored++; },
@@ -325,28 +369,35 @@ describe('RWS 2.0 subscription reconnect', () => {
       );
       await until(() => s.sockets.length >= 1);
 
-      // No pong ever arrives → detection ≤ 2 ticks → reconnect re-POSTs
-      await until(() => s.posts.length >= 2, 5000);
-      await until(() => restored >= 1, 5000);
+      // Neither frames nor probe answers → detection ≤ 2 ticks → reconnect re-POSTs.
+      await until(() => s.posts.length >= 2, 8000);
+      await until(() => restored >= 1, 8000);
       await unsubscribe();
     } finally { s.close(); }
   }, 30000);
 
-  it('keeps a healthy connection open when PONGs are answered', async () => {
+  it('keeps a healthy, SILENT connection open across several heartbeat intervals', async () => {
     const s = await startSubscriptionServer({ answerPings: true });
     try {
       const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
-      // Generous interval: the deadline only trips if a PONG takes longer than
-      // a full interval, so CI load can't falsely kill the healthy stream
       const unsubscribe = await client.subscribe(
         ['speedratio'], () => {}, undefined, undefined,
         { pingIntervalMs: 400 },
       );
       await until(() => s.sockets.length >= 1);
       await new Promise(r => setTimeout(r, 1500));
-      // Several ping cycles passed; a healthy stream must not have reconnected
+
+      // Several heartbeat cycles passed; a healthy stream must not reconnect.
       expect(s.posts.length).toBe(1);
       expect(s.sockets.length).toBe(1);
+
+      // And the client must have stayed SILENT on the socket. OmniCore answers
+      // any client frame on a subscription connection with a 1008 close
+      // ("Client cannot send data."), so a keep-alive here is not merely
+      // useless - it is what was destroying the stream every 25 s in production.
+      // Liveness comes from the out-of-band GET the mock now answers.
+      expect(s.framesFromClient, 'client must send nothing on the subscription socket').toBe(0);
+
       await unsubscribe();
     } finally { s.close(); }
   }, 30000);

@@ -80,8 +80,18 @@ if (!skipRun) {
       process.exit(2);
     }
   }
+}
+
+// Read the report whether or not this invocation produced it: --no-run exists
+// precisely to re-map the LAST run's results (after fixing the mapping, or after
+// editing the matrix) without spending another hour of live cells.
+{
   if (!fs.existsSync(RESULTS)) {
-    console.error(`structural: vitest produced no report at ${RESULTS} - refusing to report every cell as untested`);
+    console.error(
+      skipRun
+        ? `structural: --no-run needs a previous report at ${RESULTS}, and there is none`
+        : `structural: vitest produced no report at ${RESULTS} - refusing to report every cell as untested`,
+    );
     process.exit(2);
   }
   try { vitest = JSON.parse(fs.readFileSync(RESULTS, 'utf8')); }
@@ -93,15 +103,21 @@ if (!skipRun) {
 
 // ─── 2. Map assertion results onto cells ─────────────────────────────────────
 
+/** A top-level cell describe: "<cell-id>/<generation>". */
+const CELL_TITLE = /^S\d{2}-[a-z0-9-]+\/(rws1|rws2)$/;
+
 /** cellKey -> { passed, failed, skipped, failures: [{name, message}] } */
 const observed = new Map();
 
 if (vitest?.testResults) {
   for (const file of vitest.testResults) {
     for (const t of file.assertionResults ?? []) {
-      // ancestorTitles[0] is the top-level describe: "<cell-id>/<generation>"
-      const top = (t.ancestorTitles ?? [])[0] ?? '';
-      if (!/^S\d{2}-[a-z0-9-]+\/(rws1|rws2)$/.test(top)) { continue; }
+      // SEARCH the ancestor chain rather than indexing it. Vitest prefixes the
+      // chain with an empty string for the file-level implicit suite, so the
+      // cell title sits at [1], not [0] - indexing [0] matched nothing and made
+      // every cell look untested even though the tests had run.
+      const top = (t.ancestorTitles ?? []).find(a => CELL_TITLE.test(a ?? ''));
+      if (!top) { continue; }
       const rec = observed.get(top) ?? { passed: 0, failed: 0, skipped: 0, failures: [] };
       if (t.status === 'passed') { rec.passed++; }
       else if (t.status === 'failed') {

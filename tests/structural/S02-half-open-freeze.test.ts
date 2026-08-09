@@ -225,8 +225,25 @@ for (const generation of ['rws1', 'rws2'] as const) {
       expect(sawHeartbeatMiss()).toBe(false);
       expect(restored).toBe(0);
       expect(lost).toBe(0);
-      // No reconnect means no new connection through the proxy.
-      expect(proxy.stats().connectionsTotal).toBe(totalAtStart);
+
+      // ASSERTION CHANGED 2026-08-09, and the reason is the point of this cell.
+      //
+      // This originally read `toBe(totalAtStart)` - no reconnect, so not one new
+      // connection. That was written against a heartbeat that decided liveness
+      // from PONG alone, and this very test proved that design wrong: RW7.21
+      // answers neither app-level PING nor protocol ping, so a quiet stream was
+      // torn down every two intervals.
+      //
+      // The fix probes liveness out of band, which costs ONE pooled HTTP socket
+      // for the lifetime of the subscription. So the honest assertion is not
+      // "nothing connects" but "nothing CHURNS": the probe's socket is keep-alive
+      // and reused, whereas the bug it replaced opened a fresh WebSocket plus a
+      // fresh /subscription every two intervals. Over this 4-interval window the
+      // old behaviour would show at least two reconnects.
+      //
+      // Strictly bounded on purpose - one connection, not "some".
+      const opened = proxy.stats().connectionsTotal - totalAtStart;
+      expect(opened, 'liveness probing must not churn connections').toBeLessThanOrEqual(1);
     }, 60000);
 
     it('a frozen stream is detected within 2x the ping interval, terminated, and recovered', async () => {

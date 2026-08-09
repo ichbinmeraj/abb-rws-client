@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **RWS 2.0 subscriptions no longer destroy themselves every 25 seconds.** The
+  client sent an app-level `PING` frame on the subscription WebSocket as a
+  keep-alive, on the premise that the controller closes an idle socket at 30 s,
+  and terminated the stream if no `PONG` came back. Every part of that premise is
+  false on OmniCore RW7.21, and all three were verified live:
+  - the controller **rejects client data on that socket entirely**, answering any
+    frame - `PING` included - with a `1008 "Client cannot send data."` close. The
+    keep-alive was itself killing the subscription roughly every 25 s; the
+    reconnect logic then rebuilt it, which is why this looked like it worked
+    rather than looking broken. Each cycle re-POSTs `/subscription`, mints a
+    session, and drops events in the gap;
+  - the socket needs no keep-alive at all - with the client silent it stayed open
+    well past 75 s;
+  - and the controller answers neither app-level `PING` nor a protocol-level ws
+    ping, so the `PONG` deadline could never have been a liveness signal. On a
+    quiet resource the only thing that could satisfy it was an event that never
+    came, so a healthy idle stream was torn down every two intervals regardless.
+
+  The client is now **silent on the subscription socket**, and establishes
+  liveness out of band with a cheap GET on the same session each interval.
+  Inbound frames still count as proof of life, so a busy stream never pays for
+  the probe; two consecutive intervals with neither terminates and reconnects,
+  keeping detection at the same two-interval bound as before. Found by structural
+  cell S02.
+
+  **Known limit:** because the client may not send on that socket and an idle
+  subscription sends nothing back, a half-open state affecting *only* the
+  WebSocket while HTTP still works cannot be detected in band. Detection covers
+  link-level failure, which is the case that occurs in practice.
+
 - **A stalled response body no longer hangs an RWS 1.0 request forever.** `fetch()`
   resolves as soon as response HEADERS arrive and streams the body afterwards, but
   the abort timer was cleared at that moment - so the body read had no deadline at
