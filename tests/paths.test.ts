@@ -133,3 +133,47 @@ describe('path tables - fidelity to the RWS 1.0 mapper', () => {
     expect(R1.unlockOperationMode().path).toBe(buildPath(ALL_TABLES.panel.unlockOperationMode.rws1 as PathSpec));
   });
 });
+
+/**
+ * Broad cross-domain verification. These operations are NOT migrated yet - the
+ * assertions instead check that the agent-authored tables for rapid, motion and
+ * ctrl agree with what the mapper functions produce today. A mismatch here means
+ * a table is WRONG (a path the migration would then get wrong), so this both
+ * validates the tables beyond panel and is the safety net for migrating those
+ * domains next.
+ */
+describe('path tables - cross-domain fidelity (rapid / motion / ctrl)', () => {
+  it('rapid execution paths agree with ResourceMapper2', () => {
+    expect(buildPath(ALL_TABLES.rapid.getRapidExecutionState.rws2 as PathSpec)).toBe(R2.rapidExecution());
+    expect(buildPath(ALL_TABLES.rapid.startRapid.rws2 as PathSpec)).toBe(R2.startRapid().path);
+    expect(buildPath(ALL_TABLES.rapid.stopRapid.rws2 as PathSpec)).toBe(R2.stopRapid().path);
+    expect(buildPath(ALL_TABLES.rapid.resetRapid.rws2 as PathSpec)).toBe(R2.resetRapid().path);
+    expect(buildPath(ALL_TABLES.rapid.setExecutionCycle.rws2 as PathSpec)).toBe(R2.setExecutionCycle('once').path);
+    expect(buildPath(ALL_TABLES.rapid.startProductionEntry.rws2 as PathSpec)).toBe(R2.startProductionEntry().path);
+  });
+
+  it('rapid execution paths agree with ResourceMapper (RWS 1.0)', () => {
+    expect(buildPath(ALL_TABLES.rapid.getRapidExecutionState.rws1 as PathSpec)).toBe(R1.rapidExecutionState());
+    expect(buildPath(ALL_TABLES.rapid.startRapid.rws1 as PathSpec)).toBe(R1.startRapid().path);
+    expect(buildPath(ALL_TABLES.rapid.stopRapid.rws1 as PathSpec)).toBe(R1.stopRapid().path);
+    expect(buildPath(ALL_TABLES.rapid.resetRapid.rws1 as PathSpec)).toBe(R1.resetRapid().path);
+    expect(buildPath(ALL_TABLES.rapid.setExecutionCycle.rws1 as PathSpec)).toBe(R1.setExecutionCycle('once').path);
+  });
+
+  it('motion supervision paths agree with ResourceMapper2 (incl. the level/sensitivity trap)', () => {
+    expect(buildPath(ALL_TABLES.motion.setMotionSupervisionMode.rws2 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe(R2.setMotionSupervisionMode('ROB_1', 'on').path);
+    // The path segment is `level` but the body field is `sensitivity` - the
+    // table must carry the segment, and this proves it does.
+    expect(buildPath(ALL_TABLES.motion.setMotionSupervisionSensitivity.rws2 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe(R2.setMotionSupervisionSensitivity('ROB_1', 80).path);
+    expect(buildPath(ALL_TABLES.motion.setPathSupervisionMode.rws2 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe(R2.setPathSupervisionMode('ROB_1', 'on').path);
+  });
+
+  it('ctrl backup paths agree with ResourceMapper2', () => {
+    expect(buildPath(ALL_TABLES.ctrl.createBackup.rws2 as PathSpec)).toBe(R2.createBackup('b').path);
+    expect(buildPath(ALL_TABLES.ctrl.restoreBackup.rws2 as PathSpec)).toBe(R2.restoreBackup('b').path);
+    expect(buildPath(ALL_TABLES.ctrl.checkRestore.rws2 as PathSpec)).toBe(R2.checkRestore('b').path);
+  });
+});
