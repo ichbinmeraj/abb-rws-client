@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stalled response body no longer hangs an RWS 1.0 request forever.** `fetch()`
+  resolves as soon as response HEADERS arrive and streams the body afterwards, but
+  the abort timer was cleared at that moment - so the body read had no deadline at
+  all. A controller that sent headers and then stalled mid-body left the request
+  pending indefinitely, and because this client serialises every request through a
+  single paced queue, that one hung read stalled every request behind it while no
+  configured timeout ever fired. The timeout now covers the whole exchange.
+- **Unparseable RWS 2.0 responses are rejected instead of being answered with a
+  plausible default.** `getState()` returns an empty map both for "block absent"
+  and "block empty", so `getControllerState()` answered `init`, and
+  `getOperationMode()` answered **`MANR`**, for a garbled or truncated response -
+  reporting a specific, safety-relevant state the controller never sent. Those
+  readers (plus speed ratio and RAPID execution state) now throw `PARSE_ERROR`
+  when the state block is missing entirely, matching what RWS 1.0's parser already
+  did for the same input. Field-level defaults are unchanged: a block that IS
+  present but omits one span is a different situation.
+
+Both were found by structural cell S12 (malformed / truncated responses).
+
 ## [1.2.0] - 2026-08-09
 
 Everything below accumulated after the 1.1.0 entry was written on 2026-08-02.
