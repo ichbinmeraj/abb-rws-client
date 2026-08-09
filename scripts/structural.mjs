@@ -333,9 +333,29 @@ default, which would put several live clients on one controller at once; each
 paces itself correctly but nothing coordinates across clients, and the pair
 exceeds the controller's <20 req/s ceiling.
 
-**Start from a freshly restarted controller.** Sessions linger for 300 s, so a
-controller that has just run a long suite sits near its cap and answers 503 to
-anything extra - which fails cells for a property they are not testing.
+**Start from a freshly restarted controller, and expect one pass not to fit.**
+
+The IRC5 caps at 70 sessions and reclaims them on a 300 s timer. Fourteen
+fault-injection cells back-to-back consume that budget faster than it is
+reclaimed, and once the pool is dry every LATER cell fails CONTROLLER_BUSY for a
+reason unrelated to what it asserts. This is a property of the controller: it is
+not a client defect, and no client change fixes it.
+
+Measured 2026-08-09, with the controls that rule out a leak:
+
+| Loop, on a drained IRC5 | Result |
+|---|---|
+| 40 connect/disconnect cycles | 40/40 pass |
+| 40 subscribe/unsubscribe cycles | 40/40 pass |
+| connect/disconnect WITHOUT disconnect | fails at cycle **2** |
+
+So both paths release what they take, and the method would catch it if they did
+not. Every cell also passes on its own. What does not fit is the SUM.
+
+Practically: run the rws1 cells in two or three groups with \`--cooldown\`, letting
+the controller drain between groups, or restart the IRC5 between them. A single
+uninterrupted pass over all fourteen cells will show phantom 503s in whichever
+cells happen to run last.
 
 ## Known limits
 
