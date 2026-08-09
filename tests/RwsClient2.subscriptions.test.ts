@@ -139,6 +139,39 @@ function until(cond: () => boolean, timeoutMs = 20000): Promise<void> {
   });
 }
 
+const WS_OPEN = 1; // ws.readyState OPEN
+
+/**
+ * Push an event to the client over whichever socket is CURRENTLY live, retrying
+ * until the client's handler actually receives it.
+ *
+ * Sending to a socket by index is not safe here. The server registers a socket
+ * the moment it accepts the upgrade, but the client can still abandon that
+ * connection afterwards - if its own WS open timeout expires before it processes
+ * the open event, it discards the socket and reconnects, leaving the server
+ * holding a dead entry. Under parallel-suite load that is exactly what happens,
+ * and a test that sent to `sockets[1]` then waited was waiting on a corpse: no
+ * amount of patience recovers, which is why widening the timeouts never fixed
+ * this. Addressing "the newest open socket" and re-sending removes the
+ * assumption instead of betting against the race.
+ *
+ * Duplicate deliveries are harmless - the assertions check the FIRST event.
+ */
+async function deliverUntilSeen(
+  sockets: ServerWebSocket[], payload: string, seen: () => boolean, timeoutMs = 20000,
+): Promise<void> {
+  const t0 = Date.now();
+  while (!seen()) {
+    if (Date.now() - t0 > timeoutMs) {
+      throw new Error(`event never reached the handler (${sockets.length} server sockets seen)`);
+    }
+    for (let i = sockets.length - 1; i >= 0; i--) {
+      if (sockets[i].readyState === WS_OPEN) { sockets[i].send(payload); break; }
+    }
+    await new Promise(r => setTimeout(r, 25));
+  }
+}
+
 /** Runtime access to RwsClient2's private reconnect tuning statics. */
 const tuning = RwsClient2 as unknown as {
   WS_RECONNECT_BASE_MS: number;
@@ -185,34 +218,40 @@ describe('RWS 2.0 subscription reconnect', () => {
         undefined, undefined,
         // This test proves the re-POST happens and events still flow - not the
         // default schedule, and NOT the give-up budget (a separate test covers
-        // that). So the tuning has to make it impossible for the client to run
-        // out of attempts before the waits below run out of patience:
+        // that). So: fast backoff for a quick result on an idle machine, and an
+        // attempt budget large enough that the client can never exhaust it and
+        // stop trying while the waits below are still waiting.
         //
-        //   - fast backoff, so recovery is quick when the machine is idle;
-        //   - a moderate open timeout, so one stalled upgrade under
-        //     parallel-suite load costs ~2 s rather than the 8 s default;
-        //   - and a deliberately huge attempt budget. This is the part that was
-        //     still flaking: with the default 6 attempts, six slow upgrades
-        //     exhausted the client's retries in a few seconds and it gave up
-        //     permanently, after which no amount of waiting could succeed.
-        //     Shortening the open timeout alone made that MORE likely, not less.
-        { reconnectBaseMs: 50, reconnectCapMs: 100, openTimeoutMs: 2000, maxReconnectAttempts: 1000 },
+        // The open timeout is deliberately left at its default. An earlier
+        // attempt to shrink it made things worse in two ways: it burned the
+        // 6-attempt budget faster, and - the real problem - a short timeout is
+        // what makes the client abandon a socket the server has already
+        // accepted, stranding the event the test sends to it. Fewer abandoned
+        // sockets is the goal, so leave it long and let deliverUntilSeen handle
+        // the rest.
+        { reconnectBaseMs: 50, reconnectCapMs: 100, maxReconnectAttempts: 1000 },
       );
       expect(s.posts.length).toBe(1);
       await until(() => s.sockets.length >= 1);
 
-      // Simulate the controller killing the connection.
-      s.sockets[0].terminate();
+      // Simulate the controller killing the connection. Terminate every socket
+      // the server currently holds, not sockets[0]: if the client had already
+      // abandoned and replaced its first connection, killing only that one kills
+      // something already dead and no reconnect is ever triggered.
+      const postsBefore = s.posts.length;
+      const socketsBefore = s.sockets.length;
+      for (const ws of s.sockets) { ws.terminate(); }
 
-      // The client must create a NEW subscription (old WS URL is dead) …
-      await until(() => s.posts.length >= 2);
-      await until(() => s.sockets.length >= 2);
+      // The client must create a NEW subscription (the old WS URL is dead) …
+      await until(() => s.posts.length > postsBefore);
+      await until(() => s.sockets.length > socketsBefore);
 
-      // … and events on the new socket must still reach the handler.
-      s.sockets[1].send(
+      // … and events must still reach the handler over whatever socket is live.
+      await deliverUntilSeen(
+        s.sockets,
         '<li class="ios-signal-li"><a href="/rw/panel/speedratio" rel="self"></a><span class="lvalue">42</span></li>',
+        () => events.length >= 1,
       );
-      await until(() => events.length >= 1);
       expect(events[0]).toEqual({ resource: 'speedratio', value: '42' });
 
       await unsubscribe();
@@ -325,10 +364,14 @@ describe('RWS 2.0 subscription reconnect', () => {
         ['speedratio'], (e: SubscriptionEvent) => events.push(e.value),
       );
       await until(() => s.sockets.length >= 1, 5000);
-      s.sockets[0].send(
+      // Deliver over whichever socket is live rather than sockets[0] - the
+      // server registers a socket on upgrade, but the client may still abandon
+      // and replace it. Same latent race as the reconnect test above.
+      await deliverUntilSeen(
+        s.sockets,
         '<li class="ios-signal-li"><a href="/rw/panel/speedratio" rel="self"></a><span class="lvalue">55</span></li>',
+        () => events.length >= 1,
       );
-      await until(() => events.length >= 1);
       expect(events[0]).toBe('55');
       await unsubscribe();
     } finally { s.close(); }
