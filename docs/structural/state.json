@@ -3,53 +3,135 @@
   "updatedAt": "2026-08-09",
   "counts": {
     "total": 30,
-    "verified": 0,
-    "failing": 0,
-    "untested": 30,
-    "manualOnly": 0,
+    "verified": 20,
+    "failing": 6,
+    "untested": 2,
+    "manualOnly": 2,
     "excluded": 0
   },
-  "openCells": 30,
-  "previousOpenCells": null,
-  "progressed": null,
+  "openCells": 8,
+  "previousOpenCells": 28,
+  "progressed": true,
   "buckets": {
-    "verified": [],
-    "failing": [],
-    "untested": [
+    "verified": [
       "S01-drop-midrequest/rws1",
       "S01-drop-midrequest/rws2",
       "S02-half-open-freeze/rws1",
-      "S02-half-open-freeze/rws2",
-      "S03-warm-restart/rws1",
-      "S03-warm-restart/rws2",
       "S04-idle-expiry/rws1",
       "S04-idle-expiry/rws2",
-      "S05-session-slot-pressure/rws1",
-      "S05-session-slot-pressure/rws2",
       "S06-401-storm/rws1",
       "S06-401-storm/rws2",
-      "S07-mastership-conflict/rws1",
       "S07-mastership-conflict/rws2",
       "S08-churn/rws1",
       "S08-churn/rws2",
       "S09-latency/rws1",
-      "S09-latency/rws2",
       "S10-503-storm/rws1",
       "S10-503-storm/rws2",
       "S11-event-flood/rws1",
       "S11-event-flood/rws2",
-      "S12-malformed/rws1",
       "S12-malformed/rws2",
       "S13-multi-robot-isolation/rws1",
       "S13-multi-robot-isolation/rws2",
       "S14-quality-truthfulness/rws1",
-      "S14-quality-truthfulness/rws2",
+      "S14-quality-truthfulness/rws2"
+    ],
+    "failing": [
+      "S02-half-open-freeze/rws2",
+      "S05-session-slot-pressure/rws1",
+      "S05-session-slot-pressure/rws2",
+      "S07-mastership-conflict/rws1",
+      "S09-latency/rws2",
+      "S12-malformed/rws1"
+    ],
+    "untested": [
+      "S03-warm-restart/rws1",
+      "S03-warm-restart/rws2"
+    ],
+    "manual-only": [
       "S15-soak/rws1",
       "S15-soak/rws2"
     ],
-    "manual-only": [],
     "excluded": []
   },
-  "nextBatch": "S01-drop-midrequest",
-  "failures": []
+  "nextBatch": "S02-half-open-freeze",
+  "failures": [
+    {
+      "cell": "S02-half-open-freeze/rws2",
+      "failures": [
+        {
+          "name": "S02-half-open-freeze/rws2 > a healthy stream survives several ping intervals - the heartbeat only fires on a real fault",
+          "message": "expected 1 to be +0 // Object.is equality"
+        }
+      ]
+    },
+    {
+      "cell": "S05-session-slot-pressure/rws1",
+      "failures": [
+        {
+          "name": "S05-session-slot-pressure/rws1 > reconnect cycles leave the controller session count flat",
+          "message": "Controller busy (503) - retry later"
+        },
+        {
+          "name": "S05-session-slot-pressure/rws1 > reconnect cycles do not open a connection per request",
+          "message": "Controller busy (503) - retry later"
+        },
+        {
+          "name": "S05-session-slot-pressure/rws1 > RobotManager reconnect cycles stay flat and leave quality honest",
+          "message": "Controller busy (503) - retry later"
+        }
+      ]
+    },
+    {
+      "cell": "S05-session-slot-pressure/rws2",
+      "failures": [
+        {
+          "name": "S05-session-slot-pressure/rws2 > reconnect cycles leave the controller session count flat",
+          "message": "connecting a client left GET /users unchanged (2 -> 2) - the session count is not observing our sessions, so no leak below could ever fail it: expected 2 to be greater than 2"
+        },
+        {
+          "name": "S05-session-slot-pressure/rws2 > does not re-send Basic credentials once a session cookie is held",
+          "message": "connecting a client left GET /users unchanged (2 -> 2) - the session count is not observing our sessions, so no leak below could ever fail it: expected 2 to be greater than 2"
+        },
+        {
+          "name": "S05-session-slot-pressure/rws2 > repeated subscribe/unsubscribe rides the existing session",
+          "message": "connecting a client left GET /users unchanged (2 -> 2) - the session count is not observing our sessions, so no leak below could ever fail it: expected 2 to be greater than 2"
+        },
+        {
+          "name": "S05-session-slot-pressure/rws2 > RobotManager reconnect cycles stay flat and leave quality honest",
+          "message": "the manager's own session is invisible to GET /users (2 -> 2) - a per-cycle leak would be invisible too: expected 2 to be greater than 2"
+        }
+      ]
+    },
+    {
+      "cell": "S07-mastership-conflict/rws1",
+      "failures": [
+        {
+          "name": "S07-mastership-conflict/rws1 > quality stays truthful while only WRITE access is contended (S14 cross-cutting)",
+          "message": "Controller busy (503) - retry later"
+        }
+      ]
+    },
+    {
+      "cell": "S09-latency/rws2",
+      "failures": [
+        {
+          "name": "S09-latency/rws2 > the >=55 ms pacing floor still holds under injected latency",
+          "message": "burst request failed: RwsError: socket hang up: expected 'rejected' to be 'fulfilled' // Object.is equality"
+        },
+        {
+          "name": "S09-latency/rws2 > quality does not claim \"disconnected\" while slow requests still succeed (S14 cross-cutting)",
+          "message": "promise rejected \"RwsError: socket hang up { …(5) }\" instead of resolving"
+        }
+      ]
+    },
+    {
+      "cell": "S12-malformed/rws1",
+      "failures": [
+        {
+          "name": "S12-malformed/rws1 > a live response cut mid-body is a typed error and the client recovers",
+          "message": "expected a single live proxied connection: expected 2 to be 1 // Object.is equality"
+        }
+      ]
+    }
+  ]
 }
