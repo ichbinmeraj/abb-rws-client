@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { XhtmlParser } from './XhtmlParser.js';
 import { HalJsonParser } from './HalJsonParser.js';
 import * as R2 from './ResourceMapper2.js';
+import { PANEL } from './paths/panel.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
 import { Logger } from './Logger.js';
 import { RwsError, stripRapidDomain, decodeElogArgs, type RwsErrorCode, type ReturnCodeInfo } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
@@ -508,7 +510,7 @@ export class RwsClient2 {
   /** Lock state of the operation-mode selector ('locked' | 'unlocked').
    *  Live-verified 2026-08-04 (RW7.21), class pnl-opmode-lockstate-li. */
   async getOperationModeLockState(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/opmode/lock-state'));
+    const p = RwsClient2.parse(await this.req('GET', buildPath(PANEL.getOperationModeLockState.rws2 as PathSpec)));
     return p.getState('pnl-opmode-lockstate-li')['lockstate'] ?? 'unknown';
   }
 
@@ -538,7 +540,7 @@ export class RwsClient2 {
    */
   setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
     const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manf';
-    return this.req('POST', '/rw/panel/opmode', { opmode: wire }).then(() => {});
+    return this.req('POST', buildPath(PANEL.setOperationMode.rws2 as PathSpec), { opmode: wire }).then(() => {});
   }
 
   // ─── RAPID execution ────────────────────────────────────────────────────────
@@ -912,7 +914,7 @@ export class RwsClient2 {
   async restartController(mode: RestartMode = 'restart'): Promise<void> {
     await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
     try {
-      await this.req('POST', '/ctrl/restart', { 'restart-mode': mode });
+      await this.req('POST', buildPath(PANEL.restartController.rws2 as PathSpec), { 'restart-mode': mode });
       // Success: no release - the controller is going down and takes the
       // session (and its mastership) with it.
     } catch (e) {
@@ -3566,13 +3568,13 @@ export class RwsClient2 {
    * there (unlike real hardware, which latches until the button is released).
    */
   simEmergencyStop(): Promise<void> {
-    return this.simPost('simEmergencyStop', '/rw/panel/emergency-stop', { state: 'off' });
+    return this.simPost('simEmergencyStop', buildPath(PANEL.simEmergencyStop.rws2 as PathSpec), { state: 'off' });
   }
 
   /** Release the simulated emergency stop (`state=on`) - controller returns to
    *  `motoroff`. See {@link simEmergencyStop} for the polarity note. */
   simResetEmergencyStop(): Promise<void> {
-    return this.simPost('simResetEmergencyStop', '/rw/panel/emergency-stop', { state: 'on' });
+    return this.simPost('simResetEmergencyStop', buildPath(PANEL.simEmergencyStop.rws2 as PathSpec), { state: 'on' });
   }
 
   /**
@@ -3582,7 +3584,7 @@ export class RwsClient2 {
    * releases (same inverted polarity as the e-stop endpoints).
    */
   simGeneralStop(engage = true): Promise<void> {
-    return this.simPost('simGeneralStop', '/rw/panel/general-stop', { state: engage ? 'off' : 'on' });
+    return this.simPost('simGeneralStop', buildPath(PANEL.simGeneralStop.rws2 as PathSpec), { state: engage ? 'off' : 'on' });
   }
 
   /**
@@ -3591,7 +3593,7 @@ export class RwsClient2 {
    * POST /rw/panel/auto-stop, `state=off` engages / `state=on` releases.
    */
   simAutoStop(engage = true): Promise<void> {
-    return this.simPost('simAutoStop', '/rw/panel/auto-stop', { state: engage ? 'off' : 'on' });
+    return this.simPost('simAutoStop', buildPath(PANEL.simAutoStop.rws2 as PathSpec), { state: engage ? 'off' : 'on' });
   }
 
   /**
@@ -3602,7 +3604,7 @@ export class RwsClient2 {
    * accepts the call as a no-op; driving motors on requires manual mode.
    */
   simEnableSwitch(on: boolean): Promise<void> {
-    return this.simPost('simEnableSwitch', '/rw/panel/enable-switch', { state: on ? 'on' : 'off' });
+    return this.simPost('simEnableSwitch', buildPath(PANEL.simEnableSwitch.rws2 as PathSpec), { state: on ? 'on' : 'off' });
   }
 
   /**
@@ -3744,7 +3746,7 @@ export class RwsClient2 {
   // ─── Panel detail endpoints ─────────────────────────────────────────────────
 
   async getEnableRequest(): Promise<{ state: string; raw: Record<string, string> }> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/panel/enreq'));
+    const p = RwsClient2.parse(await this.req('GET', buildPath(PANEL.getEnableRequest.rws2 as PathSpec)));
     const d = p.getState('pnl-enreq') || p.getState('pnl-enreq-li');
     return { state: d['state'] ?? d['enreq'] ?? 'unknown', raw: d };
   }
@@ -3872,7 +3874,7 @@ export class RwsClient2 {
    * language from `getControllerLanguage()`-adjacent system resources instead.
    */
   async setPanelLanguage(langCode: string): Promise<void> {
-    await this.req('POST', '/rw/panel/lang', { 'lang-code': langCode });
+    await this.req('POST', buildPath(PANEL.setPanelLanguage.rws2 as PathSpec), { 'lang-code': langCode });
   }
 
   /**
@@ -3890,7 +3892,7 @@ export class RwsClient2 {
    * drives. Reversible with `setControllerState('motoroff')`.
    */
   async setKeylessMotorOn(): Promise<void> {
-    await this.req('POST', '/rw/panel/ctrl-state/keyless-motoron');
+    await this.req('POST', buildPath(PANEL.setKeylessMotorOn.rws2 as PathSpec));
   }
 
   /**
@@ -3958,7 +3960,7 @@ export class RwsClient2 {
    * Absent on RWS 1.0 - the IRC5 controllers answer 404 for this path.
    */
   async setExternalEmergencyStop(state: 'active' | 'reset'): Promise<void> {
-    await this.req('POST', '/rw/panel/external-emergency-stop', { state });
+    await this.req('POST', buildPath(PANEL.setExternalEmergencyStop.rws2 as PathSpec), { state });
   }
 
   /**
