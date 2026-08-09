@@ -1,12 +1,120 @@
 {
  "crawledAt": "2026-08-09",
  "summary": {
-  "implemented": 41,
-  "deliberate-gap": 1,
+  "implemented": 56,
+  "deliberate-gap": 4,
   "unmapped": 0,
   "orphan": 0
  },
  "rows": [
+  {
+   "gen": "rws1",
+   "resource": "/ctrl",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerIdentity"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/backup",
+   "verdict": "implemented",
+   "by": "ctrl.createBackup"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/clock",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerClock"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/compress",
+   "verdict": "deliberate-gap",
+   "by": "ctrl.compressPath"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/identity",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerIdentity"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/network",
+   "verdict": "implemented",
+   "by": "ctrl.getNetworkConfig"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/options",
+   "verdict": "deliberate-gap",
+   "by": "ctrl.ctrlOptionsVerify"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/safety",
+   "verdict": "implemented",
+   "by": "ctrl.getSafetyStatus"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime",
+   "verdict": "implemented",
+   "by": "ctrl.setVirtualTimeRunning"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vtspeed",
+   "verdict": "implemented",
+   "by": "ctrl.setVirtualTimeScale"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vtstate",
+   "verdict": "implemented",
+   "by": "ctrl.setVirtualTimeRunning"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vttime",
+   "verdict": "implemented",
+   "by": "ctrl.getVirtualTimeClock"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vttimeslice",
+   "verdict": "deliberate-gap",
+   "by": "ctrl.getVirtualTimeTimeslice"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw",
+   "verdict": "implemented",
+   "by": "panel.getControllerState"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listCurrentUserGrants"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users/rmmp",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users/rmmp/poll",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
   {
    "gen": "rws2",
    "resource": "/ctrl",
