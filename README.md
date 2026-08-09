@@ -675,7 +675,18 @@ generations. The full Control Station Service is also exposed directly
   or the clock misbehaves: a fault-injection matrix run against live controllers,
   where every cell is `verified`, `manual-only` or `excluded` and never assumed.
   Regenerate with `npm run structural`.
+- [CONFORMANCE.md](./CONFORMANCE.md) - does the client cover what the controllers
+  actually advertise? Diffs the path tables in `src/paths` against a live crawl of
+  each controller's resource tree, flagging any advertised resource nothing maps.
+  Regenerate with `npm run conformance`.
 - [ARCHITECTURE.md](./docs/ARCHITECTURE.md) - how the pieces fit together.
+
+**Where the URLs live**
+
+Every RWS URL the client uses is declared once in [`src/paths`](./src/paths),
+one table per RWS domain, keyed by operation and split by protocol generation.
+That is the single source of truth an ABB update lands in - and what
+`npm run conformance` checks against the live controllers.
 
 **External**
 

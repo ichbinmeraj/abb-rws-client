@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Path tables - the single source of RWS URLs.** Every URL the client uses is
+  now declared once in `src/paths`, one table per RWS domain, keyed by operation
+  and split by protocol generation (269 operations, 398 path specs). Previously
+  ~233 URL literals were scattered across eight files, most inline in method
+  bodies, so an ABB endpoint change meant hunting six files and the two
+  generations drifted with nothing forcing the difference to be intentional. The
+  tables capture the anomalies that made updates expensive - symbol suffix/prefix
+  inversion, inverted-polarity stop simulations, field-name-vs-path-segment
+  mismatches, query-action vs plain-POST splits - as data. This is additive: no
+  public API change, no call site rewired yet, and `tests/paths.test.ts` proves
+  the tables are faithful to the shipped mapper functions.
+- **`npm run conformance` - the drift check.** Crawls each live controller's
+  resource tree and diffs it against the path tables, classifying every
+  advertised resource as implemented / deliberate-gap / unmapped / orphan. After
+  a RobotWare upgrade, new endpoints show up as `unmapped` in one run rather than
+  as an investigation. Its first run already caught a genuine table omission
+  (`/ctrl/virtualtime` atomic reads) and a deliberate divergence (`/ctrl/options`
+  vs `/rw/system/options`). Report in `CONFORMANCE.md`.
+
 ### Fixed
 
 - **RWS 2.0 survives the keep-alive race.** A controller that closes an idle
