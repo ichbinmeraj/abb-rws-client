@@ -344,7 +344,9 @@ export class RwsClient {
   async setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
     const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manfs';
     try {
-      await this.session.post('/rw/panel/opmode', `opmode=${wire}`);
+      // Path from the table via the shared mapper (setOperationMode has no query
+      // action on 1.0, so it POSTs to the same resource the read uses).
+      await this.session.post(pathOperationMode(), `opmode=${wire}`);
     } catch (e) {
       if (e instanceof RwsError) { throw e; }
       throw new RwsError(`setOperationMode failed: ${String(e)}`, 'UNKNOWN');

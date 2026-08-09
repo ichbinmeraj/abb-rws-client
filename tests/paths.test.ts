@@ -96,6 +96,16 @@ describe('path tables - fidelity to the RWS 2.0 mapper', () => {
     // ResourceMapper2.setSpeedRatio returns { path } already carrying the query.
     expect(buildPath(spec)).toBe(R2.setSpeedRatio(50).path);
   });
+
+  // Every migrated panel WRITE: the mapper now sources its path from the table,
+  // so these lock that the round-trip is identical to the pre-migration literal.
+  it('all migrated RWS 2.0 panel writes match table paths', () => {
+    expect(R2.setControllerState('motoron').path).toBe(buildPath(ALL_TABLES.panel.setControllerState.rws2 as PathSpec));
+    expect(R2.setOperationMode('auto').path).toBe(buildPath(ALL_TABLES.panel.setOperationMode.rws2 as PathSpec));
+    expect(R2.lockOperationMode('1234', true).path).toBe(buildPath(ALL_TABLES.panel.lockOperationMode.rws2 as PathSpec));
+    expect(R2.unlockOperationMode().path).toBe(buildPath(ALL_TABLES.panel.unlockOperationMode.rws2 as PathSpec));
+    expect(R2.acknowledgeOperationMode('auto').path).toBe(buildPath(ALL_TABLES.panel.acknowledgeOperationMode.rws2 as PathSpec));
+  });
 });
 
 describe('path tables - fidelity to the RWS 1.0 mapper', () => {
@@ -113,5 +123,13 @@ describe('path tables - fidelity to the RWS 1.0 mapper', () => {
   it('panel.setControllerState matches ResourceMapper (?action= form)', () => {
     const spec = ALL_TABLES.panel.setControllerState.rws1 as PathSpec;
     expect(buildPath(spec)).toBe(R1.setControllerState('motoron').path);
+  });
+
+  it('all migrated RWS 1.0 panel writes match table paths', () => {
+    expect(R1.setSpeedRatio(50).path).toBe(buildPath(ALL_TABLES.panel.setSpeedRatio.rws1 as PathSpec));
+    expect(R1.collisionDetectionState()).toBe(buildPath(ALL_TABLES.panel.getCollisionDetectionState.rws1 as PathSpec));
+    expect(R1.restartController('restart').path).toBe(buildPath(ALL_TABLES.panel.restartController.rws1 as PathSpec));
+    expect(R1.lockOperationMode('1234', true).path).toBe(buildPath(ALL_TABLES.panel.lockOperationMode.rws1 as PathSpec));
+    expect(R1.unlockOperationMode().path).toBe(buildPath(ALL_TABLES.panel.unlockOperationMode.rws1 as PathSpec));
   });
 });

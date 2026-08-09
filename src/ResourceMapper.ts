@@ -7,30 +7,42 @@
  */
 
 import { RwsError } from './types.js';
+import { PANEL } from './paths/panel.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
+
+/**
+ * RWS 1.0 path for a panel operation, from the path table (src/paths/panel.ts).
+ * The tables are the single source of RWS URLs; this domain reads them rather
+ * than repeating the literal. Body-building stays here. buildPath renders the
+ * `?action=` query the RWS 1.0 panel writes use. Fidelity is proven by
+ * tests/paths.test.ts.
+ */
+const p1 = (op: keyof typeof PANEL, params?: Record<string, string | number>): string =>
+  buildPath(PANEL[op].rws1 as PathSpec, params);
 
 // ─── Controller ──────────────────────────────────────────────────────────────
 
 /** Path to read the current controller state (motoron, motoroff, etc.) */
 export function controllerState(): string {
-  return '/rw/panel/ctrlstate';
+  return p1('getControllerState');
 }
 
 /** Path + body to set the controller motor state (motoron / motoroff). Requires mastership. */
 export function setControllerState(state: 'motoron' | 'motoroff'): { path: string; body: string } {
   return {
-    path: '/rw/panel/ctrlstate?action=setctrlstate',
+    path: p1('setControllerState'),
     body: `ctrl-state=${state}`,
   };
 }
 
 /** Path to read the current operation mode (AUTO, MANR, MANF) */
 export function operationMode(): string {
-  return '/rw/panel/opmode';
+  return p1('getOperationMode');
 }
 
 /** Path to read the current speed ratio (0-100) */
 export function speedRatio(): string {
-  return '/rw/panel/speedratio';
+  return p1('getSpeedRatio');
 }
 
 /**
@@ -56,7 +68,7 @@ export function assertSpeedRatio(ratio: number): number {
 /** Path + body to set the speed ratio. Only valid in AUTO mode. @param ratio 0-100 */
 export function setSpeedRatio(ratio: number): { path: string; body: string } {
   return {
-    path: '/rw/panel/speedratio?action=setspeedratio',
+    path: p1('setSpeedRatio'),
     body: `speed-ratio=${assertSpeedRatio(ratio)}`,
   };
 }
@@ -115,7 +127,7 @@ export function setExecutionCycle(cycle: 'once' | 'forever' | 'asis'): { path: s
 
 /** Path to read the collision detection state (INIT/TRIGGERED/CONFIRMED/TRIGGERED_ACK). */
 export function collisionDetectionState(): string {
-  return '/rw/panel/coldetstate';
+  return p1('getCollisionDetectionState');
 }
 
 /**
@@ -124,7 +136,7 @@ export function collisionDetectionState(): string {
  */
 export function restartController(mode: 'restart' | 'istart' | 'pstart' | 'bstart'): { path: string; body: string } {
   return {
-    path: '/rw/panel?action=restart',
+    path: p1('restartController'),
     body: `restart-mode=${mode}`,
   };
 }
@@ -136,14 +148,14 @@ export function restartController(mode: 'restart' | 'istart' | 'pstart' | 'bstar
  */
 export function lockOperationMode(pin: string, permanent: boolean): { path: string; body: string } {
   return {
-    path: '/rw/panel/opmode?action=lock',
+    path: p1('lockOperationMode'),
     body: `pin=${encodeURIComponent(pin)}&permanent=${permanent ? 1 : 0}`,
   };
 }
 
 /** Path + body to unlock the operation mode selector. */
 export function unlockOperationMode(): { path: string; body: string } {
-  return { path: '/rw/panel/opmode?action=unlock', body: '' };
+  return { path: p1('unlockOperationMode'), body: '' };
 }
 
 // ─── RAPID UI instructions ───────────────────────────────────────────────────

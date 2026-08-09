@@ -17,6 +17,8 @@
  */
 
 import { assertSpeedRatio } from './ResourceMapper.js';
+import { PANEL } from './paths/panel.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
 /** A write endpoint: path plus an optional urlencoded form body. */
 export interface Rws2Write {
@@ -24,58 +26,70 @@ export interface Rws2Write {
   body?: Record<string, string>;
 }
 
+/**
+ * RWS 2.0 path for a panel operation, from the path table (src/paths/panel.ts).
+ *
+ * The path tables are the single source of RWS URLs; this domain reads them
+ * rather than repeating the literal. tests/paths.test.ts proves the table paths
+ * equal what these functions used to return, so the migration is behaviour-
+ * preserving. Body-building stays here - the table owns the URL, not the values.
+ */
+const p2 = (op: keyof typeof PANEL, params?: Record<string, string | number>): string =>
+  buildPath(PANEL[op].rws2 as PathSpec, params);
+
 // ─── Panel Service (/rw/panel) ───────────────────────────────────────────────
 
 /** Read the controller state (motoron / motoroff / init / ...). */
 export function controllerState(): string {
-  return '/rw/panel/ctrl-state';
+  return p2('getControllerState');
 }
 
 /** Set the controller motor state. Requires mastership. */
 export function setControllerState(state: 'motoron' | 'motoroff'): Rws2Write {
-  return { path: '/rw/panel/ctrl-state', body: { 'ctrl-state': state } };
+  return { path: p2('setControllerState'), body: { 'ctrl-state': state } };
 }
 
 /** Read the operation mode (AUTO / MANR / MANF). */
 export function operationMode(): string {
-  return '/rw/panel/opmode';
+  return p2('getOperationMode');
 }
 
 /** Set the operation mode. Virtual controllers only (real controllers use the key switch). */
 export function setOperationMode(wireMode: string): Rws2Write {
-  return { path: '/rw/panel/opmode', body: { opmode: wireMode } };
+  return { path: p2('setOperationMode'), body: { opmode: wireMode } };
 }
 
 /** Read the speed ratio (0-100). */
 export function speedRatio(): string {
-  return '/rw/panel/speedratio';
+  return p2('getSpeedRatio');
 }
 
 /**
  * Set the speed ratio (0-100). Only valid in AUTO.
  * The real form field is `speed-ratio` (the spec's `speedratio` is wrong - OPTIONS
  * on /rw/panel/speedratio lists `speed-ratio`). The `?action=setspeedratio` form is
- * accepted by the controller and live-verified changing VC speed.
+ * accepted by the controller and live-verified changing VC speed - the table
+ * carries that action, so buildPath renders the query.
  */
 export function setSpeedRatio(ratio: number): Rws2Write {
   // Rejects out-of-range values rather than clamping - see assertSpeedRatio.
   const v = assertSpeedRatio(ratio);
-  return { path: '/rw/panel/speedratio?action=setspeedratio', body: { 'speed-ratio': String(v) } };
+  return { path: p2('setSpeedRatio'), body: { 'speed-ratio': String(v) } };
 }
 
 /** Read the collision detection state (INIT / TRIGGERED / CONFIRMED / ...). */
 export function collisionDetectionState(): string {
-  return '/rw/panel/coldetstate';
+  return p2('getCollisionDetectionState');
 }
 
 /** Lock the operation mode selector. */
 export function lockOperationMode(pin: string, permanent: boolean): Rws2Write {
-  return { path: '/rw/panel/opmode/lock', body: { pin, permanent: permanent ? '1' : '0' } };
+  return { path: p2('lockOperationMode'), body: { pin, permanent: permanent ? '1' : '0' } };
 }
 
 /** Unlock the operation mode selector. */
 export function unlockOperationMode(): Rws2Write {
-  return { path: '/rw/panel/opmode/unlock' };
+  return { path: p2('unlockOperationMode') };
 }
 
 /**
@@ -84,7 +98,7 @@ export function unlockOperationMode(): Rws2Write {
  * mode is echoed in the `opmode` field. OPTIONS-verified 2026-08-04 (RW7.21).
  */
 export function acknowledgeOperationMode(wireMode: string): Rws2Write {
-  return { path: '/rw/panel/opmode/acknowledge', body: { opmode: wireMode } };
+  return { path: p2('acknowledgeOperationMode'), body: { opmode: wireMode } };
 }
 
 // ─── RAPID Service - execution (/rw/rapid/execution) ─────────────────────────
