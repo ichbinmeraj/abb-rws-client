@@ -72,108 +72,82 @@ describe('path tables - structural integrity', () => {
  * SAME path. This is the proof the tables are faithful to shipped behaviour, and
  * the precondition for migrating call sites onto them.
  */
-describe('path tables - fidelity to the RWS 2.0 mapper', () => {
-  const cases: Array<[string, string, string]> = [
-    // [op, table path via buildPath, mapper path]
-    ['getControllerState', buildPath(ALL_TABLES.panel.getControllerState.rws2 as PathSpec), R2.controllerState()],
-    ['operationMode', buildPath(ALL_TABLES.panel.getOperationMode.rws2 as PathSpec), R2.operationMode()],
-    ['speedRatio', buildPath(ALL_TABLES.panel.getSpeedRatio.rws2 as PathSpec), R2.speedRatio()],
-    ['collisionDetectionState', buildPath(ALL_TABLES.panel.getCollisionDetectionState.rws2 as PathSpec), R2.collisionDetectionState()],
-  ];
-  for (const [op, tablePath, mapperPath] of cases) {
-    it(`panel.${op} matches ResourceMapper2`, () => {
-      expect(tablePath).toBe(mapperPath);
-    });
-  }
-
-  it('panel.setControllerState matches ResourceMapper2 (path)', () => {
-    const spec = ALL_TABLES.panel.setControllerState.rws2 as PathSpec;
-    expect(buildPath(spec)).toBe(R2.setControllerState('motoron').path);
-  });
-
-  it('panel.setSpeedRatio keeps the ?action= form the mapper uses', () => {
-    const spec = ALL_TABLES.panel.setSpeedRatio.rws2 as PathSpec;
-    // ResourceMapper2.setSpeedRatio returns { path } already carrying the query.
-    expect(buildPath(spec)).toBe(R2.setSpeedRatio(50).path);
-  });
-
-  // Every migrated panel WRITE: the mapper now sources its path from the table,
-  // so these lock that the round-trip is identical to the pre-migration literal.
-  it('all migrated RWS 2.0 panel writes match table paths', () => {
-    expect(R2.setControllerState('motoron').path).toBe(buildPath(ALL_TABLES.panel.setControllerState.rws2 as PathSpec));
-    expect(R2.setOperationMode('auto').path).toBe(buildPath(ALL_TABLES.panel.setOperationMode.rws2 as PathSpec));
-    expect(R2.lockOperationMode('1234', true).path).toBe(buildPath(ALL_TABLES.panel.lockOperationMode.rws2 as PathSpec));
-    expect(R2.unlockOperationMode().path).toBe(buildPath(ALL_TABLES.panel.unlockOperationMode.rws2 as PathSpec));
-    expect(R2.acknowledgeOperationMode('auto').path).toBe(buildPath(ALL_TABLES.panel.acknowledgeOperationMode.rws2 as PathSpec));
-  });
-});
-
-describe('path tables - fidelity to the RWS 1.0 mapper', () => {
-  const cases: Array<[string, string, string]> = [
-    ['controllerState', buildPath(ALL_TABLES.panel.getControllerState.rws1 as PathSpec), R1.controllerState()],
-    ['operationMode', buildPath(ALL_TABLES.panel.getOperationMode.rws1 as PathSpec), R1.operationMode()],
-    ['speedRatio', buildPath(ALL_TABLES.panel.getSpeedRatio.rws1 as PathSpec), R1.speedRatio()],
-  ];
-  for (const [op, tablePath, mapperPath] of cases) {
-    it(`panel.${op} matches ResourceMapper`, () => {
-      expect(tablePath).toBe(mapperPath);
-    });
-  }
-
-  it('panel.setControllerState matches ResourceMapper (?action= form)', () => {
-    const spec = ALL_TABLES.panel.setControllerState.rws1 as PathSpec;
-    expect(buildPath(spec)).toBe(R1.setControllerState('motoron').path);
-  });
-
-  it('all migrated RWS 1.0 panel writes match table paths', () => {
-    expect(R1.setSpeedRatio(50).path).toBe(buildPath(ALL_TABLES.panel.setSpeedRatio.rws1 as PathSpec));
-    expect(R1.collisionDetectionState()).toBe(buildPath(ALL_TABLES.panel.getCollisionDetectionState.rws1 as PathSpec));
-    expect(R1.restartController('restart').path).toBe(buildPath(ALL_TABLES.panel.restartController.rws1 as PathSpec));
-    expect(R1.lockOperationMode('1234', true).path).toBe(buildPath(ALL_TABLES.panel.lockOperationMode.rws1 as PathSpec));
-    expect(R1.unlockOperationMode().path).toBe(buildPath(ALL_TABLES.panel.unlockOperationMode.rws1 as PathSpec));
-  });
-});
-
 /**
- * Broad cross-domain verification. These operations are NOT migrated yet - the
- * assertions instead check that the agent-authored tables for rapid, motion and
- * ctrl agree with what the mapper functions produce today. A mismatch here means
- * a table is WRONG (a path the migration would then get wrong), so this both
- * validates the tables beyond panel and is the safety net for migrating those
- * domains next.
+ * Post-migration LOCK: the mappers now source paths from the tables, so
+ * comparing a mapper to buildPath(table) would be tautological. These assert the
+ * EXACT expected URL literals instead - the real regression net. Every value
+ * here is the path the code produced BEFORE the migration; if a table edit (or a
+ * migration mis-mapping) changes a URL, it fails here rather than as a 404
+ * against a robot. Covers the highest-risk / trickiest ops across every domain.
  */
-describe('path tables - cross-domain fidelity (rapid / motion / ctrl)', () => {
-  it('rapid execution paths agree with ResourceMapper2', () => {
-    expect(buildPath(ALL_TABLES.rapid.getRapidExecutionState.rws2 as PathSpec)).toBe(R2.rapidExecution());
-    expect(buildPath(ALL_TABLES.rapid.startRapid.rws2 as PathSpec)).toBe(R2.startRapid().path);
-    expect(buildPath(ALL_TABLES.rapid.stopRapid.rws2 as PathSpec)).toBe(R2.stopRapid().path);
-    expect(buildPath(ALL_TABLES.rapid.resetRapid.rws2 as PathSpec)).toBe(R2.resetRapid().path);
-    expect(buildPath(ALL_TABLES.rapid.setExecutionCycle.rws2 as PathSpec)).toBe(R2.setExecutionCycle('once').path);
-    expect(buildPath(ALL_TABLES.rapid.startProductionEntry.rws2 as PathSpec)).toBe(R2.startProductionEntry().path);
+describe('path tables - exact URLs (RWS 2.0)', () => {
+  it('panel', () => {
+    expect(R2.controllerState()).toBe('/rw/panel/ctrl-state');
+    expect(R2.setControllerState('motoron').path).toBe('/rw/panel/ctrl-state');
+    expect(R2.operationMode()).toBe('/rw/panel/opmode');
+    expect(R2.speedRatio()).toBe('/rw/panel/speedratio');
+    expect(R2.setSpeedRatio(50).path).toBe('/rw/panel/speedratio?action=setspeedratio');
+    expect(R2.collisionDetectionState()).toBe('/rw/panel/coldetstate');
+    expect(R2.lockOperationMode('1234', true).path).toBe('/rw/panel/opmode/lock');
+    expect(R2.unlockOperationMode().path).toBe('/rw/panel/opmode/unlock');
+    expect(R2.acknowledgeOperationMode('auto').path).toBe('/rw/panel/opmode/acknowledge');
   });
-
-  it('rapid execution paths agree with ResourceMapper (RWS 1.0)', () => {
-    expect(buildPath(ALL_TABLES.rapid.getRapidExecutionState.rws1 as PathSpec)).toBe(R1.rapidExecutionState());
-    expect(buildPath(ALL_TABLES.rapid.startRapid.rws1 as PathSpec)).toBe(R1.startRapid().path);
-    expect(buildPath(ALL_TABLES.rapid.stopRapid.rws1 as PathSpec)).toBe(R1.stopRapid().path);
-    expect(buildPath(ALL_TABLES.rapid.resetRapid.rws1 as PathSpec)).toBe(R1.resetRapid().path);
-    expect(buildPath(ALL_TABLES.rapid.setExecutionCycle.rws1 as PathSpec)).toBe(R1.setExecutionCycle('once').path);
+  it('rapid execution', () => {
+    expect(R2.rapidExecution()).toBe('/rw/rapid/execution');
+    expect(R2.startRapid().path).toBe('/rw/rapid/execution/start');
+    expect(R2.stopRapid().path).toBe('/rw/rapid/execution/stop');
+    expect(R2.resetRapid().path).toBe('/rw/rapid/execution/resetpp');
+    expect(R2.setExecutionCycle('once').path).toBe('/rw/rapid/execution/cycle');
+    expect(R2.startProductionEntry().path).toBe('/rw/rapid/execution/startprodentry');
   });
-
-  it('motion supervision paths agree with ResourceMapper2 (incl. the level/sensitivity trap)', () => {
-    expect(buildPath(ALL_TABLES.motion.setMotionSupervisionMode.rws2 as PathSpec, { mechunit: 'ROB_1' }))
-      .toBe(R2.setMotionSupervisionMode('ROB_1', 'on').path);
-    // The path segment is `level` but the body field is `sensitivity` - the
-    // table must carry the segment, and this proves it does.
-    expect(buildPath(ALL_TABLES.motion.setMotionSupervisionSensitivity.rws2 as PathSpec, { mechunit: 'ROB_1' }))
-      .toBe(R2.setMotionSupervisionSensitivity('ROB_1', 80).path);
-    expect(buildPath(ALL_TABLES.motion.setPathSupervisionMode.rws2 as PathSpec, { mechunit: 'ROB_1' }))
-      .toBe(R2.setPathSupervisionMode('ROB_1', 'on').path);
+  it('rapid load/save with params', () => {
+    expect(R2.loadProgram('T_ROB1', 'HOME/p.pgf', 'add').path).toBe('/rw/rapid/tasks/T_ROB1/program/load');
+    expect(R2.saveProgram('T_ROB1', 'HOME/p.pgf').path).toBe('/rw/rapid/tasks/T_ROB1/program/save');
+    expect(R2.saveModuleAs('T_ROB1', 'Module1', 'm', 'TEMP:').path).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/save');
   });
+  it('motion supervision (level segment, sensitivity field)', () => {
+    expect(R2.setMotionSupervisionMode('ROB_1', 'on').path).toBe('/rw/motionsystem/mechunits/ROB_1/motionsupervision/mode');
+    expect(R2.setMotionSupervisionSensitivity('ROB_1', 80).path).toBe('/rw/motionsystem/mechunits/ROB_1/motionsupervision/level');
+    expect(R2.setPathSupervisionMode('ROB_1', 'on').path).toBe('/rw/motionsystem/mechunits/ROB_1/pathsupervision/mode');
+  });
+  it('ctrl backup', () => {
+    expect(R2.createBackup('b').path).toBe('/ctrl/backup/create');
+    expect(R2.restoreBackup('b').path).toBe('/ctrl/backup/restore');
+    expect(R2.checkRestore('b').path).toBe('/ctrl/backup/check-restore');
+  });
+  it('mastership + control station', () => {
+    expect(R2.requestMastership('edit').path).toBe('/rw/mastership/edit/request');
+    expect(R2.releaseMastership('edit').path).toBe('/rw/mastership/edit/release');
+    expect(R2.requestWriteAccess().path).toBe('/rw/controlstation/writeaccess/request');
+    expect(R2.releaseWriteAccess().path).toBe('/rw/controlstation/writeaccess/release');
+  });
+});
 
-  it('ctrl backup paths agree with ResourceMapper2', () => {
-    expect(buildPath(ALL_TABLES.ctrl.createBackup.rws2 as PathSpec)).toBe(R2.createBackup('b').path);
-    expect(buildPath(ALL_TABLES.ctrl.restoreBackup.rws2 as PathSpec)).toBe(R2.restoreBackup('b').path);
-    expect(buildPath(ALL_TABLES.ctrl.checkRestore.rws2 as PathSpec)).toBe(R2.checkRestore('b').path);
+describe('path tables - exact URLs (RWS 1.0)', () => {
+  it('panel', () => {
+    expect(R1.controllerState()).toBe('/rw/panel/ctrlstate');
+    expect(R1.setControllerState('motoron').path).toBe('/rw/panel/ctrlstate?action=setctrlstate');
+    expect(R1.operationMode()).toBe('/rw/panel/opmode');
+    expect(R1.setSpeedRatio(50).path).toBe('/rw/panel/speedratio?action=setspeedratio');
+    expect(R1.collisionDetectionState()).toBe('/rw/panel/coldetstate');
+    expect(R1.restartController('restart').path).toBe('/rw/panel?action=restart');
+    expect(R1.lockOperationMode('1234', true).path).toBe('/rw/panel/opmode?action=lock');
+    expect(R1.unlockOperationMode().path).toBe('/rw/panel/opmode?action=unlock');
+  });
+  it('rapid execution (query-action form)', () => {
+    expect(R1.rapidExecutionState()).toBe('/rw/rapid/execution');
+    expect(R1.startRapid().path).toBe('/rw/rapid/execution?action=start');
+    expect(R1.stopRapid().path).toBe('/rw/rapid/execution?action=stop');
+    expect(R1.resetRapid().path).toBe('/rw/rapid/execution?action=resetpp');
+    expect(R1.setExecutionCycle('once').path).toBe('/rw/rapid/execution?action=setcycle');
+  });
+  it('rapid tasks with params', () => {
+    expect(R1.activateRapidTask('T_ROB1').path).toBe('/rw/rapid/tasks/T_ROB1?action=activate');
+    expect(R1.loadModule('T_ROB1', '$HOME/m.mod', false).path).toBe('/rw/rapid/tasks/T_ROB1?action=loadmod');
+  });
+  it('mastership + system', () => {
+    expect(R1.requestMastership('motion').path).toBe('/rw/mastership/motion?action=request');
+    expect(R1.releaseMastership('motion').path).toBe('/rw/mastership/motion?action=release');
+    expect(R1.systemInfo()).toBe('/rw/system');
   });
 });

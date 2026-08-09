@@ -9,6 +9,10 @@ import { classifyControllerError } from './ControllerError.js';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import type { IRWSAdapter } from './IRWSAdapter.js';
+import {
+  RAPID, MOTION, IO, CFG_ELOG_DIPC, CTRL, SYSTEM_MASTERSHIP, USERS_UAS, FILES_VISION,
+} from './paths/index.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
 interface RWS1Credentials {
   host: string;
@@ -81,7 +85,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   /** RWS 1.0 module-list also exposes name + type (SysMod / ProgMod) per entry. */
   async listModulesDetailed(task: string): Promise<Array<{ name: string; type: string }>> {
-    const r = await this.rws1Get(`/rw/rapid/modules?task=${encodeURIComponent(task)}`);
+    const r = await this.rws1Get(`${buildPath(RAPID.listModulesDetailed.rws1 as PathSpec)}?task=${encodeURIComponent(task)}`);
     return r.states
       .map(s => ({ name: (s as Record<string,string>)['name'] ?? '', type: (s as Record<string,string>)['type'] ?? '' }))
       .filter(m => m.name);
@@ -106,7 +110,7 @@ export class RWS1Adapter implements IRWSAdapter {
   }
   /** List mechanical units from the controller (positioners/track units show up beyond ROB_1). */
   async listMechunits(): Promise<string[]> {
-    const r = await this.rws1Get('/rw/motionsystem/mechunits');
+    const r = await this.rws1Get(buildPath(MOTION.listMechunits.rws1 as PathSpec));
     const units = r.states
       .map(s => ((s as Record<string, string>)['_title'] ?? (s as Record<string, string>)['name']))
       .filter(Boolean) as string[];
@@ -150,11 +154,11 @@ export class RWS1Adapter implements IRWSAdapter {
 
   /** Request mastership on all domains (cfg + motion + rapid) at once. */
   async requestMastershipAll(): Promise<void> {
-    await this.rws1Post('/rw/mastership?action=request', '');
+    await this.rws1Post(buildPath(SYSTEM_MASTERSHIP.requestMastershipAll.rws1 as PathSpec), '');
   }
   /** Release mastership on all domains at once. */
   async releaseMastershipAll(): Promise<void> {
-    await this.rws1Post('/rw/mastership?action=release', '');
+    await this.rws1Post(buildPath(SYSTEM_MASTERSHIP.releaseMastershipAll.rws1 as PathSpec), '');
   }
   /**
    * RWS 1.0 doesn't expose `request-with-id` / `release-with-id` - those are
@@ -168,13 +172,13 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   /** Read mastership status for one domain. */
   async getMastershipStatus(d: MastershipDomain): Promise<{ mastership: string; uid?: string; application?: string }> {
-    const r = await this.rws1Get(`/rw/mastership/${d}`);
+    const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.getMastershipStatus.rws1 as PathSpec, { domain: d }));
     const s = r.state as { mastership?: string; uid?: string; application?: string } | null;
     return { mastership: s?.mastership ?? 'unknown', uid: s?.uid, application: s?.application };
   }
   /** List mastership domains (RWS 1.0: ['cfg', 'motion', 'rapid']). */
   async listMastershipDomains(): Promise<string[]> {
-    const r = await this.rws1Get('/rw/mastership');
+    const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.listMastershipDomains.rws1 as PathSpec));
     return r.states.map(s => (s as Record<string, string>)['_title']).filter(Boolean);
   }
 
@@ -194,7 +198,7 @@ export class RWS1Adapter implements IRWSAdapter {
     return res.body;
   }
   async listAllIoDevices(): Promise<Array<{ name: string; network: string; lstate: string; pstate: string; address: string }>> {
-    const r = await this.rws1Get('/rw/iosystem/devices');
+    const r = await this.rws1Get(buildPath(IO.listAllIoDevices.rws1 as PathSpec));
     return r.states.map(state => {
       const s = state as Record<string, string>;
       const title = s['_title'] ?? '';
@@ -226,7 +230,7 @@ export class RWS1Adapter implements IRWSAdapter {
       `tool=${tool}`,
       `wobj=${wobj}`,
     ].join('&');
-    const path = `/rw/motionsystem/mechunits/${mechunit}?action=CalcRobTFromJoints&json=1`;
+    const path = `${buildPath(MOTION.calcCartesianFromJoints.rws1 as PathSpec, { mechunit })}&json=1`;
     const result = await this.digestPost(host, port, path, body, username, password) as { _embedded?: { _state?: Array<Record<string, string>> } };
     const state = result._embedded?._state?.[0];
     if (!state) { throw new RwsError('FK: no result in response', 'PARSE_ERROR'); }
@@ -272,7 +276,7 @@ export class RWS1Adapter implements IRWSAdapter {
     ].join('&');
 
     const { host, port, username, password } = this.creds;
-    const path = `/rw/motionsystem?action=jog&json=1`;
+    const path = `${buildPath(MOTION.jog.rws1 as PathSpec)}&json=1`;
     const result = await this.digestPost(host, port, path, bodyStr, username, password);
     // Successful jog has no useful body - only check for error status.
     const status = (result._embedded as { status?: { msg?: string } } | undefined)?.status;
@@ -319,7 +323,7 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── System detail ───────────────────────────────────────────────────────
 
   async getRobotType(): Promise<{ type: string; variant?: string }> {
-    const r = await this.rws1Get('/rw/system/robottype');
+    const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.getRobotType.rws1 as PathSpec));
     const s = r.state as { 'robot-type'?: string; type?: string; variant?: string } | null;
     return { type: s?.['robot-type'] ?? s?.type ?? '', variant: s?.variant };
   }
@@ -327,18 +331,18 @@ export class RWS1Adapter implements IRWSAdapter {
   async getLicenseInfo(): Promise<{ entries: Array<Record<string, string>> }> {
     // RWS 1.0 path is singular `/license`. Doc 6.8 has it as plural `/licenses`
     // but live IRC5 returns 404 for that - singular works.
-    const r = await this.rws1Get('/rw/system/license');
+    const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.getLicenseInfo.rws1 as PathSpec));
     return { entries: r.states as Array<Record<string, string>> };
   }
 
   async listProducts(): Promise<Array<Record<string, string>>> {
-    const r = await this.rws1Get('/rw/system/products');
+    const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.listProducts.rws1 as PathSpec));
     return r.states as Array<Record<string, string>>;
   }
 
   async getEnergyStats(): Promise<Record<string, string>> {
     try {
-      const r = await this.rws1Get('/rw/system/energy');
+      const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.getEnergyStats.rws1 as PathSpec));
       return (r.state as Record<string, string>) ?? {};
     } catch { return {}; }
   }
@@ -364,7 +368,7 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   async listControllerOptions(): Promise<Array<{ name: string; description?: string }>> {
     try {
-      const r = await this.rws1Get('/rw/system/options');
+      const r = await this.rws1Get(buildPath(SYSTEM_MASTERSHIP.listControllerOptions.rws1 as PathSpec));
       return r.states
         .filter(o => (o as Record<string, string>)['_type'] === 'sys-option-li')
         .map(o => ({
@@ -378,34 +382,34 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── Motion detail ──────────────────────────────────────────────────────
 
   async getMotionChangeCount(): Promise<number> {
-    const r = await this.rws1Get('/rw/motionsystem');
+    const r = await this.rws1Get(buildPath(MOTION.getMotionChangeCount.rws1 as PathSpec));
     const s = r.state as { 'change-count'?: string } | null;
     return Number(s?.['change-count'] ?? 0);
   }
 
   async getMotionErrorState(): Promise<{ state: string; details?: Record<string, string> }> {
-    const r = await this.rws1Get('/rw/motionsystem/errorstate');
+    const r = await this.rws1Get(buildPath(MOTION.getMotionErrorState.rws1 as PathSpec));
     const s = r.state as Record<string, string> | null;
     return { state: s?.['err-state'] ?? s?.state ?? 'unknown', details: s ?? undefined };
   }
 
   async getNonMotionExecution(): Promise<boolean> {
-    const r = await this.rws1Get('/rw/motionsystem/nonmotionexecution');
+    const r = await this.rws1Get(buildPath(MOTION.getNonMotionExecution.rws1 as PathSpec));
     const s = r.state as { mode?: string } | null;
     return (s?.mode ?? '').toUpperCase() === 'ON';
   }
 
   async setNonMotionExecution(enabled: boolean): Promise<void> {
-    await this.rws1Post('/rw/motionsystem/nonmotionexecution?action=set', `mode=${enabled ? 'ON' : 'OFF'}`);
+    await this.rws1Post(buildPath(MOTION.setNonMotionExecution.rws1 as PathSpec), `mode=${enabled ? 'ON' : 'OFF'}`);
   }
 
   async getMechunitInfo(mechunit = 'ROB_1'): Promise<Record<string, string>> {
-    const r = await this.rws1Get(`/rw/motionsystem/mechunits/${mechunit}`);
+    const r = await this.rws1Get(buildPath(MOTION.getMechunitInfo.rws1 as PathSpec, { mechunit }));
     return (r.state as Record<string, string>) ?? {};
   }
 
   async getMechunitBaseFrame(mechunit = 'ROB_1'): Promise<{ x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }> {
-    const r = await this.rws1Get(`/rw/motionsystem/mechunits/${mechunit}/baseframe`);
+    const r = await this.rws1Get(buildPath(MOTION.getMechunitBaseFrame.rws1 as PathSpec, { mechunit }));
     const s = (r.state as Record<string, string>) ?? {};
     return { x: +s.x, y: +s.y, z: +s.z, q1: +s.q1, q2: +s.q2, q3: +s.q3, q4: +s.q4 };
   }
@@ -413,7 +417,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async getMechunitAxes(mechunit = 'ROB_1'): Promise<Array<Record<string, string>>> {
     // RWS 1.0 returns 2 entries: an axis-count summary and a sub-resource link list.
     // Fetch each axis individually to get its real data.
-    const r = await this.rws1Get(`/rw/motionsystem/mechunits/${mechunit}/axes`);
+    const r = await this.rws1Get(buildPath(MOTION.getMechunitAxes.rws1 as PathSpec, { mechunit }));
     const summary = r.states.find(s => s._type === 'ms-mechunit-axes');
     const count = +((summary as { axes?: string } | undefined)?.axes ?? '0');
     if (count === 0) { return []; }
@@ -428,19 +432,19 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   async getActiveTool(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const r = await this.rws1Get(`/rw/motionsystem/mechunits/${mechunit}`);
+    const r = await this.rws1Get(buildPath(MOTION.getActiveTool.rws1 as PathSpec, { mechunit }));
     const s = (r.state as Record<string, string>) ?? {};
     return { name: s['tool-name'] ?? 'tool0' };
   }
 
   async getActiveWobj(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const r = await this.rws1Get(`/rw/motionsystem/mechunits/${mechunit}`);
+    const r = await this.rws1Get(buildPath(MOTION.getActiveWobj.rws1 as PathSpec, { mechunit }));
     const s = (r.state as Record<string, string>) ?? {};
     return { name: s['wobj-name'] ?? 'wobj0' };
   }
 
   async getActivePayload(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const r = await this.rws1Get(`/rw/motionsystem/mechunits/${mechunit}`);
+    const r = await this.rws1Get(buildPath(MOTION.getActivePayload.rws1 as PathSpec, { mechunit }));
     const s = (r.state as Record<string, string>) ?? {};
     return { name: s['total-payload-name'] ?? s['payload-name'] ?? 'load0' };
   }
@@ -449,7 +453,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async listAliasIO(): Promise<Array<{ alias: string; signal: string }>> {
     try {
-      const r = await this.rws1Get('/rw/rapid/aliasio');
+      const r = await this.rws1Get(buildPath(RAPID.listAliasIO.rws1 as PathSpec));
       return r.states.map(a => ({
         alias: (a.name ?? a.alias ?? '') as string,
         signal: (a.signal ?? a._title ?? '') as string,
@@ -459,7 +463,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getProgramPointer(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }> {
     try {
-      const r = await this.rws1Get(`/rw/rapid/tasks/${task}/pcp`);
+      const r = await this.rws1Get(buildPath(RAPID.getProgramPointer.rws1 as PathSpec, { task }));
       const s = (r.state as Record<string, string>) ?? {};
       const begin = (s.beginposition ?? '').split(',');
       return {
@@ -474,7 +478,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async getMotionPointer(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }> {
     // RWS 1.0 path is /rw/rapid/tasks/{task}/motion (per official doc 6.7)
     try {
-      const r = await this.rws1Get(`/rw/rapid/tasks/${task}/motion`);
+      const r = await this.rws1Get(buildPath(RAPID.getMotionPointer.rws1 as PathSpec, { task }));
       const s = (r.state as Record<string, string>) ?? {};
       return {
         module:  s.modulename ?? s.modulemame ?? s.module,
@@ -486,13 +490,13 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── CFG database ───────────────────────────────────────────────────────
 
   async listCfgDomains(): Promise<string[]> {
-    const r = await this.rws1Get('/rw/cfg');
+    const r = await this.rws1Get(buildPath(CFG_ELOG_DIPC.listCfgDomains.rws1 as PathSpec));
     return r.states.map(d => (d._title ?? d.name) as string).filter(Boolean);
   }
 
   async listCfgTypes(domain: string): Promise<string[]> {
     const types: string[] = [];
-    let path = `/rw/cfg/${domain}`;
+    let path = buildPath(CFG_ELOG_DIPC.listCfgTypes.rws1 as PathSpec, { domain });
     let pages = 0;
     while (path && pages < 50) {
       const r = await this.rws1Get(path);
@@ -511,7 +515,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async listCfgInstances(domain: string, type: string): Promise<string[]> {
     try {
-      const r = await this.rws1Get(`/rw/cfg/${domain}/${type}/instances`);
+      const r = await this.rws1Get(buildPath(CFG_ELOG_DIPC.listCfgInstances.rws1 as PathSpec, { domain, type }));
       return r.states.map(i => (i._title ?? i.name) as string).filter(Boolean);
     } catch { return []; }
   }
@@ -520,7 +524,7 @@ export class RWS1Adapter implements IRWSAdapter {
     // RWS 1.0 inlines all attribute data in the instance-list response. The single-instance
     // GET also works at `/instances/{name}`. Use the list call (one HTTP request) and find
     // by _title - also handles instance names with spaces/special chars correctly.
-    const r = await this.rws1Get(`/rw/cfg/${domain}/${type}/instances`);
+    const r = await this.rws1Get(buildPath(CFG_ELOG_DIPC.getCfgInstance.rws1 as PathSpec, { domain, type }));
     const target = r.states.find(s => s._title === instance);
     if (!target) { return {}; }
 
@@ -574,7 +578,7 @@ export class RWS1Adapter implements IRWSAdapter {
     await this.client.requestMastership('cfg');
     try {
       await this.rws1Post(
-        `/rw/cfg/${domain}/${type}/instances?action=create-default`,
+        buildPath(CFG_ELOG_DIPC.createCfgInstance.rws1 as PathSpec, { domain, type }),
         `name=${encodeURIComponent(instance)}`,
       );
       if (Object.keys(attrs).length > 0) {
@@ -595,7 +599,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async removeCfgInstance(domain: string, type: string, instance: string): Promise<void> {
     await this.client.requestMastership('cfg');
     try {
-      const url = `/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?json=1`;
+      const url = `${buildPath(CFG_ELOG_DIPC.removeCfgInstance.rws1 as PathSpec, { domain, type, instance })}?json=1`;
       const res = await this.client.request('DELETE', url);
       if (res.status >= 400) { throw rws1Error('DELETE', url, res.status, res.body); }
     } finally {
@@ -606,7 +610,7 @@ export class RWS1Adapter implements IRWSAdapter {
   /** Shared ?action=set POST - plain `Attr=value` form pairs (RWS 1.0 wire shape). */
   private async postCfgSet(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void> {
     const body = Object.entries(attrs).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
-    await this.rws1Post(`/rw/cfg/${domain}/${type}/instances/${encodeURIComponent(instance)}?action=set`, body);
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.setCfgInstance.rws1 as PathSpec, { domain, type, instance }), body);
   }
 
   // ── Backup ─────────────────────────────────────────────────────────────
@@ -623,7 +627,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getBackupStatus(): Promise<{ active: boolean; progress?: number; phase?: string }> {
     try {
-      const r = await this.rws1Get('/ctrl/backup');
+      const r = await this.rws1Get(buildPath(CTRL.getBackupStatus.rws1 as PathSpec));
       const s = (r.state as Record<string, string>) ?? {};
       const phase = s['progress-state'] ?? s.phase ?? '';
       return {
@@ -638,7 +642,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getRmmpPrivilege(): Promise<string> {
     try {
-      const r = await this.rws1Get('/users/rmmp');
+      const r = await this.rws1Get(buildPath(USERS_UAS.getRmmpPrivilege.rws1 as PathSpec));
       const s = (r.state as Record<string, string>) ?? {};
       const priv = s.privilege ?? 'none';
       const heldByMe = (s.rmmpheldbyme ?? 'false').toLowerCase() === 'true';
@@ -648,7 +652,7 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
-    await this.rws1Post('/users/rmmp', `privilege=${level}`);
+    await this.rws1Post(buildPath(USERS_UAS.requestRmmp.rws1 as PathSpec), `privilege=${level}`);
   }
 
   // ── Stage 7: Backup / Restore / Progress (5 methods) ───────────────────
@@ -659,12 +663,12 @@ export class RWS1Adapter implements IRWSAdapter {
     // fileservice URI: bare '$BACKUP/x' answers 400 "Invalid File Service path";
     // '/fileservice/$BACKUP/x' answers 202 (live-verified 2026-08 on RW6.16 -
     // the same URI scheme the RWS 2.0 file-target writes require).
-    await this.rws1Post('/ctrl/backup?action=backup',
+    await this.rws1Post(buildPath(CTRL.createBackup.rws1 as PathSpec),
       `backup=${encodeURIComponent(`/fileservice/$BACKUP/${name}`)}`);
   }
 
   async restoreBackup(name: string): Promise<void> {
-    await this.rws1Post('/ctrl/backup?action=restore',
+    await this.rws1Post(buildPath(CTRL.restoreBackup.rws1 as PathSpec),
       `backup=${encodeURIComponent(`/fileservice/$BACKUP/${name}`)}`);
   }
 
@@ -691,7 +695,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async listDipcQueues(): Promise<Array<{ name: string; size?: number }>> {
     try {
-      const r = await this.rws1Get('/rw/dipc');
+      const r = await this.rws1Get(buildPath(CFG_ELOG_DIPC.listDipcQueues.rws1 as PathSpec));
       return r.states.map(q => ({
         name: (q._title ?? q['queue-name'] ?? '') as string,
         size: q['queue-size'] !== undefined ? +(q['queue-size'] as string) : undefined,
@@ -703,18 +707,18 @@ export class RWS1Adapter implements IRWSAdapter {
     const parts = [`dipc-queue-name=${encodeURIComponent(name)}`];
     if (options.maxsize)     { parts.push(`dipc-max-size=${options.maxsize}`); }
     if (options.maxmessages) { parts.push(`dipc-max-number-of-messages=${options.maxmessages}`); }
-    await this.rws1Post('/rw/dipc?action=create', parts.join('&'));
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.createDipcQueue.rws1 as PathSpec), parts.join('&'));
   }
 
   async sendDipcMessage(queue: string, payload: string, type: 'string' | 'num' | 'dnum' | 'bool' = 'string'): Promise<void> {
     const typeCode = type === 'string' ? '0' : type === 'num' ? '1' : type === 'dnum' ? '2' : '3';
-    await this.rws1Post(`/rw/dipc/${encodeURIComponent(queue)}?action=send`,
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.sendDipcMessage.rws1 as PathSpec, { queue }),
       `dipc-src-queue-name=${encodeURIComponent(queue)}&dipc-cmd=111&dipc-data=${encodeURIComponent(payload)}&dipc-msgtype=${typeCode}`);
   }
 
   async readDipcMessage(queue: string): Promise<{ payload: string; type: string } | null> {
     try {
-      const r = await this.rws1Get(`/rw/dipc/${encodeURIComponent(queue)}?action=read`);
+      const r = await this.rws1Get(buildPath(CFG_ELOG_DIPC.readDipcMessage.rws1 as PathSpec, { queue }));
       const s = r.state as Record<string, string> | null;
       if (!s || !s['dipc-data']) { return null; }
       return { payload: s['dipc-data'], type: s['dipc-msgtype'] ?? 'string' };
@@ -722,14 +726,14 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   async removeDipcQueue(name: string): Promise<void> {
-    await this.client.request('DELETE', `/rw/dipc/${encodeURIComponent(name)}?json=1`);
+    await this.client.request('DELETE', `${buildPath(CFG_ELOG_DIPC.removeDipcQueue.rws1 as PathSpec, { queue: name })}?json=1`);
   }
 
   // ── Stage 9: Safety (5 methods) ────────────────────────────────────────
 
   async getSafetyStatus(): Promise<{ state: string; details?: Record<string, string> }> {
     try {
-      const r = await this.rws1Get('/ctrl/safety');
+      const r = await this.rws1Get(buildPath(CTRL.getSafetyStatus.rws1 as PathSpec));
       const s = r.state as Record<string, string> | null;
       return { state: s?.state ?? 'unavailable', details: s ?? undefined };
     } catch { return { state: 'unavailable' }; }
@@ -737,13 +741,13 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async listSafetyZones(): Promise<Array<Record<string, string>>> {
     try {
-      const r = await this.rws1Get('/ctrl/safety/zones');
+      const r = await this.rws1Get(buildPath(CTRL.listSafetyZones.rws1 as PathSpec));
       return r.states as Array<Record<string, string>>;
     } catch { return []; }
   }
 
   async runCyclicBrakeCheck(): Promise<void> {
-    await this.rws1Post('/ctrl/safety/cyclic-brake-check', '');
+    await this.rws1Post(buildPath(CTRL.runCyclicBrakeCheck.rws1 as PathSpec), '');
   }
 
   // ── Stage 10: Virtual time (3 methods, VC-only) ────────────────────────
@@ -771,14 +775,14 @@ export class RWS1Adapter implements IRWSAdapter {
   }
 
   async setVirtualTimeScale(scale: number): Promise<void> {
-    await this.rws1Post('/ctrl/virtualtime/vtspeed?action=set', `vtcurrspeed=${scale}`);
+    await this.rws1Post(buildPath(CTRL.setVirtualTimeScale.rws1 as PathSpec), `vtcurrspeed=${scale}`);
   }
 
   // ── Stage 11: Vision (5 methods) ───────────────────────────────────────
 
   async listVisionSystems(): Promise<Array<{ name: string; status?: string }>> {
     try {
-      const r = await this.rws1Get('/rw/vision');
+      const r = await this.rws1Get(buildPath(FILES_VISION.listVisionSystems.rws1 as PathSpec));
       return r.states.map(v => ({
         name:   (v._title ?? v.name ?? '') as string,
         status: v.status as string | undefined,
@@ -788,13 +792,13 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getVisionSystemInfo(name: string): Promise<Record<string, string>> {
     try {
-      const r = await this.rws1Get(`/rw/vision/${encodeURIComponent(name)}`);
+      const r = await this.rws1Get(buildPath(FILES_VISION.getVisionSystemInfo.rws1 as PathSpec, { name }));
       return (r.state as Record<string, string>) ?? {};
     } catch { return {}; }
   }
 
   async triggerVisionJob(system: string): Promise<void> {
-    await this.rws1Post(`/rw/vision/${encodeURIComponent(system)}?action=trigger`, '');
+    await this.rws1Post(buildPath(FILES_VISION.triggerVisionJob.rws1 as PathSpec, { system }), '');
   }
 
   // ── Stage 12: RAPID extras (4 methods) ─────────────────────────────────
@@ -880,7 +884,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async listModuleRoutines(task: string, moduleName: string): Promise<Array<{ name: string; type: string }>> {
     try {
-      const r = await this.rws1Get(`/rw/rapid/modules/${task}/${moduleName}/routines`);
+      const r = await this.rws1Get(buildPath(RAPID.listModuleRoutines.rws1 as PathSpec, { task, module: moduleName }));
       return r.states.map(rt => ({
         name: (rt.name ?? rt._title ?? '') as string,
         type: (rt.type ?? '') as string,
@@ -891,7 +895,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async listBreakpoints(task: string): Promise<Array<{ module: string; row: number; col?: number }>> {
     try {
       // Per official doc: CCRapidBreakPointResource - exact path varies by RW version.
-      const r = await this.rws1Get(`/rw/rapid/tasks/${task}/breakpoints`);
+      const r = await this.rws1Get(buildPath(RAPID.listBreakpoints.rws1 as PathSpec, { task }));
       return r.states.map(b => ({
         module: (b.module ?? b.modulename ?? '') as string,
         row:    +(b['begin-position-row'] ?? b.row ?? 0),
@@ -906,7 +910,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  hold-to-run is a manual-mode function anyway. Kept for source
    *  compatibility; expect the controller's 400 until the form is found. */
   async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
-    await this.rws1Post(`/rw/rapid/tasks/${task}?action=holdtorun`, `action=${action}`);
+    await this.rws1Post(buildPath(RAPID.holdToRun.rws1 as PathSpec, { task }), `action=${action}`);
   }
 
   /**
@@ -967,7 +971,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  on RW6.16 (404) - the elog lookup is the only batch-5 read RWS 1.0 has. */
   async getEventLogMessage(domain: number, seqnum: number, lang = 'en'): Promise<ElogMessage | null> {
     try {
-      const r = await this.rws1Get(`/rw/elog/${domain}/${seqnum}?lang=${encodeURIComponent(lang)}`);
+      const r = await this.rws1Get(`${buildPath(CFG_ELOG_DIPC.getEventLogMessage.rws1 as PathSpec, { domain, seqnum })}?lang=${encodeURIComponent(lang)}`);
       const m = (r.states.find(s => (s as Record<string, string>)['_type'] === 'elog-message') ?? {}) as Record<string, string>;
       if (!m['code']) { return null; }
       return {
@@ -985,7 +989,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  spells them routine_name / url_to_routine - both read for safety). */
   async listServiceRoutines(task: string): Promise<Array<{ name: string; url: string }>> {
     try {
-      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/serviceroutine`);
+      const r = await this.rws1Get(buildPath(RAPID.listServiceRoutines.rws1 as PathSpec, { task }));
       return r.states
         .filter(s => (s as Record<string, string>)['_type'] === 'rap-task-routine')
         .map(s => {
@@ -1000,7 +1004,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  GET /rw/rapid/modules/{module}?task= returns class rap-module with
    *  taskname/modname/filename/attribute. Parity with RwsClient2.getModuleInfo. */
   async getModuleInfo(task: string, moduleName: string): Promise<Record<string, string>> {
-    const r = await this.rws1Get(`/rw/rapid/modules/${encodeURIComponent(moduleName)}?task=${encodeURIComponent(task)}`);
+    const r = await this.rws1Get(`${buildPath(RAPID.getModuleInfo.rws1 as PathSpec, { module: moduleName })}?task=${encodeURIComponent(task)}`);
     const d = (r.states.find(s => (s as Record<string, string>)['_type'] === 'rap-module') ?? r.state ?? {}) as Record<string, string>;
     return d;
   }
@@ -1013,7 +1017,7 @@ export class RWS1Adapter implements IRWSAdapter {
    * XML form is the only reliable one.
    */
   async getTaskProgramInfo(task: string): Promise<Record<string, string>> {
-    const res = await this.client.request('GET', `/rw/rapid/tasks/${encodeURIComponent(task)}/program`);
+    const res = await this.client.request('GET', buildPath(RAPID.getTaskProgramInfo.rws1 as PathSpec, { task }));
     if (res.status === 204 || !res.body) { return {}; }
     const out: Record<string, string> = {};
     const li = res.body.match(/<li class="rap-program"[^>]*>([^]*?)<\/li>/);
@@ -1034,7 +1038,7 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   async listEventLogDomains(): Promise<Array<{ domain: number; events: number; bufferSize: number }>> {
     try {
-      const r = await this.rws1Get('/rw/elog');
+      const r = await this.rws1Get(buildPath(CFG_ELOG_DIPC.listEventLogDomains.rws1 as PathSpec));
       return r.states
         .filter(s => (s as Record<string, string>)['_type'] === 'elog-domain-li')
         .map(s => {
@@ -1057,7 +1061,7 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   async getTaskStructuralChangeCount(task: string): Promise<number> {
     try {
-      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/structural-changecount`);
+      const r = await this.rws1Get(buildPath(RAPID.getTaskStructuralChangeCount.rws1 as PathSpec, { task }));
       const d = (r.state ?? {}) as Record<string, string>;
       return Number(d['struc-change-count'] ?? d['change-count'] ?? 0);
     } catch { return 0; }
@@ -1067,7 +1071,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  with the RWS 2.0 method; the resource is a directory of links. */
   async getTaskMotion(task: string): Promise<Record<string, string>> {
     try {
-      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/motion`);
+      const r = await this.rws1Get(buildPath(RAPID.getTaskMotion.rws1 as PathSpec, { task }));
       const out: Record<string, string> = {};
       for (const s of r.states) {
         const d = s as Record<string, string>;
@@ -1082,7 +1086,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  the controller answers 400 "No such stack frame" when the task is idle. */
   async getTaskActivationRecord(task: string): Promise<Record<string, string>> {
     try {
-      const r = await this.rws1Get(`/rw/rapid/tasks/${encodeURIComponent(task)}/activation-record`);
+      const r = await this.rws1Get(buildPath(RAPID.getTaskActivationRecord.rws1 as PathSpec, { task }));
       return (r.state ?? {}) as Record<string, string>;
     } catch { return {}; }
   }
@@ -1096,7 +1100,7 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   async listCurrentUserGrants(): Promise<string[]> {
     try {
-      const r = await this.rws1Get('/users/grants');
+      const r = await this.rws1Get(buildPath(USERS_UAS.listCurrentUserGrants.rws1 as PathSpec));
       return r.states
         .filter(s => (s as Record<string, string>)['_type'] === 'user-grant')
         .map(s => (s as Record<string, string>)['_title'] ?? (s as Record<string, string>)['grantname'])
@@ -1112,7 +1116,7 @@ export class RWS1Adapter implements IRWSAdapter {
    */
   async listNetworkInterfaces(): Promise<Array<Record<string, string>>> {
     try {
-      const r = await this.rws1Get('/ctrl/network');
+      const r = await this.rws1Get(buildPath(CTRL.getNetworkConfig.rws1 as PathSpec));
       return r.states.filter(s => (s as Record<string, string>)['_type'] === 'ctrl-netw') as Array<Record<string, string>>;
     } catch { return []; }
   }
@@ -1121,7 +1125,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  (a bogus path root fails with a file error, proving action and field parse):
    *  POST /rw/rapid/tasks/{task}/program?action=save, body path=. */
   async saveProgram(task: string, destination: string): Promise<void> {
-    await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/program?action=save`,
+    await this.rws1Post(buildPath(RAPID.saveProgram.rws1 as PathSpec, { task }),
       `path=${encodeURIComponent(destination)}`);
   }
 
@@ -1131,7 +1135,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  RWS 1.0 has no loadmode field - the argument is accepted for signature
    *  parity with RwsClient2.loadProgram and ignored. */
   async loadProgram(task: string, progpath: string, _loadmode: 'add' | 'replace' = 'replace'): Promise<void> {
-    await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/program?action=loadprog`,
+    await this.rws1Post(buildPath(RAPID.loadProgram.rws1 as PathSpec, { task }),
       `progpath=${encodeURIComponent(progpath)}`);
   }
 
@@ -1146,7 +1150,7 @@ export class RWS1Adapter implements IRWSAdapter {
     if (!params.module) {
       throw new RwsError('RWS 1.0 set-pp-routine requires the module name (module + routine)', 'INVALID_ARGUMENT');
     }
-    await this.rws1Post(`/rw/rapid/tasks/${encodeURIComponent(task)}/pcp?action=set-pp-routine`,
+    await this.rws1Post(buildPath(RAPID.setProgramPointer.rws1 as PathSpec, { task }),
       `module=${encodeURIComponent(params.module)}&routine=${encodeURIComponent(params.routine)}`);
   }
 
@@ -1154,7 +1158,7 @@ export class RWS1Adapter implements IRWSAdapter {
     // Live-verified 2026-08-04 on RW6.16: the action is `startprodentry` (204,
     // execution starts). The previously used `start-prod` answers 400 "Invalid
     // argument" - it never existed on this RobotWare.
-    await this.rws1Post('/rw/rapid/execution?action=startprodentry', '');
+    await this.rws1Post(buildPath(RAPID.startProductionEntry.rws1 as PathSpec), '');
   }
 
   /** Canonical cross-protocol name for startProductionMode - same wire call.
@@ -1170,7 +1174,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  RwsClient2.listFileVolumes. */
   async listFileVolumes(): Promise<string[]> {
     try {
-      const r = await this.rws1Get('/fileservice');
+      const r = await this.rws1Get(buildPath(FILES_VISION.listFileVolumes.rws1 as PathSpec));
       const names = r.states
         .filter(s => (s as Record<string, string>)['_type'] === 'fs-device')
         .map(s => (s as Record<string, string>)['_title'])
@@ -1184,7 +1188,7 @@ export class RWS1Adapter implements IRWSAdapter {
    *  invalid or read only", proving action and both fields parse):
    *  POST /rw/cfg?action=load, body filepath + action-type. Requires cfg mastership. */
   async loadCfgFile(filepath: string, action: 'add' | 'replace' | 'add-with-reset' = 'replace'): Promise<void> {
-    await this.rws1Post('/rw/cfg?action=load',
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.loadCfgFile.rws1 as PathSpec),
       `filepath=${encodeURIComponent(filepath)}&action-type=${action}`);
   }
 
@@ -1195,7 +1199,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async saveCfgFile(domain: string, filepath: string): Promise<void> {
     const clean = filepath.replace(/^\/+/, '');
     const uri = clean.startsWith('fileservice/') ? `/${clean}` : `/fileservice/${clean}`;
-    await this.rws1Post(`/rw/cfg/${encodeURIComponent(domain)}?action=saveas`,
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.saveCfgFile.rws1 as PathSpec, { domain }),
       `filepath=${encodeURIComponent(uri)}`);
   }
 
@@ -1206,7 +1210,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async setActiveTool(mechunit: string, toolName: string): Promise<void> {
     await this.client.requestMastership('motion');
     try {
-      await this.rws1Post(`/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}?action=set`,
+      await this.rws1Post(buildPath(MOTION.setActiveTool.rws1 as PathSpec, { mechunit }),
         `tool=${encodeURIComponent(toolName)}`);
     } finally {
       await this.client.releaseMastership('motion').catch(() => {});
@@ -1217,7 +1221,7 @@ export class RWS1Adapter implements IRWSAdapter {
   async setActiveWobj(mechunit: string, wobjName: string): Promise<void> {
     await this.client.requestMastership('motion');
     try {
-      await this.rws1Post(`/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}?action=set`,
+      await this.rws1Post(buildPath(MOTION.setActiveWobj.rws1 as PathSpec, { mechunit }),
         `wobj=${encodeURIComponent(wobjName)}`);
     } finally {
       await this.client.releaseMastership('motion').catch(() => {});
@@ -1226,28 +1230,28 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getNetworkConfig(): Promise<Record<string, string>> {
     try {
-      const r = await this.rws1Get('/ctrl/network');
+      const r = await this.rws1Get(buildPath(CTRL.getNetworkConfig.rws1 as PathSpec));
       return (r.state as Record<string, string>) ?? {};
     } catch { return {}; }
   }
 
   async getDnsConfig(): Promise<Record<string, string>> {
     try {
-      const r = await this.rws1Get('/ctrl/network/dns');
+      const r = await this.rws1Get(buildPath(CTRL.getDnsConfig.rws1 as PathSpec));
       return (r.state as Record<string, string>) ?? {};
     } catch { return {}; }
   }
 
   async getRoutingTable(): Promise<Array<Record<string, string>>> {
     try {
-      const r = await this.rws1Get('/ctrl/network/routes');
+      const r = await this.rws1Get(buildPath(CTRL.getRoutingTable.rws1 as PathSpec));
       return r.states as Array<Record<string, string>>;
     } catch { return []; }
   }
 
   async getTimezone(): Promise<{ tz: string; raw: Record<string, string> }> {
     try {
-      const r = await this.rws1Get('/ctrl/clock/timezone');
+      const r = await this.rws1Get(buildPath(CTRL.getTimezone.rws1 as PathSpec));
       const s = (r.state as Record<string, string>) ?? {};
       return { tz: s.timezone ?? '', raw: s };
     } catch { return { tz: '', raw: {} }; }
@@ -1255,7 +1259,7 @@ export class RWS1Adapter implements IRWSAdapter {
 
   async getCompatibility(): Promise<{ compatible: boolean; details?: Record<string, string> }> {
     try {
-      const r = await this.rws1Get('/ctrl/compatible');
+      const r = await this.rws1Get(buildPath(CTRL.getCompatibility.rws1 as PathSpec));
       const s = (r.state as Record<string, string>) ?? {};
       return { compatible: (s.compatible ?? '').toLowerCase() === 'true', details: s };
     } catch { return { compatible: false }; }
@@ -1264,12 +1268,12 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── Stage 14: Set mechunit / robtarget for jogging (2 methods) ────────
 
   async setMechunitForJogging(mechunit: string): Promise<void> {
-    await this.rws1Post('/rw/motionsystem?action=set-mechunit', `mechunit=${encodeURIComponent(mechunit)}`);
+    await this.rws1Post(buildPath(MOTION.setMechunitForJogging.rws1 as PathSpec), `mechunit=${encodeURIComponent(mechunit)}`);
   }
 
   async setRobtargetForJogging(target: { x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }): Promise<void> {
     const t = target;
-    await this.rws1Post('/rw/motionsystem?action=set-target',
+    await this.rws1Post(buildPath(MOTION.setRobtargetForJogging.rws1 as PathSpec),
       `x=${t.x}&y=${t.y}&z=${t.z}&q1=${t.q1}&q2=${t.q2}&q3=${t.q3}&q4=${t.q4}`);
   }
 
@@ -1303,7 +1307,7 @@ export class RWS1Adapter implements IRWSAdapter {
       `elog_at_error=false`,
     ].join('&');
 
-    const path = `/rw/motionsystem/mechunits/${mechunit}?action=CalcJointsFromPose&json=1`;
+    const path = `${buildPath(MOTION.calcJointsFromCartesian.rws1 as PathSpec, { mechunit })}&json=1`;
     const result = await this.digestPost(host, port, path, bodyStr, username, password);
     // RWS 1.0 IK response shape: { _embedded: { _state: [{ rax_1, rax_2, ... }] } }
     const state = (result as { _embedded?: { _state?: Array<Record<string, string>> } })._embedded?._state?.[0];
