@@ -96,7 +96,8 @@
         "repeated connect/disconnect reuses slots - controller session count flat",
         "disconnect issues GET /logout (clearSession is a deliberate no-op)",
         "IRC5 caps at 70 sessions; churn must not approach it",
-        "EVIDENCE 2026-08-09, measured OUTSIDE the cell with a paired control: 30 connect/disconnect cycles WITH disconnect all succeed, and the same loop WITHOUT disconnect fails at cycle 2 with CONTROLLER_BUSY. So the client does free its slot, and the method would unmistakably detect it if it did not. The cell's own 503s are environmental: after a long test session the IRC5 sits near its cap (leaked sessions linger 300 s), so any additional concurrent client trips it. Re-run against a freshly restarted IRC5."
+        "EVIDENCE 2026-08-09, measured OUTSIDE the cell with paired controls. (1) 30 connect/disconnect cycles WITH disconnect all succeed; the same loop WITHOUT disconnect fails at cycle 2 with CONTROLLER_BUSY - so the client frees its slot, and the method would unmistakably detect it if it did not. (2) On a DRAINED controller, 40 connect/disconnect cycles and 40 subscribe/unsubscribe cycles BOTH pass 40/40 - so the RWS 1.0 subscriber releases its controller-side registrations too. No client leak on either path.",
+        "CONCLUSION: the 503s seen in a full pass are CUMULATIVE rig load, not any single cell leaking. Every cell passes alone; fourteen fault-injection cells back-to-back exhaust the IRC5's 70-slot budget faster than its 300 s expiry reclaims it, and once the pool is dry every LATER cell fails CONTROLLER_BUSY for a reason unrelated to what it asserts. Run rws1 cells in batches with a drain between, or restart the IRC5 between groups. This is a property of the controller, and no client change can fix it."
       ]
     },
     {
