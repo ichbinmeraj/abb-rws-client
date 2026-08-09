@@ -15,6 +15,20 @@ its date rather than being back-filled.
 
 ### Fixed
 
+- **The flaky RWS 2.0 reconnect test is fixed at its cause.** The subscription
+  tests addressed server sockets by index (`sockets[0]`, `sockets[1]`), which
+  assumes every socket the server accepts is one the client kept. It is not: if
+  the client's WS open timeout expires while the handshake is still settling —
+  ordinary under parallel-suite CPU load — the client discards that connection
+  and reconnects, leaving the server holding a dead entry. The test then sent
+  its event to a closed socket and waited, which no timeout could rescue. This
+  was reproduced deliberately (a 5 ms open timeout leaves the server holding one
+  socket, state DEAD, while the client has moved on), so the diagnosis is
+  demonstrated rather than inferred. Events are now delivered over the newest
+  *open* socket and re-sent until the handler sees them, and drops terminate
+  every current socket instead of index 0. Ten full-suite runs under doubled CPU
+  contention pass, against roughly one failure in two before this work.
+
 - **RobotWare 8 no longer throws when releasing write access.** Any write clears
   control-station write access as a side effect on RW8 — the status resource
   reports `held=false` immediately after a write while the session keeps writing
