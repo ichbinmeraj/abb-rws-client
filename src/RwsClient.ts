@@ -125,6 +125,8 @@ import {
   parseDirectory,
   parseCollisionDetectionState,
 } from './ResponseParser.js';
+import { RAPID } from './paths/index.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
 export class RwsClient {
   private readonly session: HttpSession;
@@ -800,7 +802,7 @@ export class RwsClient {
   async unloadModule(taskName: string, moduleName: string): Promise<void> {
     try {
       await this.session.post(
-        `/rw/rapid/tasks/${encodeURIComponent(taskName)}?action=unloadmod`,
+        buildPath(RAPID.unloadModule.rws1 as PathSpec, { task: taskName }),
         `module=${encodeURIComponent(moduleName)}`,
       );
     } catch (e) {

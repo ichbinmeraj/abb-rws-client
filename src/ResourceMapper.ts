@@ -8,6 +8,13 @@
 
 import { RwsError } from './types.js';
 import { PANEL } from './paths/panel.js';
+import { RAPID } from './paths/rapid.js';
+import { MOTION } from './paths/motion.js';
+import { IO } from './paths/io.js';
+import { CFG_ELOG_DIPC } from './paths/cfgElogDipc.js';
+import { CTRL } from './paths/ctrl.js';
+import { SYSTEM_MASTERSHIP } from './paths/systemMastership.js';
+import { FILES_VISION } from './paths/filesVision.js';
 import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
 /**
@@ -77,18 +84,18 @@ export function setSpeedRatio(ratio: number): { path: string; body: string } {
 
 /** Path to list all RAPID tasks */
 export function rapidTasks(): string {
-  return '/rw/rapid/tasks';
+  return buildPath(RAPID.getRapidTasks.rws1 as PathSpec);
 }
 
 /** Path to read the RAPID execution state (running / stopped) */
 export function rapidExecutionState(): string {
-  return '/rw/rapid/execution';
+  return buildPath(RAPID.getRapidExecutionState.rws1 as PathSpec);
 }
 
 /** Path + body to start RAPID program execution */
 export function startRapid(): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=start',
+    path: buildPath(RAPID.startRapid.rws1 as PathSpec),
     body: 'regain=continue&execmode=continue&cycle=forever&condition=none&stopatbp=disabled&alltaskbytsp=false',
   };
 }
@@ -96,7 +103,7 @@ export function startRapid(): { path: string; body: string } {
 /** Path + body to stop RAPID program execution */
 export function stopRapid(): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=stop',
+    path: buildPath(RAPID.stopRapid.rws1 as PathSpec),
     body: 'stopmode=stop',
   };
 }
@@ -107,7 +114,7 @@ export function stopRapid(): { path: string; body: string } {
  */
 export function resetRapid(): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=resetpp',
+    path: buildPath(RAPID.resetRapid.rws1 as PathSpec),
     body: '',
   };
 }
@@ -118,7 +125,7 @@ export function resetRapid(): { path: string; body: string } {
  */
 export function setExecutionCycle(cycle: 'once' | 'forever' | 'asis'): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=setcycle',
+    path: buildPath(RAPID.setExecutionCycle.rws1 as PathSpec),
     body: `cycle=${cycle}`,
   };
 }
@@ -162,7 +169,7 @@ export function unlockOperationMode(): { path: string; body: string } {
 
 /** Path to GET the currently active RAPID UI instruction (if any). */
 export function activeUiInstruction(): string {
-  return '/rw/rapid/uiinstr/active';
+  return buildPath(RAPID.getActiveUiInstruction.rws1 as PathSpec);
 }
 
 /**
@@ -177,7 +184,7 @@ export function setUiInstructionParam(
   stackurl: string, uiparam: string, value: string,
 ): { path: string; body: string } {
   return {
-    path: `/rw/rapid/uiinstr/active/param/${encodeURIComponent(stackurl)}/${encodeURIComponent(uiparam)}?action=set`,
+    path: buildPath(RAPID.setUiInstructionParam.rws1 as PathSpec, { stackurl, uiparam }),
     body: `value=${encodeURIComponent(value)}`,
   };
 }
@@ -186,22 +193,22 @@ export function setUiInstructionParam(
 
 /** Path + body to activate a single RAPID task (multitasking). */
 export function activateRapidTask(task: string): { path: string; body: string } {
-  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}?action=activate`, body: '' };
+  return { path: buildPath(RAPID.activateRapidTask.rws1 as PathSpec, { task }), body: '' };
 }
 
 /** Path + body to deactivate a single RAPID task (multitasking). */
 export function deactivateRapidTask(task: string): { path: string; body: string } {
-  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}?action=deactivate`, body: '' };
+  return { path: buildPath(RAPID.deactivateRapidTask.rws1 as PathSpec, { task }), body: '' };
 }
 
 /** Path + body to activate ALL RAPID tasks. */
 export function activateAllRapidTasks(): { path: string; body: string } {
-  return { path: '/rw/rapid/tasks?action=activate', body: '' };
+  return { path: buildPath(RAPID.activateAllRapidTasks.rws1 as PathSpec), body: '' };
 }
 
 /** Path + body to deactivate ALL RAPID tasks. */
 export function deactivateAllRapidTasks(): { path: string; body: string } {
-  return { path: '/rw/rapid/tasks?action=deactivate', body: '' };
+  return { path: buildPath(RAPID.deactivateAllRapidTasks.rws1 as PathSpec), body: '' };
 }
 
 // ─── RAPID symbol search / validate ─────────────────────────────────────────
@@ -230,7 +237,7 @@ export function searchRapidSymbols(params: {
   if (params.blockurl)  parts.push(`blockurl=${encodeURIComponent(params.blockurl)}`);
   if (params.recursive !== undefined) parts.push(`recursive=${params.recursive}`);
   return {
-    path: '/rw/rapid/symbols?action=search-symbol',
+    path: buildPath(RAPID.searchRapidSymbols.rws1 as PathSpec),
     body: parts.join('&'),
   };
 }
@@ -242,7 +249,7 @@ export function searchRapidSymbols(params: {
  */
 export function validateRapidValue(task: string, value: string, datatype: string): { path: string; body: string } {
   return {
-    path: '/rw/rapid/symbol/data?action=validate',
+    path: buildPath(RAPID.validateRapidValue.rws1 as PathSpec),
     body: `task=${encodeURIComponent(task)}&value=${encodeURIComponent(value)}&datatype=${encodeURIComponent(datatype)}`,
   };
 }
@@ -256,7 +263,7 @@ export function validateRapidValue(task: string, value: string, datatype: string
  * @param symbolName - Symbol name, e.g. 'reg1'
  */
 export function rapidSymbolProperties(taskName: string, moduleName: string, symbolName: string): string {
-  return `/rw/rapid/symbol/properties/RAPID/${encodeURIComponent(taskName)}/${encodeURIComponent(moduleName)}/${encodeURIComponent(symbolName)}`;
+  return buildPath(RAPID.getRapidSymbolProperties.rws1 as PathSpec, { task: taskName, module: moduleName, symbol: symbolName });
 }
 
 /**
@@ -266,7 +273,7 @@ export function rapidSymbolProperties(taskName: string, moduleName: string, symb
  * @param symbolName - Symbol name, e.g. 'reg1'
  */
 export function rapidSymbol(taskName: string, moduleName: string, symbolName: string): string {
-  return `/rw/rapid/symbol/data/RAPID/${encodeURIComponent(taskName)}/${encodeURIComponent(moduleName)}/${encodeURIComponent(symbolName)}`;
+  return buildPath(RAPID.getRapidVariable.rws1 as PathSpec, { task: taskName, module: moduleName, symbol: symbolName });
 }
 
 /**
@@ -283,7 +290,7 @@ export function setRapidSymbol(
   value: string,
 ): { path: string; body: string } {
   return {
-    path: `${rapidSymbol(taskName, moduleName, symbolName)}?action=set`,
+    path: buildPath(RAPID.setRapidVariable.rws1 as PathSpec, { task: taskName, module: moduleName, symbol: symbolName }),
     body: `value=${encodeURIComponent(value)}`,
   };
 }
@@ -295,7 +302,7 @@ export function setRapidSymbol(
  * @param mechunit - Default 'ROB_1' (the primary robot mechanical unit)
  */
 export function jointTarget(mechunit = 'ROB_1'): string {
-  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/jointtarget`;
+  return buildPath(MOTION.getJointPositions.rws1 as PathSpec, { mechunit });
 }
 
 /**
@@ -305,7 +312,7 @@ export function jointTarget(mechunit = 'ROB_1'): string {
  * @param wobj     - Active work object frame; default 'wobj0'
  */
 export function robTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): string {
-  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/robtarget?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`;
+  return `${buildPath(MOTION.getRobTarget.rws1 as PathSpec, { mechunit })}?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`;
 }
 
 /**
@@ -314,7 +321,7 @@ export function robTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): s
  * @param mechunit - Default 'ROB_1'
  */
 export function cartesianFull(mechunit = 'ROB_1'): string {
-  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/cartesian`;
+  return buildPath(MOTION.getCartesianFull.rws1 as PathSpec, { mechunit });
 }
 
 // ─── Modules ─────────────────────────────────────────────────────────────────
@@ -327,7 +334,7 @@ export function cartesianFull(mechunit = 'ROB_1'): string {
  */
 export function loadModule(taskName: string, modulePath: string, replace = false): { path: string; body: string } {
   return {
-    path: `/rw/rapid/tasks/${encodeURIComponent(taskName)}?action=loadmod`,
+    path: buildPath(RAPID.loadModule.rws1 as PathSpec, { task: taskName }),
     body: `modulepath=${encodeURIComponent(modulePath)}&replace=${replace}`,
   };
 }
@@ -346,7 +353,7 @@ export function getModule(taskName: string, moduleName: string): string {
  * @param taskName - RAPID task name
  */
 export function listModules(taskName: string): string {
-  return `/rw/rapid/modules?task=${encodeURIComponent(taskName)}`;
+  return `${buildPath(RAPID.listModules.rws1 as PathSpec)}?task=${encodeURIComponent(taskName)}`;
 }
 
 // ─── File system ─────────────────────────────────────────────────────────────
@@ -364,17 +371,17 @@ export function uploadFile(remotePath: string): string {
 
 /** Path to get RobotWare system information (version, options, sysid) */
 export function systemInfo(): string {
-  return '/rw/system';
+  return buildPath(SYSTEM_MASTERSHIP.getSystemInfo.rws1 as PathSpec);
 }
 
 /** Path to get controller hardware identity (name, id, type, mac) */
 export function controllerIdentity(): string {
-  return '/ctrl/identity';
+  return buildPath(CTRL.getControllerIdentity.rws1 as PathSpec);
 }
 
 /** Path to GET the controller clock datetime. */
 export function clockInfo(): string {
-  return '/ctrl/clock';
+  return buildPath(CTRL.getControllerClock.rws1 as PathSpec);
 }
 
 /**
@@ -386,7 +393,7 @@ export function setControllerClock(
   hour: number, min: number, sec: number,
 ): { path: string; body: string; method: 'PUT' } {
   return {
-    path: '/ctrl/clock',
+    path: buildPath(CTRL.setControllerClock.rws1 as PathSpec),
     body: `sys-clock-year=${year}&sys-clock-month=${month}&sys-clock-day=${day}&sys-clock-hour=${hour}&sys-clock-min=${min}&sys-clock-sec=${sec}`,
     method: 'PUT',
   };
@@ -401,17 +408,17 @@ export function setControllerClock(
  * @param lang    - Language for message text; default 'en'
  */
 export function elogMessages(domain = 0, lang = 'en'): string {
-  return `/rw/elog/${domain}?lang=${encodeURIComponent(lang)}`;
+  return `${buildPath(CFG_ELOG_DIPC.getEventLog.rws1 as PathSpec, { domain })}?lang=${encodeURIComponent(lang)}`;
 }
 
 /** Path + body to clear all messages in a specific elog domain. */
 export function clearElogDomain(domain = 0): { path: string; body: string } {
-  return { path: `/rw/elog/${domain}?action=clear`, body: '' };
+  return { path: buildPath(CFG_ELOG_DIPC.clearEventLog.rws1 as PathSpec, { domain }), body: '' };
 }
 
 /** Path + body to clear ALL elog messages across all domains. */
 export function clearAllElogs(): { path: string; body: string } {
-  return { path: '/rw/elog?action=clearall', body: '' };
+  return { path: buildPath(CFG_ELOG_DIPC.clearAllEventLogs.rws1 as PathSpec), body: '' };
 }
 
 // ─── File system ─────────────────────────────────────────────────────────────
@@ -475,12 +482,12 @@ export function copyFile(sourcePath: string, destPath: string): { path: string; 
  * Must be released after use. Domains: 'cfg' | 'motion' | 'rapid'.
  */
 export function requestMastership(domain: 'cfg' | 'motion' | 'rapid'): { path: string; body: string } {
-  return { path: `/rw/mastership/${domain}?action=request`, body: '' };
+  return { path: buildPath(SYSTEM_MASTERSHIP.requestMastership.rws1 as PathSpec, { domain }), body: '' };
 }
 
 /** Path + body to release mastership on a domain. */
 export function releaseMastership(domain: 'cfg' | 'motion' | 'rapid'): { path: string; body: string } {
-  return { path: `/rw/mastership/${domain}?action=release`, body: '' };
+  return { path: buildPath(SYSTEM_MASTERSHIP.releaseMastership.rws1 as PathSpec, { domain }), body: '' };
 }
 
 // ─── I/O ─────────────────────────────────────────────────────────────────────
@@ -491,7 +498,7 @@ export function releaseMastership(domain: 'cfg' | 'motion' | 'rapid'): { path: s
  */
 function signalPath(network: string, device: string, name: string): string {
   if (network && device) {
-    return `/rw/iosystem/signals/${encodeURIComponent(network)}/${encodeURIComponent(device)}/${encodeURIComponent(name)}`;
+    return buildPath(IO.readSignal.rws1 as PathSpec, { network, device, name });
   }
   return `/rw/iosystem/signals/${encodeURIComponent(name)}`;
 }
@@ -502,12 +509,12 @@ function signalPath(network: string, device: string, name: string): string {
  * @param limit  - Max results per page (default 100)
  */
 export function allSignals(start = 0, limit = 100): string {
-  return `/rw/iosystem/signals?start=${start}&limit=${limit}`;
+  return `${buildPath(IO.listAllSignals.rws1 as PathSpec)}?start=${start}&limit=${limit}`;
 }
 
 /** Path to list all configured I/O networks */
 export function networks(): string {
-  return '/rw/iosystem/networks';
+  return buildPath(IO.listNetworks.rws1 as PathSpec);
 }
 
 /**
@@ -515,7 +522,7 @@ export function networks(): string {
  * @param network - Network name, e.g. 'Local'
  */
 export function devices(network: string): string {
-  return `/rw/iosystem/devices?network=${encodeURIComponent(network)}`;
+  return `${buildPath(IO.listDevices.rws1 as PathSpec)}?network=${encodeURIComponent(network)}`;
 }
 
 /**
@@ -547,5 +554,5 @@ export function setSignal(network: string, device: string, name: string): { path
 
 /** Path to create a new WebSocket subscription (POST /subscription) */
 export function subscriptions(): string {
-  return '/subscription';
+  return buildPath(FILES_VISION.createSubscription.rws1 as PathSpec);
 }
