@@ -668,6 +668,17 @@ generations. The full Control Station Service is also exposed directly
 
 ## Resources
 
+**What this client is proven to do**
+
+- [COVERAGE.md](./docs/COVERAGE.md) - the guarantees and how each one is tested.
+- [STRUCTURAL.md](./STRUCTURAL.md) - what happens when the network, the controller
+  or the clock misbehaves: a fault-injection matrix run against live controllers,
+  where every cell is `verified`, `manual-only` or `excluded` and never assumed.
+  Regenerate with `npm run structural`.
+- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) - how the pieces fit together.
+
+**External**
+
 - [ABB Developer Center - RWS API](https://developercenter.robotstudio.com/api/rwsApi/)
 - [Companion VS Code Extension](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)
 
