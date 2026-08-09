@@ -137,6 +137,37 @@ export class RwsClient2 {
   }
 
   /**
+   * Read a state block that MUST be present, throwing `PARSE_ERROR` when it is
+   * not - instead of letting a caller's `?? default` invent an answer.
+   *
+   * `getState()` returns `{}` both when a block is absent and when it is present
+   * but empty, so `getState('pnl-opmode')['opmode'] ?? 'MANR'` cannot tell a
+   * genuine reading from an unparseable response - and answers `MANR` either
+   * way. For a robotics client that is not a cosmetic difference: a garbled or
+   * truncated response would report a specific, plausible, safety-relevant state
+   * that the controller never sent. RWS 1.0's parser throws `PARSE_ERROR` for
+   * the same input, so this also removes a real behavioural fork between the two
+   * generations.
+   *
+   * Field-level `??` defaults stay: a block that IS present but omits one span
+   * is a different situation from no block at all.
+   *
+   * Found by structural cell S12 (malformed/truncated responses), 2026-08-09.
+   */
+  private static requireState(
+    p: XhtmlParser | HalJsonParser, classes: string[], what: string,
+  ): Record<string, string> {
+    for (const c of classes) {
+      const d = p.getState(c);
+      if (Object.keys(d).length > 0) { return d; }
+    }
+    throw new RwsError(
+      `RWS2 ${what}: response carried no ${classes.join(' / ')} block - unparseable or truncated`,
+      'PARSE_ERROR',
+    );
+  }
+
+  /**
    * Wait for this request's turn to start, keeping at least MIN_MS between the
    * starts of any two requests from this client.
    *
@@ -356,7 +387,8 @@ export class RwsClient2 {
 
   async getControllerState(): Promise<ControllerState> {
     const p = RwsClient2.parse(await this.req('GET', R2.controllerState()));
-    return (p.getState('pnl-ctrlstate')['ctrlstate'] ?? 'init') as ControllerState;
+    const d = RwsClient2.requireState(p, ['pnl-ctrlstate'], 'getControllerState');
+    return (d['ctrlstate'] ?? 'init') as ControllerState;
   }
 
   setControllerState(state: 'motoron' | 'motoroff'): Promise<void> {
@@ -366,12 +398,14 @@ export class RwsClient2 {
 
   async getOperationMode(): Promise<OperationMode> {
     const p = RwsClient2.parse(await this.req('GET', R2.operationMode()));
-    return (p.getState('pnl-opmode')['opmode'] ?? 'MANR') as OperationMode;
+    const d = RwsClient2.requireState(p, ['pnl-opmode'], 'getOperationMode');
+    return (d['opmode'] ?? 'MANR') as OperationMode;
   }
 
   async getSpeedRatio(): Promise<number> {
     const p = RwsClient2.parse(await this.req('GET', R2.speedRatio()));
-    return Number(p.getState('pnl-speedratio')['speedratio'] ?? 100);
+    const d = RwsClient2.requireState(p, ['pnl-speedratio'], 'getSpeedRatio');
+    return Number(d['speedratio'] ?? 100);
   }
 
   /**
@@ -462,7 +496,8 @@ export class RwsClient2 {
 
   async getRapidExecutionState(): Promise<ExecutionState> {
     const p = RwsClient2.parse(await this.req('GET', R2.rapidExecution()));
-    return (p.getState('rap-execution')['ctrlexecstate'] ?? 'stopped') as ExecutionState;
+    const d = RwsClient2.requireState(p, ['rap-execution'], 'getRapidExecutionState');
+    return (d['ctrlexecstate'] ?? 'stopped') as ExecutionState;
   }
 
   async getRapidExecutionInfo(): Promise<ExecutionInfo> {

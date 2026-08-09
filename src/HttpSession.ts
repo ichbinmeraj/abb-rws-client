@@ -210,7 +210,7 @@ export class HttpSession {
     }
 
     if (!this.isOk(response.status)) {
-      const bodyText = await response.text().catch(() => '');
+      const bodyText = response.body;
       Logger.trace?.('http.err', `RWS1 ${method} ${path} → ${response.status}`, {
         protocol: 'rws1', method, path, status: response.status,
         durationMs: Date.now() - startedAt,
@@ -241,16 +241,30 @@ export class HttpSession {
     this.storeCookies(response.headers);
     this.lastActivityTime = Date.now();
 
-    const bodyText = await response.text().catch(() => '');
-    return { status: response.status, body: bodyText, headers: response.headers };
+    return { status: response.status, body: response.body, headers: response.headers };
   }
 
-  /** Issue a single HTTP request with digest auth header if we have a challenge */
+  /**
+   * Issue a single HTTP request with digest auth header if we have a challenge.
+   *
+   * Returns the status, headers AND the fully-read body, because the timeout has
+   * to cover the body too. `fetch()` resolves as soon as the response HEADERS
+   * arrive; the body is streamed afterwards. Clearing the abort timer at that
+   * point - which this did until 2026-08-09 - left the body read completely
+   * untimed, so a controller that sent headers and then stalled mid-body hung
+   * the request forever. That is worse than it sounds: this client serialises
+   * every request through one 55 ms queue, so a single hung body read stalls
+   * every later request on the connection too, and no configured timeout ever
+   * fires. Found by structural cell S12 (malformed/truncated responses), where a
+   * body cut inside an element with the socket held open never settled.
+   *
+   * All RWS 1.0 responses are text, so reading here costs nothing extra.
+   */
   private async rawFetch(
     method: string,
     path: string,
     body?: string | Uint8Array,
-  ): Promise<Response> {
+  ): Promise<{ status: number; headers: Headers; body: string }> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -280,12 +294,16 @@ export class HttpSession {
     }
 
     try {
-      return await fetch(url, {
+      const res = await fetch(url, {
         method,
         headers,
         body: body !== undefined ? body : undefined,
         signal: controller.signal,
       });
+      // Read the body while the abort timer is STILL armed - this is the whole
+      // point of the change described above.
+      const text = await res.text();
+      return { status: res.status, headers: res.headers, body: text };
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         throw new RwsError(`Request timed out after ${this.timeoutMs}ms: ${method} ${path}`, 'NETWORK_ERROR');

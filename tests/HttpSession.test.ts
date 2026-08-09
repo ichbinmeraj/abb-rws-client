@@ -145,9 +145,14 @@ describe('HttpSession - digest authentication', () => {
   });
 
   it('throws RwsError AUTH_FAILED when a second 401 is received', async () => {
-    fetchMock.mockResolvedValue(
-      makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }),
-    );
+    // A FRESH Response per call. A single shared instance is not a faithful
+    // mock: a Response body can only be read once, and the session now reads
+    // every body inside the request's timeout window (see the body-timeout
+    // regression tests at the bottom of this file), so a shared instance fails
+    // the second read with "Body has already been read" - an artefact of the
+    // mock, not of the client.
+    fetchMock.mockImplementation(async () =>
+      makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }));
 
     await expect(session.get('/path')).rejects.toMatchObject({ code: 'AUTH_FAILED' });
     await expect(session.get('/path')).rejects.toBeInstanceOf(RwsError);
@@ -193,7 +198,7 @@ describe('HttpSession - digest qop negotiation', () => {
   it('throws AUTH_FAILED naming auth-int when the challenge offers only qop=auth-int', async () => {
     fetchMock
       .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_AUTH_INT_ONLY }))
-      .mockResolvedValue(makeResponse(200, 'should not get here'));
+      .mockImplementation(async () => makeResponse(200, 'should not get here'));
 
     const err = await session.get('/rw/panel/ctrlstate').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RwsError);
@@ -341,7 +346,9 @@ describe('HttpSession - rate limiting', () => {
   it('enforces minimum interval between requests', async () => {
     const intervalMs = 50;
     const session = makeSession({ requestIntervalMs: intervalMs });
-    fetchMock.mockResolvedValue(makeResponse(200, ''));
+    // Fresh Response per call - a Response body is single-use, and the session
+    // reads every body inside the timeout window.
+    fetchMock.mockImplementation(async () => makeResponse(200, ''));
 
     const timestamps: number[] = [];
     fetchMock.mockImplementation(() => {
@@ -363,7 +370,9 @@ describe('HttpSession - rate limiting', () => {
 
   it('does not add delay when requestIntervalMs is 0', async () => {
     const session = makeSession({ requestIntervalMs: 0 });
-    fetchMock.mockResolvedValue(makeResponse(200, ''));
+    // Fresh Response per call - a Response body is single-use, and the session
+    // reads every body inside the timeout window.
+    fetchMock.mockImplementation(async () => makeResponse(200, ''));
 
     const start = Date.now();
     await Promise.all([session.get('/p1'), session.get('/p2'), session.get('/p3')]);
@@ -540,4 +549,89 @@ describe('HttpSession - HTTP error codes', () => {
 
     await expect(session.get('/path')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
+});
+
+/**
+ * Regression for the untimed-body-read bug found by structural cell S12.
+ *
+ * These use a REAL local server and the REAL fetch, because the bug lived in the
+ * interaction between fetch's two-phase completion and the abort timer: fetch
+ * resolves on HEADERS, and the timer used to be cleared at that moment, leaving
+ * the body read unbounded. A mocked fetch resolves in one phase and cannot
+ * express the failure at all.
+ */
+describe('HttpSession - the timeout must cover the response BODY, not just the headers', () => {
+  let server: import('node:http').Server;
+  let port = 0;
+  /** Sockets parked mid-body, destroyed in afterEach so the suite can exit. */
+  let parked: import('node:net').Socket[] = [];
+
+  beforeEach(async () => {
+    const http = await import('node:http');
+    parked = [];
+    server = http.createServer((req, res) => {
+      if (req.url === '/stall-body') {
+        // Headers complete, body never does, socket stays healthy. This is what
+        // a wedged controller, a frozen proxy or a congested link looks like.
+        res.writeHead(200, { 'Content-Type': 'application/xhtml+xml', 'Content-Length': '4096' });
+        res.write('<html><body><div class="state"><span class="ctrlstate">moto');
+        parked.push(res.socket as import('node:net').Socket);
+        return; // deliberately never res.end()
+      }
+      res.writeHead(200, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<html><body>ok</body></html>');
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    port = (server.address() as import('node:net').AddressInfo).port;
+  });
+
+  afterEach(async () => {
+    for (const s of parked) { s.destroy(); }
+    await new Promise<void>(r => server.close(() => r()));
+  });
+
+  it('aborts a response whose body never arrives, instead of hanging forever', async () => {
+    const live = new HttpSession({
+      baseUrl: `http://127.0.0.1:${port}`,
+      username: 'u', password: 'p',
+      requestIntervalMs: 0,
+      timeoutMs: 400,
+    });
+
+    const startedAt = Date.now();
+    await expect(live.get('/stall-body')).rejects.toBeInstanceOf(RwsError);
+    const elapsed = Date.now() - startedAt;
+
+    // The assertion that matters is the bound: before the fix this never settled
+    // at all. Allow generous slack for a loaded machine, but far below "forever".
+    expect(elapsed).toBeLessThan(8000);
+  }, 20000);
+
+  it('reports the stalled body as a timeout, naming the configured budget', async () => {
+    const live = new HttpSession({
+      baseUrl: `http://127.0.0.1:${port}`,
+      username: 'u', password: 'p',
+      requestIntervalMs: 0,
+      timeoutMs: 300,
+    });
+
+    await expect(live.get('/stall-body')).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+  }, 20000);
+
+  it('a hung request does not poison the queue for the requests behind it', async () => {
+    // The real damage: this client serialises requests, so one unbounded read
+    // stalls every later request too. After the timeout fires, normal traffic
+    // must flow again.
+    const live = new HttpSession({
+      baseUrl: `http://127.0.0.1:${port}`,
+      username: 'u', password: 'p',
+      requestIntervalMs: 0,
+      timeoutMs: 400,
+    });
+
+    await expect(live.get('/stall-body')).rejects.toBeInstanceOf(RwsError);
+    const after = await live.get('/fine');
+    expect(after.status).toBe(200);
+    expect(after.body).toContain('ok');
+  }, 20000);
 });

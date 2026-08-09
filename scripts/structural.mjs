@@ -38,10 +38,30 @@ const cellKey = (c) => `${c.id}/${c.generation}`;
 let vitest = null;
 if (!skipRun) {
   fs.mkdirSync(path.dirname(RESULTS), { recursive: true });
+  // Invoke vitest's JS entry with the SAME node that runs this script, rather
+  // than the `npx` shim. On Windows, execFile-ing a .cmd now fails EINVAL (Node
+  // hardened it), and going through a shell would put the outputFile path at the
+  // mercy of shell quoting. This avoids both.
+  const vitestBin = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
+  if (!fs.existsSync(vitestBin)) {
+    console.error(`structural: cannot find vitest at ${vitestBin} - run npm ci first`);
+    process.exit(2);
+  }
   try {
     execFileSync(
-      process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['vitest', 'run', 'tests/structural', '--reporter=json', `--outputFile=${RESULTS}`],
+      process.execPath,
+      [
+        vitestBin,
+        'run', 'tests/structural',
+        // Cells run SERIALLY. Vitest parallelises test files by default, which
+        // would put several live clients on the same controller at once - each
+        // with its own paced request queue. Independently they respect the
+        // <20 req/s ceiling; together they do not, and the controller answers
+        // 503. That is a property of the rig, not of the client, and it would
+        // show up as phantom cell failures.
+        '--no-file-parallelism',
+        '--reporter=json', `--outputFile=${RESULTS}`,
+      ],
       {
         cwd: root, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60 * 60 * 1000,
         // Structural cells inject faults against live VCs and are slow, so they
@@ -49,12 +69,25 @@ if (!skipRun) {
         env: { ...process.env, RWS_STRUCTURAL: '1' },
       },
     );
-  } catch {
-    // Non-zero exit just means cells failed; the JSON report is what we read.
+  } catch (e) {
+    // A non-zero EXIT is expected - it just means cells failed, and the JSON
+    // report is what we read. A spawn failure is not, and silently swallowing it
+    // reports every cell as `untested`, which looks like "no tests written yet"
+    // rather than "the runner never ran". Distinguish them.
+    if (e && typeof e === 'object' && e.status === null) {
+      console.error(`structural: could not run vitest (${e.code ?? e.message})`);
+      if (e.stderr?.length) { console.error(String(e.stderr).slice(0, 1000)); }
+      process.exit(2);
+    }
   }
-  if (fs.existsSync(RESULTS)) {
-    try { vitest = JSON.parse(fs.readFileSync(RESULTS, 'utf8')); }
-    catch { vitest = null; }
+  if (!fs.existsSync(RESULTS)) {
+    console.error(`structural: vitest produced no report at ${RESULTS} - refusing to report every cell as untested`);
+    process.exit(2);
+  }
+  try { vitest = JSON.parse(fs.readFileSync(RESULTS, 'utf8')); }
+  catch (e) {
+    console.error(`structural: report at ${RESULTS} is not valid JSON (${e.message})`);
+    process.exit(2);
   }
 }
 
