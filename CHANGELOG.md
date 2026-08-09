@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **RWS 2.0 survives the keep-alive race.** A controller that closes an idle
+  pooled connection leaves a dead socket in the agent, and the next request
+  adopts it and fails with `socket hang up` before anything is sent. RWS 1.0
+  never showed this because undici retries a reused connection itself; the raw
+  agent used by RWS 2.0 did not. Idempotent requests (`GET`, `OPTIONS`, `HEAD`)
+  are now retried once on a fresh connection. Writes are deliberately **never**
+  retried - re-sending a POST could start RAPID or toggle an output twice, and no
+  reliability gain justifies that. Found by structural cell S09.
 - **RWS 2.0 subscriptions no longer destroy themselves every 25 seconds.** The
   client sent an app-level `PING` frame on the subscription WebSocket as a
   keep-alive, on the premise that the controller closes an idle socket at 30 s,

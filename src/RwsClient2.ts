@@ -201,6 +201,33 @@ export class RwsClient2 {
    * acceptOverride pins the Accept header for callers that must not negotiate
    * (e.g. getDeviceTree, which promises a raw XHTML document).
    */
+  /** Methods that are safe to re-send. NEVER add a write here - see `req`. */
+  private static readonly IDEMPOTENT = new Set(['GET', 'OPTIONS', 'HEAD']);
+
+  /**
+   * True for the keep-alive race: a pooled socket the controller closed while it
+   * sat idle, which fails as ECONNRESET / "socket hang up" with no response.
+   */
+  private static isStaleSocketError(e: unknown): boolean {
+    if (!(e instanceof RwsError) || e.code !== 'NETWORK_ERROR') { return false; }
+    return /socket hang up|ECONNRESET|EPIPE/i.test(e.message);
+  }
+
+  /**
+   * One paced request, retried once if a POOLED connection turned out to be dead.
+   *
+   * The client keeps connections alive, so a controller that closes an idle one
+   * while the client is between paced requests leaves a corpse in the agent's
+   * pool; the next request adopts it and fails with "socket hang up" before
+   * anything was sent. RWS 1.0 does not show this because it goes through
+   * undici, which retries a reused connection itself; the raw agent here does
+   * not. Found by structural cell S09 (latency injection), where 500 ms of delay
+   * widens the idle window enough to hit the race reliably.
+   *
+   * ONLY idempotent methods are retried. Re-sending a POST could execute a robot
+   * command twice - starting RAPID, jogging, toggling an output - and no
+   * reliability gain is worth that.
+   */
   private async req(
     method: string,
     path: string,
@@ -211,7 +238,29 @@ export class RwsClient2 {
     acceptOverride?: string,
   ): Promise<string> {
     await this.takeRequestSlot();
+    try {
+      return await this.attemptReq(method, path, body, rawBody, rawContentType, acceptExtra, acceptOverride);
+    } catch (e) {
+      if (!RwsClient2.isStaleSocketError(e) || !RwsClient2.IDEMPOTENT.has(method.toUpperCase())) {
+        throw e;
+      }
+      Logger.trace?.('http.req', `RWS2 ${method} ${path} - retrying once on a fresh connection`, {
+        protocol: 'rws2', method, path,
+      });
+      await this.takeRequestSlot();
+      return this.attemptReq(method, path, body, rawBody, rawContentType, acceptExtra, acceptOverride);
+    }
+  }
 
+  private attemptReq(
+    method: string,
+    path: string,
+    body?: Record<string, string>,
+    rawBody?: string,
+    rawContentType?: string,
+    acceptExtra: number[] = [],
+    acceptOverride?: string,
+  ): Promise<string> {
     const url = new URL(path, this.baseUrl);
     const bodyStr = rawBody ?? (body ? new URLSearchParams(body).toString() : undefined);
 

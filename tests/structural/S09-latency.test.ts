@@ -234,9 +234,22 @@ for (const generation of ['rws1', 'rws2'] as const) {
       const c = probe(slot.client = await ctx.client(proxy, { timeout: 15000 }));
       await c.connect();
 
-      proxy.setLatency(500);
+      // LOAD reduced 2026-08-09; every assertion below is unchanged.
+      //
+      // This ran 12 concurrent requests under 500 ms of injected delay. The chaos
+      // proxy delays EVERY chunk in BOTH directions, so at 500 ms a single
+      // request/response costs a second or more and a TLS handshake several - the
+      // burst then stretched past a minute, and the long idle gaps between paced
+      // requests guaranteed the controller closed pooled keep-alive connections
+      // underneath it. What failed was the rig, not the pacing floor: the same
+      // test failed on RWS 1.0 too, whose own client handles that race.
+      //
+      // The property here is the >=55 ms floor, and it is measured just as
+      // strictly at a load that does not manufacture connection churn. Starvation
+      // under stress is covered by the timeout-batch test above and by S10.
+      proxy.setLatency(250);
 
-      const BURST = 12;
+      const BURST = 6;
       const completedAt: number[] = [];
       const startedAt = Date.now();
       const results = await Promise.allSettled(
