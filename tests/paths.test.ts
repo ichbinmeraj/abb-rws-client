@@ -151,3 +151,38 @@ describe('path tables - exact URLs (RWS 1.0)', () => {
     expect(R1.systemInfo()).toBe('/rw/system');
   });
 });
+
+/**
+ * The trickiest migrated paths, locked directly on the TABLE (via buildPath) -
+ * these go through side channels (RWS1Adapter digestPost) or carry the
+ * suffix/prefix inversion, so they are NOT covered by the mapper or endpoint
+ * tests. A silent mis-map would otherwise only surface as a 404 against a robot.
+ */
+describe('path tables - the traps (symbol inversion, side-channel query-actions)', () => {
+  const P = { task: 'T_ROB1', module: 'user', symbol: 'reg1' };
+  it('RAPID symbol suffix (2.0) vs prefix (1.0) inversion', () => {
+    expect(buildPath(ALL_TABLES.rapid.getRapidVariable.rws2 as PathSpec, P))
+      .toBe('/rw/rapid/symbol/RAPID/T_ROB1/user/reg1/data');
+    expect(buildPath(ALL_TABLES.rapid.getRapidVariable.rws1 as PathSpec, P))
+      .toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/user/reg1');
+    expect(buildPath(ALL_TABLES.rapid.setRapidVariable.rws1 as PathSpec, P))
+      .toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/user/reg1?action=set');
+    expect(buildPath(ALL_TABLES.rapid.getRapidSymbolProperties.rws2 as PathSpec, P))
+      .toBe('/rw/rapid/symbol/RAPID/T_ROB1/user/reg1/properties');
+    expect(buildPath(ALL_TABLES.rapid.getRapidSymbolProperties.rws1 as PathSpec, P))
+      .toBe('/rw/rapid/symbol/properties/RAPID/T_ROB1/user/reg1');
+  });
+  it('RWS 1.0 jog / IK / FK CamelCase query-actions (digestPost side channel)', () => {
+    expect(buildPath(ALL_TABLES.motion.jog.rws1 as PathSpec)).toBe('/rw/motionsystem?action=jog');
+    expect(buildPath(ALL_TABLES.motion.calcCartesianFromJoints.rws1 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcRobTFromJoints');
+    expect(buildPath(ALL_TABLES.motion.calcJointsFromCartesian.rws1 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcJointsFromPose');
+  });
+  it('RWS 2.0 FK keeps its CamelCase query-action; IK moved to a subresource', () => {
+    expect(buildPath(ALL_TABLES.motion.calcCartesianFromJoints.rws2 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcRobTFromJoints');
+    expect(buildPath(ALL_TABLES.motion.calcJointsFromCartesian.rws2 as PathSpec, { mechunit: 'ROB_1' }))
+      .toBe('/rw/motionsystem/mechunits/ROB_1/joints-from-cartesian');
+  });
+});
