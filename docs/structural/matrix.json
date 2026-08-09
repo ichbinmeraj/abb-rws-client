@@ -56,7 +56,8 @@
         "mid-session: silent re-auth, consumer sees no error",
         "mid-subscription: subscriber re-registers, events resume",
         "mid-mastership-hold: hold is not falsely believed after restart",
-        "RWS port may DRIFT on IRC5 (new RobVC process) - client or test must rediscover"
+        "RWS port may DRIFT on IRC5 (new RobVC process) - client or test must rediscover",
+        "OPEN 2026-08-09, next thing to look at: this cell fails with CONTROLLER_BUSY in ~5 s, BEFORE it restarts anything, on a controller that is demonstrably healthy - 5/5 connect/disconnect cycles pass immediately afterwards, and 40/40 pass on a drained one. So it is not the cumulative-load ceiling that explains the other rws1 cells; something in this cell's own setup provokes the 503. The setup is: discoverControllers(), a chaos proxy, a client through it, connect(), getSpeedRatio(). Note the first two awaits after connect() are UNWRAPPED, so a transient 503 there aborts the cell before any restart happens. Start by wrapping those in a retry that treats CONTROLLER_BUSY as 'not ready yet' - which is legitimate here, since the cell asserts restart survival, not the controller's momentary availability. rws2 PASSES this cell."
       ]
     },
     {
