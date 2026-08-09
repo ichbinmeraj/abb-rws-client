@@ -45,6 +45,7 @@
     "test:watch": "vitest",
     "lint": "eslint src",
     "structural": "node scripts/structural.mjs",
+    "conformance": "node scripts/conformance.mjs",
     "prepack": "npm run build && npm test",
     "prepublishOnly": "npm run build && npm test"
   },
