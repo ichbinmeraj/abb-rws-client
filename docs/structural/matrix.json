@@ -95,7 +95,8 @@
       "properties": [
         "repeated connect/disconnect reuses slots - controller session count flat",
         "disconnect issues GET /logout (clearSession is a deliberate no-op)",
-        "IRC5 caps at 70 sessions; churn must not approach it"
+        "IRC5 caps at 70 sessions; churn must not approach it",
+        "EVIDENCE 2026-08-09, measured OUTSIDE the cell with a paired control: 30 connect/disconnect cycles WITH disconnect all succeed, and the same loop WITHOUT disconnect fails at cycle 2 with CONTROLLER_BUSY. So the client does free its slot, and the method would unmistakably detect it if it did not. The cell's own 503s are environmental: after a long test session the IRC5 sits near its cap (leaked sessions linger 300 s), so any additional concurrent client trips it. Re-run against a freshly restarted IRC5."
       ]
     },
     {
@@ -289,7 +290,8 @@
         "zero uncaught exceptions",
         "final state matches controller truth"
       ],
-      "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc."
+      "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc.",
+      "manualProcedure": "1. Restart both VCs so no session backlog is carried in.\n2. `node scripts/soak.mjs --minutes 1440` (add `--rss-drift-mb` / `--handle-growth` to override the thresholds).\n3. Leave the machine otherwise idle - the run holds a manager against each generation and injects a fault every 15 s.\n\nThresholds are fixed BEFORE the run, in the script, so the verdict cannot be rationalised afterwards:\n- **RSS drift** <= 75 MB from a POST-WARMUP baseline (warm-up excluded because the first minute is lazy imports and JIT, which never recur).\n- **Handle growth** <= 5 for any single active-handle kind. Sockets and timers are what leak here; one socket in TIME_WAIT is noise, sustained growth is not.\n- **Uncaught exceptions** exactly 0. Any unhandled rejection fails the soak outright regardless of memory.\n- **Final state** must match an INDEPENDENT client's reading, not the manager's own cached view.\n\nOutput lands in `docs/structural/soak-<timestamp>.json`. A scaled run is written with `scaled: true` and is evidence the harness works, NOT the acceptance run."
     },
     {
       "id": "S15-soak", "scenario": "24 h soak with periodic injected faults",
@@ -300,7 +302,8 @@
         "zero uncaught exceptions",
         "final state matches controller truth"
       ],
-      "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc."
+      "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc.",
+      "manualProcedure": "1. Restart both VCs so no session backlog is carried in.\n2. `node scripts/soak.mjs --minutes 1440` (add `--rss-drift-mb` / `--handle-growth` to override the thresholds).\n3. Leave the machine otherwise idle - the run holds a manager against each generation and injects a fault every 15 s.\n\nThresholds are fixed BEFORE the run, in the script, so the verdict cannot be rationalised afterwards:\n- **RSS drift** <= 75 MB from a POST-WARMUP baseline (warm-up excluded because the first minute is lazy imports and JIT, which never recur).\n- **Handle growth** <= 5 for any single active-handle kind. Sockets and timers are what leak here; one socket in TIME_WAIT is noise, sustained growth is not.\n- **Uncaught exceptions** exactly 0. Any unhandled rejection fails the soak outright regardless of memory.\n- **Final state** must match an INDEPENDENT client's reading, not the manager's own cached view.\n\nOutput lands in `docs/structural/soak-<timestamp>.json`. A scaled run is written with `scaled: true` and is evidence the harness works, NOT the acceptance run."
     }
   ]
 }

@@ -264,8 +264,35 @@ for (const [id, { scenario, cells }] of byScenario) {
   }
 }
 
-md += `## Known limits
+md += `## Running the loop
 
+\`\`\`bash
+npm run structural          # run the auto cells, regenerate this file + state.json
+npm run structural -- --no-run   # re-map the LAST run's results (after editing the matrix)
+npm run structural -- --strict   # non-zero exit while any cell is failing or untested
+node scripts/soak.mjs --minutes 1440   # S15 acceptance run (see below)
+\`\`\`
+
+Cells run **serially** (\`--no-file-parallelism\`). Vitest parallelises files by
+default, which would put several live clients on one controller at once; each
+paces itself correctly but nothing coordinates across clients, and the pair
+exceeds the controller's <20 req/s ceiling.
+
+**Start from a freshly restarted controller.** Sessions linger for 300 s, so a
+controller that has just run a long suite sits near its cap and answers 503 to
+anything extra - which fails cells for a property they are not testing.
+
+## Known limits
+
+- Direct session counting is **not observable on RWS 2.0**: \`GET /users\`
+  enumerates users, not sessions, so it does not move when a client connects.
+  S05's premise guard detects this and refuses to assert a leak it cannot see.
+- A half-open state affecting **only** the RWS 2.0 subscription WebSocket, while
+  HTTP still works, cannot be detected in band: the controller rejects client
+  frames on that socket and an idle subscription sends nothing back. Detection
+  covers link-level failure.
+- TLS is opaque to the TCP chaos proxy, so wire-level assertions (headers,
+  request lines) are only possible on RWS 1.0 or against a mock HTTPS server.
 - Live cells run against **localhost virtual controllers only**; the helper in
   \`tests/helpers/liveControllers.ts\` refuses any other host outright.
 - VC RWS ports drift across restarts, so they are discovered every run rather
