@@ -596,6 +596,13 @@ export class RwsClient {
       const { body } = await this.session.get(pathActiveUiInstruction());
       return parseActiveUiInstruction(body);
     } catch (e) {
+      // The common idle case - no UI instruction waiting - answers HTTP 404 on
+      // IRC5, which the session surfaces as RESOURCE_NOT_FOUND. That is the
+      // documented "returns null" state, not an error: a caller polling for
+      // TPReadNum/TPReadFK prompts must not have to try/catch every idle poll.
+      if (e instanceof RwsError && (e.httpStatus === 404 || e.code === 'RESOURCE_NOT_FOUND')) {
+        return null;
+      }
       if (e instanceof RwsError) throw e;
       throw new RwsError(`getActiveUiInstruction failed: ${String(e)}`, 'UNKNOWN');
     }
@@ -904,8 +911,14 @@ export class RwsClient {
 
   /**
    * Copy a file on the controller filesystem.
+   *
+   * RWS 1.0 fileservice copy is **same-directory only** - the destination must
+   * name a file in the source's own directory. A destination in a different
+   * directory throws `INVALID_ARGUMENT` (it cannot be honoured by the endpoint);
+   * to move across directories, copy within the source dir then move.
    * @param sourcePath - Source file path, e.g. '$HOME/MyMod.mod'
-   * @param destPath   - Destination path (full path including filename), e.g. '$HOME/Backup/MyMod.mod'
+   * @param destPath   - Destination file in the SAME directory, e.g.
+   *                     '$HOME/MyMod.bak' or a bare 'MyMod.bak'.
    */
   async copyFile(sourcePath: string, destPath: string): Promise<void> {
     try {

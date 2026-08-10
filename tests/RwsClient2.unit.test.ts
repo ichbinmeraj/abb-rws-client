@@ -908,12 +908,21 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
-    it('copyFile drops any directory part and can request overwrite', async () => {
+    it('copyFile keeps a same-directory destination and can request overwrite', async () => {
       const { server, port, requests } = await startServer(ok204);
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
-        await client.copyFile('TEMP/a.txt', 'TEMP/sub/b.txt', true);
+        await client.copyFile('TEMP/a.txt', 'TEMP/b.txt', true);
         expect(requests[0].body).toBe('fs-newname=b.txt&fs-overwrite=true');
+      } finally { server.close(); }
+    });
+
+    it('copyFile rejects a cross-directory destination (same-dir-only endpoint)', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await expect(client.copyFile('TEMP/a.txt', 'TEMP/sub/b.txt')).rejects.toThrow(/same.?directory|INVALID/i);
+        expect(requests.length).toBe(0); // nothing sent to the controller
       } finally { server.close(); }
     });
 

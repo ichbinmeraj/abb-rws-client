@@ -15,6 +15,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { RwsError } from './types.js';
 import { Logger } from './Logger.js';
+import { redactBody } from './redact.js';
 import { classifyControllerError } from './ControllerError.js';
 import type { DigestChallenge, HttpResponse } from './types.js';
 
@@ -167,7 +168,7 @@ export class HttpSession {
   ): Promise<HttpResponse> {
     const startedAt = Date.now();
     const bodyPreview = body
-      ? (typeof body === 'string' ? body : Buffer.from(body).toString('utf8')).slice(0, 200)
+      ? redactBody(typeof body === 'string' ? body : Buffer.from(body).toString('utf8'))!.slice(0, 200)
       : undefined;
     Logger.trace?.('http.req', `RWS1 ${method} ${path}`, { protocol: 'rws1', method, path, bodyPreview });
 

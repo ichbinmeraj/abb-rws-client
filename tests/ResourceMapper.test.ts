@@ -460,9 +460,15 @@ describe('copyFile', () => {
     });
   });
 
-  it('strips directory components from the destination (same-directory-only copy)', () => {
-    expect(copyFile('$HOME/A.mod', '$HOME/Backup/A.mod').body).toBe('fs-action=copy&fs-newname=A.mod');
-    expect(copyFile('$HOME/A.mod', 'C:\\temp\\B.mod').body).toBe('fs-action=copy&fs-newname=B.mod');
+  it('accepts a bare-filename destination as the same directory', () => {
+    expect(copyFile('$HOME/A.mod', 'B.mod').body).toBe('fs-action=copy&fs-newname=B.mod');
+  });
+
+  it('throws INVALID_ARGUMENT for a cross-directory destination instead of silently copying same-dir', () => {
+    // RWS 1.0 fileservice copy is same-directory-only; a destination in another
+    // directory cannot be honoured, so reject it rather than copy next to source.
+    expect(() => copyFile('$HOME/A.mod', '$HOME/Backup/A.mod')).toThrow(/same.?directory|INVALID/i);
+    expect(() => copyFile('$HOME/A.mod', 'C:\\temp\\B.mod')).toThrow(/same.?directory|INVALID/i);
   });
 
   it('percent-encodes the new filename', () => {

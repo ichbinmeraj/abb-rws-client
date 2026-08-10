@@ -342,9 +342,10 @@ describe('RwsClient - request shaping against a mock controller', () => {
   });
 
   // Live-verified 2026-07-09 on IRC5 RW6.16: GET /rw/rapid/uiinstr/active returns
-  // 404 while no UI instruction is waiting, so this method throws MODULE_NOT_FOUND
-  // instead of resolving to the documented null.
-  it.fails('getActiveUiInstruction resolves to null when the controller has no active instruction', async () => {
+  // 404 while no UI instruction is waiting. The method treats that idle 404 as the
+  // documented "no instruction" state and resolves to null (rather than throwing
+  // RESOURCE_NOT_FOUND on every idle poll).
+  it('getActiveUiInstruction resolves to null when the controller has no active instruction', async () => {
     const client = makeClient(mock.port);
     await client.connect();
 

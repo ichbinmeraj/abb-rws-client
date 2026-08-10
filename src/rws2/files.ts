@@ -1,7 +1,7 @@
 import { FILES_VISION } from '../paths/index.js';
 import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import * as R2 from '../ResourceMapper2.js';
-import { type FileEntry } from '../types.js';
+import { RwsError, type FileEntry } from '../types.js';
 import { parse } from './core.js';
 import type { GConstructor, Rws2Base } from './mixin.js';
 
@@ -54,9 +54,24 @@ function filesOps<TBase extends Rws2Base>(Base: TBase) {
      * sent `destination` is rejected with HTTP 400 "Invalid/No Query Parameter",
      * so this never worked on RWS 2.0 (fixed 2026-08 after reading the endpoint's
      * own OPTIONS form; verified live: copy created with matching content).
-     * Any directory part of `destPath` is dropped, matching the RWS 1.0 behavior.
+     *
+     * The endpoint is **same-directory only** (like RWS 1.0). A destination in a
+     * different directory cannot be honoured, so rather than silently copying next
+     * to the source it throws INVALID_ARGUMENT; pass a same-directory destination.
      */
     copyFile(sourcePath: string, destPath: string, overwrite = false): Promise<void> {
+      const dirOf = (p: string): string => {
+        const norm = p.replace(/^\//, ''); const i = norm.lastIndexOf('/');
+        return i === -1 ? '' : norm.slice(0, i);
+      };
+      const destDir = dirOf(destPath);
+      if (destDir !== '' && destDir !== dirOf(sourcePath)) {
+        return Promise.reject(new RwsError(
+          `copyFile: RWS 2.0 can only copy within the source directory. Source dir '${dirOf(sourcePath)}' ` +
+          `!= destination dir '${destDir}'. Pass a same-directory destination, or copy-then-move.`,
+          'INVALID_ARGUMENT',
+        ));
+      }
       const destName = destPath.replace(/^.*[\\/]/, '');
       const body: Record<string, string> = { 'fs-newname': destName };
       if (overwrite) { body['fs-overwrite'] = 'true'; }

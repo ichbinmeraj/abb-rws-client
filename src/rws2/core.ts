@@ -9,6 +9,7 @@ import type { WsSubscribeOptions } from '../WsSubscriber.js';
 import { XhtmlParser } from '../XhtmlParser.js';
 import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import { FILES_VISION, SYSTEM_MASTERSHIP, USERS_UAS } from '../paths/index.js';
+import { redactBody } from '../redact.js';
 import type {
 MastershipDomain,
 Signal,
@@ -313,7 +314,7 @@ export class Rws2Core {
     const startedAt = Date.now();
     Logger.trace?.('http.req', `RWS2 ${method} ${path}`, {
       protocol: 'rws2', method, path,
-      bodyPreview: bodyStr ? bodyStr.slice(0, 200) : undefined,
+      bodyPreview: bodyStr ? redactBody(bodyStr)!.slice(0, 200) : undefined,
     });
 
     return new Promise((resolve, reject) => {
