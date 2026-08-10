@@ -505,6 +505,22 @@ export function copyFile(sourcePath: string, destPath: string): { path: string; 
   };
 }
 
+/**
+ * Path + body to rename a file in place. RWS 1.0 renames via a POST to the file's
+ * fileservice path with `fs-action=rename` and a bare-filename `fs-newname` (the
+ * same in-directory form as copy). Live-verified on IRC5 RW6.16 (2026-08-11): 204.
+ * @param sourcePath - Existing file path, e.g. '$HOME/A.mod'.
+ * @param newName    - New bare filename in the same directory (a directory
+ *                     component is stripped).
+ */
+export function renameFile(sourcePath: string, newName: string): { path: string; body: string } {
+  const bare = newName.replace(/^.*[\\/]/, '');
+  return {
+    path: fileServicePath(sourcePath),
+    body: `fs-action=rename&fs-newname=${encodeURIComponent(bare)}`,
+  };
+}
+
 // ─── Mastership ───────────────────────────────────────────────────────────────
 
 /**
@@ -531,6 +547,22 @@ function signalPath(network: string, device: string, name: string): string {
     return buildPath(IO.readSignal.rws1 as PathSpec, { network, device, name });
   }
   return `/rw/iosystem/signals/${encodeURIComponent(name)}`;
+}
+
+/**
+ * Path + body to search signals by criteria on RWS 1.0. Uses the query-action
+ * form `POST /rw/iosystem/signals?action=signal-search`; criteria AND-compose and
+ * `name` is a substring match, same semantics as RWS 2.0. Live-verified on IRC5
+ * RW6.16 (2026-08-11): returns the same `ios-signal-li` list as listAllSignals.
+ */
+export function searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): { path: string; body: string } {
+  const parts: string[] = [];
+  if (criteria.name)     { parts.push(`name=${encodeURIComponent(criteria.name)}`); }
+  if (criteria.device)   { parts.push(`device=${encodeURIComponent(criteria.device)}`); }
+  if (criteria.network)  { parts.push(`network=${encodeURIComponent(criteria.network)}`); }
+  if (criteria.category) { parts.push(`category=${encodeURIComponent(criteria.category)}`); }
+  if (criteria.type)     { parts.push(`type=${encodeURIComponent(criteria.type)}`); }
+  return { path: buildPath(IO.searchSignals.rws1 as PathSpec), body: parts.join('&') };
 }
 
 /**

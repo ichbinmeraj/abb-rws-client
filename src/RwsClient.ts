@@ -97,6 +97,8 @@ import {
   fileServicePath,
   deleteFile as pathDeleteFile,
   copyFile as mapCopyFile,
+  renameFile as mapRenameFile,
+  searchSignals as mapSearchSignals,
   requestMastership as mapRequestMastership,
   releaseMastership as mapReleaseMastership,
 } from './ResourceMapper.js';
@@ -930,6 +932,23 @@ export class RwsClient {
     }
   }
 
+  /**
+   * Rename a file in place on the controller filesystem (same directory).
+   * Live-verified on IRC5 RW6.16 (2026-08-11): POST to the file's fileservice
+   * path with `fs-action=rename` answers 204.
+   * @param sourcePath - Existing file path, e.g. '$HOME/A.mod'.
+   * @param newName    - New bare filename in the same directory.
+   */
+  async renameFile(sourcePath: string, newName: string): Promise<void> {
+    try {
+      const { path, body } = mapRenameFile(sourcePath, newName);
+      await this.session.post(path, body);
+    } catch (e) {
+      if (e instanceof RwsError) throw e;
+      throw new RwsError(`renameFile failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
   // ─── I/O signals ────────────────────────────────────────────────────────────
 
   /**
@@ -982,6 +1001,23 @@ export class RwsClient {
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`listAllSignals failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
+  /**
+   * Search signals by criteria instead of paging the whole list. `name` is a
+   * SUBSTRING match; criteria AND-compose. RWS 1.0 query-action form
+   * (`POST /rw/iosystem/signals?action=signal-search`), live-verified on IRC5
+   * RW6.16 (2026-08-11): returns the same `ios-signal-li` shape as listAllSignals.
+   */
+  async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
+    try {
+      const { path, body } = mapSearchSignals(criteria);
+      const res = await this.session.post(path, body);
+      return parseSignalList(res.body);
+    } catch (e) {
+      if (e instanceof RwsError) throw e;
+      throw new RwsError(`searchSignals failed: ${String(e)}`, 'UNKNOWN');
     }
   }
 

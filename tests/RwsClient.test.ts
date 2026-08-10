@@ -265,6 +265,34 @@ describe('RwsClient - request shaping against a mock controller', () => {
     expect(last.body).toBe('lvalue=1');
   });
 
+  it('searchSignals POSTs the query-action form and parses ios-signal-li results', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    mock.routes.set('POST /rw/iosystem/signals?action=signal-search', (res) => {
+      res.writeHead(200, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<html><body><ul><li class="ios-signal-li" title="Local/DRV_1/DO_1">' +
+        '<span class="name">DO_1</span><span class="type">DO</span><span class="lvalue">1</span></li></ul></body></html>');
+    });
+    const hits = await client.searchSignals({ type: 'DO', device: 'DRV_1' });
+
+    const last = mock.seen[mock.seen.length - 1];
+    expect(last.method).toBe('POST');
+    expect(last.url).toBe('/rw/iosystem/signals?action=signal-search');
+    expect(last.body).toBe('device=DRV_1&type=DO');
+    expect(hits.map(h => h.name)).toContain('DO_1');
+  });
+
+  it('renameFile POSTs fs-action=rename to the file path with a bare fs-newname', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.renameFile('$HOME/Old.mod', 'New.mod');
+
+    const last = mock.seen[mock.seen.length - 1];
+    expect(last.method).toBe('POST');
+    expect(last.url).toBe('/fileservice/$HOME/Old.mod');
+    expect(last.body).toBe('fs-action=rename&fs-newname=New.mod');
+  });
+
   it('uploadFile PUTs the raw content to /fileservice with a binary content type', async () => {
     const client = makeClient(mock.port);
     await client.connect();
