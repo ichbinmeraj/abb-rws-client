@@ -134,12 +134,12 @@ export class Rws2Core {
   private sessionCookie: string | null = null;
 
   /** Signal name → {network, device} - populated by listAllSignals for writeSignal lookups */
-  private readonly sigCoords = new Map<string, { n: string; d: string }>();
+  protected readonly sigCoords = new Map<string, { n: string; d: string }>();
 
   /** RobotWare major version, parsed from /rw/system on connect (null before). */
-  private rwMajor: number | null = null;
+  protected rwMajor: number | null = null;
   /** Raw rwversion string from /rw/system, e.g. '8.1.1+614'. */
-  private rwVersionRaw: string | null = null;
+  protected rwVersionRaw: string | null = null;
   /** How write access is acquired: RW7 mastership or RW8 control-station.
    *  Resolved from the version on connect, or lazily when /rw/mastership
    *  answers 410 GONE (RW8 removed it). */
@@ -154,7 +154,7 @@ export class Rws2Core {
   private readonly csPincode: string;
 
   constructor(
-    private readonly baseUrl: string,
+    protected readonly baseUrl: string,
     username: string,
     password: string,
     opts: {
@@ -245,7 +245,7 @@ export class Rws2Core {
    * command twice - starting RAPID, jogging, toggling an output - and no
    * reliability gain is worth that.
    */
-  private async req(
+  protected async req(
     method: string,
     path: string,
     body?: Record<string, string>,
@@ -448,115 +448,6 @@ export class Rws2Core {
   }
 
   getSessionCookie(): string | null { return this.sessionCookie; }
-
-  // ─── Panel ─────────────────────────────────────────────────────────────────
-
-  async getControllerState(): Promise<ControllerState> {
-    const p = parse(await this.req('GET', R2.controllerState()));
-    const d = requireState(p, ['pnl-ctrlstate'], 'getControllerState');
-    return (d['ctrlstate'] ?? 'init') as ControllerState;
-  }
-
-  setControllerState(state: 'motoron' | 'motoroff'): Promise<void> {
-    const { path, body } = R2.setControllerState(state);
-    return this.req('POST', path, body).then(() => {});
-  }
-
-  async getOperationMode(): Promise<OperationMode> {
-    const p = parse(await this.req('GET', R2.operationMode()));
-    const d = requireState(p, ['pnl-opmode'], 'getOperationMode');
-    return (d['opmode'] ?? 'MANR') as OperationMode;
-  }
-
-  async getSpeedRatio(): Promise<number> {
-    const p = parse(await this.req('GET', R2.speedRatio()));
-    const d = requireState(p, ['pnl-speedratio'], 'getSpeedRatio');
-    return Number(d['speedratio'] ?? 100);
-  }
-
-  /**
-   * Set the speed ratio (0-100). Live-verified format on OmniCore VC RW7.21
-   * via scripts/probe-speedratio.js (2026-05-07):
-   *   ✓ POST /rw/panel/speedratio?action=setspeedratio  body speed-ratio=N
-   *     (RWS 1.0 wire format - OmniCore kept the legacy path)
-   *     Requires `edit` mastership: 403 "user does not have required
-   *     mastership" without it.
-   *   ✗ POST /rw/panel/speedratio  body speedratio=N  → 400 "Invalid input form data"
-   *   ✗ POST /rw/panel/speedratio/set                 → 404 (path doesn't exist)
-   *
-   * Acquires `edit` mastership internally and releases it after.
-   */
-  async setSpeedRatio(ratio: number): Promise<void> {
-    // Build (and therefore validate) before taking write access: a rejected
-    // argument should cost no controller round trip, and on RW8 a failure to
-    // take write access would otherwise mask the real complaint.
-    const { path, body } = R2.setSpeedRatio(ratio);
-    await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
-    try {
-      await this.req('POST', path, body);
-    } finally {
-      await this.releaseMastership('rapid').catch(() => {});
-    }
-  }
-
-  async getCollisionDetectionState(): Promise<CollisionDetectionState> {
-    const p = parse(await this.req('GET', R2.collisionDetectionState()));
-    return (p.getState('pnl-coldetstate')['coldetstate'] ?? 'INIT') as CollisionDetectionState;
-  }
-
-  lockOperationMode(pin: string, permanent = false): Promise<void> {
-    // POST /rw/panel/opmode/lock with pin and permanent flag
-    const { path, body } = R2.lockOperationMode(pin, permanent);
-    return this.req('POST', path, body).then(() => {});
-  }
-
-  unlockOperationMode(): Promise<void> {
-    const { path } = R2.unlockOperationMode();
-    return this.req('POST', path).then(() => {});
-  }
-
-  /** Acknowledge a pending operation-mode switch (after the mode selector is turned).
-   *  OPTIONS-verified 2026-08-04 (RW7.21). @param wireMode target mode, e.g. 'auto'. */
-  acknowledgeOperationMode(wireMode: string): Promise<void> {
-    const { path, body } = R2.acknowledgeOperationMode(wireMode);
-    return this.req('POST', path, body).then(() => {});
-  }
-
-  /** Lock state of the operation-mode selector ('locked' | 'unlocked').
-   *  Live-verified 2026-08-04 (RW7.21), class pnl-opmode-lockstate-li. */
-  async getOperationModeLockState(): Promise<string> {
-    const p = parse(await this.req('GET', buildPath(PANEL.getOperationModeLockState.rws2 as PathSpec)));
-    return p.getState('pnl-opmode-lockstate-li')['lockstate'] ?? 'unknown';
-  }
-
-  /**
-   * Switch the controller's operation mode. **Virtual controllers only** -
-   * real hardware respects the FlexPendant key switch.
-   *
-   * Endpoint + wire format - ALL live-verified on OmniCore VC RW7.x via
-   * scripts/probe-opmode-write.js (2026-05-07):
-   *   ✓ POST /rw/panel/opmode  body opmode=auto  → AUTO (200 OK)
-   *   ✓ POST /rw/panel/opmode  body opmode=man   → MANR (200 OK)
-   *   ✓ POST /rw/panel/opmode  body opmode=manf  → MANF (200 OK) - NOTE: `manf`,
-   *      NOT `manfs` as RWS 1.0 uses. RWS 2.0 dropped the 's'.
-   *   ✗ POST /rw/panel/opmode/set                → 404 (path doesn't exist)
-   *   ✗ POST /rw/panel/opmode  body opmode=AUTO  → 400 invalid value
-   *   ✗ POST /rw/panel/opmode  body opmode=manr  → 400 invalid value
-   *
-   * The wire value is lowercase and uses the RWS 1.0 abbreviations *except*
-   * for MANF (`manf` on RWS 2.0 vs `manfs` on RWS 1.0). And NEITHER matches
-   * the GET-response casing (`AUTO`/`MANR`/`MANF`). This asymmetry is one
-   * of the documented protocol quirks of RWS 2.0.
-   *
-   * Side note: the controller pops up a confirmation dialog on the FlexPendant
-   * after the call returns 200 OK; the operator must approve before the mode
-   * actually flips. There is no API path to bypass this - UAS-grant changes
-   * are FlexPendant-only by design.
-   */
-  setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
-    const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manf';
-    return this.req('POST', buildPath(PANEL.setOperationMode.rws2 as PathSpec), { opmode: wire }).then(() => {});
-  }
 
   // ─── RAPID execution ────────────────────────────────────────────────────────
 
@@ -1111,7 +1002,7 @@ export class Rws2Core {
    * coordinates. Shared by `searchSignals` and `searchSignalsEx` so both
    * populate the same coordinate cache from the same shape.
    */
-  private parseSignalList(html: string): Signal[] {
+  protected parseSignalList(html: string): Signal[] {
     const p = parse(html);
     return p.getAllStates('ios-signal-li').map(s => {
       const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
@@ -1630,7 +1521,7 @@ export class Rws2Core {
 
   // ─── File system ──────────────────────────────────────────────────────────────
 
-  private rws2Path(path: string): string {
+  protected rws2Path(path: string): string {
     // Percent-encode per segment so names with spaces, '#', '%', etc. survive
     // URL parsing ('#' would otherwise be treated as a fragment and truncate the path).
     return path.replace(/\$HOME/g, 'HOME')
@@ -2824,7 +2715,7 @@ export class Rws2Core {
    *   the given name (even for SysMod modules - never '.sysx'), so the name is
    *   passed without extension. TEMP: avoids any risk of clobbering HOME files.
    */
-  private async readModuleViaSave(task: string, moduleName: string): Promise<string> {
+  protected async readModuleViaSave(task: string, moduleName: string): Promise<string> {
     const tmp = `${moduleName}_${Date.now().toString(36)}${Math.floor(Math.random() * 0xffff).toString(36)}`;
     const { path, body } = R2.saveModuleAs(task, moduleName, tmp, 'TEMP:');
     await this.req('POST', path, body);
@@ -3510,7 +3401,7 @@ export class Rws2Core {
   // ─── Jogging ─────────────────────────────────────────────────────────────────
 
   /** Monotonic counter required by /rw/motionsystem/jog (controller rejects same value twice). */
-  private jogCcount = 0;
+  protected jogCcount = 0;
 
   async jog(params: {
     mode: 'Joint' | 'Cartesian';
@@ -3547,7 +3438,7 @@ export class Rws2Core {
   // All wire shapes live-verified 2026-07-09 on an OmniCore VC RW7.21.
 
   /** Shared POST for the VC-only simulation endpoints. */
-  private async simPost(
+  protected async simPost(
     label: string,
     path: string,
     body?: Record<string, string>,

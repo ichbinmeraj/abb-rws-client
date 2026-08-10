@@ -1,4 +1,5 @@
 import { Rws2Core } from './rws2/core.js';
+import { PanelOps } from './rws2/panel.js';
 
 /**
  * RWS 2.0 protocol client for ABB OmniCore controllers (RobotWare 7.x / 8.x).
@@ -15,4 +16,4 @@ import { Rws2Core } from './rws2/core.js';
  * `createClient(host)` from this package - it probes the auth challenge and
  * returns the right client.
  */
-export class RwsClient2 extends Rws2Core {}
+export class RwsClient2 extends PanelOps(Rws2Core) {}
