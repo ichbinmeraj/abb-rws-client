@@ -140,9 +140,9 @@ export class Rws2Core {
   protected readonly sigCoords = new Map<string, { n: string; d: string }>();
 
   /** RobotWare major version, parsed from /rw/system on connect (null before). */
-  protected rwMajor: number | null = null;
+  private rwMajor: number | null = null;
   /** Raw rwversion string from /rw/system, e.g. '8.1.1+614'. */
-  protected rwVersionRaw: string | null = null;
+  private rwVersionRaw: string | null = null;
   /** How write access is acquired: RW7 mastership or RW8 control-station.
    *  Resolved from the version on connect, or lazily when /rw/mastership
    *  answers 410 GONE (RW8 removed it). */
@@ -157,7 +157,7 @@ export class Rws2Core {
   private readonly csPincode: string;
 
   constructor(
-    protected readonly baseUrl: string,
+    private readonly baseUrl: string,
     username: string,
     password: string,
     opts: {
