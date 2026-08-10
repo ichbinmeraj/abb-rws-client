@@ -37,6 +37,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Secrets no longer leak into trace logs.** Every write body was traced
+  verbatim (first 200 chars) into the logger's structured `data`, so a host that
+  persists trace output (the RAPID Live extension writes a log file) stored
+  `changePassword`'s old/new passwords, the control-station pincode, and the
+  operation-mode-lock PIN in cleartext at rest. Secret-named form fields are now
+  redacted before logging on both generations; non-secret fields are untouched.
+- **RWS 1.0 `startRapid()` honours the execution cycle.** It hardcoded
+  `cycle=forever`, overriding a prior `setExecutionCycle('once')`, so a program
+  the caller wanted to run once looped continuously and single-cycle mode was
+  unreachable. Now sends `cycle=asis` (as RWS 2.0 already did) - the controller's
+  default is `forever`, so a caller who never sets a cycle is unaffected.
+- **RWS 1.0 `setControllerClock()` actually sets the clock.** Its form body was
+  sent as `application/octet-stream`, so the controller's form parser ignored the
+  `sys-clock-*` fields and the clock was silently unchanged. Now sent as
+  `application/x-www-form-urlencoded`.
+- **`copyFile()` no longer silently copies to the wrong place.** RWS fileservice
+  copy is same-directory-only; a cross-directory destination had its directory
+  dropped and the file was copied next to the source. Both generations now throw
+  `INVALID_ARGUMENT` for a cross-directory destination instead.
+- **`getActiveUiInstruction()` returns `null` when idle, as documented.** On IRC5
+  the idle case answers HTTP 404; the method threw `RESOURCE_NOT_FOUND` on every
+  idle poll instead of resolving to the documented `null`.
+- **`RobotManager` no longer resurrects state after an intentional disconnect.**
+  `refresh()` (and the async event-log subscription callback) kept operating on
+  the torn-down adapter, so a refresh after disconnect could repopulate a
+  "disconnected" state or re-fire the auto-disconnect "Reconnect" prompt.
+  `refresh()` is now a no-op unless connected, the elog callback drops a
+  late-arriving result across a disconnect/reconnect, and the failure counter is
+  reset on disconnect.
 - **RWS 2.0 survives the keep-alive race.** A controller that closes an idle
   pooled connection leaves a dead socket in the agent, and the next request
   adopts it and fails with `socket hang up` before anything is sent. RWS 1.0
