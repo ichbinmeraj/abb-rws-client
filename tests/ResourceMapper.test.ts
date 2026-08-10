@@ -89,7 +89,10 @@ describe('ResourceMapper', () => {
       const { body } = startRapid();
       expect(body).toContain('regain=continue');
       expect(body).toContain('execmode=continue');
-      expect(body).toContain('cycle=forever');
+      // cycle=asis keeps the configured cycle mode (matching RWS 2.0) instead of
+      // hardcoding forever, which used to override a prior setExecutionCycle('once').
+      expect(body).toContain('cycle=asis');
+      expect(body).not.toContain('cycle=forever');
       expect(body).toContain('condition=none');
       expect(body).toContain('stopatbp=disabled');
       expect(body).toContain('alltaskbytsp=false');
