@@ -8,16 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`getVirtualTimeTimeslice()` on RWS 1.0.** The IRC5 advertises
-  `/ctrl/virtualtime/vttimeslice` and it was wrapped only on RWS 2.0; now
-  implemented on both generations (live-verified on IRC5 RW6.16). Closes one of
-  the four conformance `deliberate-gap` rows - the crawl now reports **57
-  implemented · 3 deliberate-gap · 0 unmapped · 0 orphan** across both live
-  generations. The three residual gaps are not missing capabilities: `/ctrl/options`
-  is an empty verify-stub (returns 204; the real option list is `/rw/system/options`,
-  which is implemented), and RW6 `/ctrl/compress` advertises the endpoint but not
-  its request form (empty OPTIONS form, and the RW7 `srcpath/dstpath` form plus all
-  probed variants answer 400) - documented rather than shipped as a method that fails.
+- **`getVirtualTimeTimeslice()`, `compressPath()` and `decompressPath()` on RWS
+  1.0.** Three `/ctrl` endpoints the IRC5 advertises were wrapped only on RWS 2.0;
+  now implemented on both generations, each live-verified on IRC5 RW6.16.
+  `compressPath`/`decompressPath` required the RWS 1.0 query-action form
+  (`POST /ctrl/compress?action=comp` / `?action=dcomp`) with `/fileservice/`-prefixed
+  paths - materially different from the RWS 2.0 path-action form, and captured in
+  the path table. The conformance crawl now reports **58 implemented · 2
+  deliberate-gap · 0 unmapped · 0 orphan** across both live generations. The two
+  residual gaps are **not** missing capabilities: `/ctrl/options` (both generations)
+  is an empty verify-stub that answers **204 no-content**; the real option list is
+  `/rw/system/options`, which is implemented.
 
 - **Path tables - the single source of RWS URLs.** Every URL the client uses is
   now declared once in `src/paths`, one table per RWS domain, keyed by operation
