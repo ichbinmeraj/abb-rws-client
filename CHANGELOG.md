@@ -94,6 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Both were found by structural cell S12 (malformed / truncated responses).
 
+### Changed
+
+- **`RwsClient2` restructured into per-RWS-domain modules.** The 4,300-line class
+  was organised by protocol generation while RWS is organised by domain, so an ABB
+  update never landed anywhere obvious. It is now a thin composition façade over
+  `Rws2Core` (the shared machinery - transport, connection, subscriptions,
+  mastership / control-station, RMMP) with the 236 endpoint methods split into
+  nine domain mixins under `src/rws2/` (`panel`, `rapid`, `motion`, `io`,
+  `cfgElogDipc`, `ctrl`, `system`, `users`, `files`). Each domain now has one
+  obvious home - the mixin file beside its `src/paths` table - so a protocol
+  change is a diff in one place, not archaeology across a monolith. `core.ts`
+  drops from 4,333 to 1,583 lines. **No public API change:** the import path, the
+  class name and every method are unchanged; each mixin publishes a named
+  public-methods interface so the emitted `RwsClient2.d.ts` stays identical in
+  surface. The move is behaviour-preserving - an AST diff against the pre-split
+  class shows 275 of 283 method bodies byte-identical and the other eight only the
+  mechanical edits the split required (four `private`→`protected` promotions, two
+  constant dereferences, two type-only casts); 0 methods lost, added or
+  duplicated. Verified by tsc, 585 unit tests, a leak-free declaration, a
+  read-only live smoke against OmniCore RW7.21 and RW8.1.1, and structural cell
+  S12 under fault injection.
+
 ## [1.2.0] - 2026-08-09
 
 Everything below accumulated after the 1.1.0 entry was written on 2026-08-02.
