@@ -1066,7 +1066,12 @@ export class RwsClient {
   async setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
     try {
       const { path, body } = mapSetControllerClock(year, month, day, hour, min, sec);
-      await this.session.put(path, new TextEncoder().encode(body));
+      // Pass the form body as a STRING so HttpSession stamps
+      // Content-Type: application/x-www-form-urlencoded. TextEncoder-wrapping it
+      // made the body a Uint8Array, which the session labels octet-stream - the
+      // controller's form parser then never reads the sys-clock-* fields and the
+      // clock is not set. (RWS 2.0 sends this same PUT as x-www-form-urlencoded.)
+      await this.session.put(path, body);
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`setControllerClock failed: ${String(e)}`, 'UNKNOWN');
