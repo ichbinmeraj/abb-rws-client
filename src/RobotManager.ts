@@ -643,6 +643,11 @@ export class RobotManager {
     }
     this.subscriptionActive = false;
     if (this.adapter) { await this.adapter.disconnect().catch(() => {}); }
+    // Reset the auto-disconnect failure counter. It is otherwise only cleared on
+    // a successful doConnect, so after an *auto*-disconnect (which happens at
+    // consecutiveFails>=3) a single later failing poll would immediately re-cross
+    // the threshold and re-pop the "Reconnect" dialog the user just dismissed.
+    this.consecutiveFails = 0;
     this._state = {
       connected: false, quality: 'disconnected', qualityReason: 'disconnected',
       host: '', ctrlstate: null, opmode: null,
@@ -659,7 +664,15 @@ export class RobotManager {
    * staleness guard and could resurrect state (and quality) after a
    * disconnect/reconnect that raced it.
    */
-  async refresh(): Promise<void> { await this.fetchAll(this.pollGeneration); }
+  async refresh(): Promise<void> {
+    // A refresh after an intentional disconnect must be a no-op: the adapter is
+    // torn down, and fetchAll's generation guard passes (this.pollGeneration is
+    // read live, so it equals itself) so nothing would otherwise stop it from
+    // repopulating a "disconnected" _state - or, on the dead session, climbing
+    // consecutiveFails and re-firing the auto-disconnect dialog.
+    if (!this._state.connected) { return; }
+    await this.fetchAll(this.pollGeneration);
+  }
 
   // ─── Panel control ──────────────────────────────────────────────────────────
 
@@ -1723,8 +1736,14 @@ export class RobotManager {
         changed = true;
       }
     } else if (isElog) {
-      // New elog message arrived - refresh the log asynchronously
+      // New elog message arrived - refresh the log asynchronously. Pin the poll
+      // generation: a disconnect (or a reconnect to another controller) between
+      // this dispatch and the response would otherwise write the late log into
+      // the fresh/disconnected _state and notify(), surfacing event data on a
+      // robot that is no longer connected (or one controller's log on another).
+      const gen = this.pollGeneration;
       this.adapter?.getEventLog(0, 'en').then(log => {
+        if (gen !== this.pollGeneration || !this._state.connected) { return; }
         this._state.eventLog = log;
         this.notify();
       }).catch(() => {});

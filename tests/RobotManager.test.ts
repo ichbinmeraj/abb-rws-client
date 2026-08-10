@@ -605,6 +605,18 @@ describe('RobotManager.currentUseHttps', () => {
 describe('RobotManager polling task selection', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
+  it('refresh() is a no-op after disconnect - does not touch the torn-down adapter', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter();
+    (mgr as any).adapter = fake;      // adapter is left non-null by disconnectInternal
+    (mgr as any)._state.connected = false;  // ...but state is disconnected
+    await mgr.refresh();
+    // No fetch should reach the dead adapter, so state can't be resurrected and
+    // the auto-disconnect failure counter can't be re-tripped.
+    expect(fake.getRapidTasks).not.toHaveBeenCalled();
+    expect(fake.getControllerState).not.toHaveBeenCalled();
+  });
+
   it('polls the module list of the active task, not hardcoded T_ROB1', async () => {
     const mgr = new RobotManager();
     const fake = makeFakeAdapter();
@@ -612,6 +624,7 @@ describe('RobotManager polling task selection', () => {
       { name: 'T_MULTI', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: true, motiontask: true },
     ]);
     (mgr as any).adapter = fake;
+    (mgr as any)._state.connected = true; // refresh() is a no-op unless connected
     await mgr.refresh();
     expect(fake.listModules).toHaveBeenCalledWith('T_MULTI');
   });
@@ -624,6 +637,7 @@ describe('RobotManager polling task selection', () => {
       { name: 'T_RIGHT', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: false, motiontask: true },
     ]);
     (mgr as any).adapter = fake;
+    (mgr as any)._state.connected = true; // refresh() is a no-op unless connected
     await mgr.refresh();
     expect(fake.listModules).toHaveBeenCalledWith('T_LEFT');
   });
