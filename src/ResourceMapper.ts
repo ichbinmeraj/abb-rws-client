@@ -92,11 +92,20 @@ export function rapidExecutionState(): string {
   return buildPath(RAPID.getRapidExecutionState.rws1 as PathSpec);
 }
 
-/** Path + body to start RAPID program execution */
+/**
+ * Path + body to start RAPID program execution.
+ *
+ * `cycle=asis` keeps the currently configured cycle mode, matching RWS 2.0
+ * (ResourceMapper2.startRapid). Hardcoding `cycle=forever` here previously
+ * OVERRODE a prior setExecutionCycle('once'), so a program the caller wanted to
+ * run once looped continuously. `asis` is documented for both generations, and
+ * the controller's default cycle is `forever`, so a caller who never set a cycle
+ * sees no change - only an explicit setExecutionCycle is now honoured.
+ */
 export function startRapid(): { path: string; body: string } {
   return {
     path: buildPath(RAPID.startRapid.rws1 as PathSpec),
-    body: 'regain=continue&execmode=continue&cycle=forever&condition=none&stopatbp=disabled&alltaskbytsp=false',
+    body: 'regain=continue&execmode=continue&cycle=asis&condition=none&stopatbp=disabled&alltaskbytsp=false',
   };
 }
 
