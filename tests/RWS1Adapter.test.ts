@@ -305,6 +305,24 @@ describe('RWS1Adapter ctrl gap-closer (vttimeslice on RWS 1.0)', () => {
   });
 });
 
+describe('RWS1Adapter RMMP poll/cancel (RWS 1.0)', () => {
+  it('pollRmmp GETs /users/rmmp/poll and returns the status', async () => {
+    const { calls, client } = makeFake((_m, url) => url.startsWith('/users/rmmp/poll')
+      ? { status: 200, body: JSON.stringify({ _embedded: { _state: [{ _type: 'user-rmmp-poll', code: '0', status: 'GRANTED' }] } }) }
+      : undefined);
+    const adapter = new RWS1Adapter(client);
+    expect(await adapter.pollRmmp()).toBe('GRANTED');
+    expect(calls.some(c => c.what.startsWith('GET /users/rmmp/poll'))).toBe(true);
+  });
+
+  it('cancelRmmp POSTs the query-action /users/rmmp?action=cancel', async () => {
+    const { calls, client } = makeFake();  // 204
+    const adapter = new RWS1Adapter(client);
+    await adapter.cancelRmmp();
+    expect(calls.some(c => c.what.startsWith('POST /users/rmmp?action=cancel'))).toBe(true);
+  });
+});
+
 describe('RWS1Adapter FK/IK route through the shared client', () => {
   it('calcCartesianFromJoints parses the _state envelope from client.request', async () => {
     const { calls, client } = makeFake(() => ({ status: 200, body: JSON.stringify({ _embedded: { _state: [

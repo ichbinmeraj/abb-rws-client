@@ -659,6 +659,20 @@ export class RWS1Adapter implements IRWSAdapter {
     await this.rws1Post(buildPath(USERS_UAS.requestRmmp.rws1 as PathSpec), `privilege=${level}`);
   }
 
+  /** Poll a pending RMMP request (keeps the grant window alive, reports status).
+   *  Live-verified 200 on IRC5 RW6.16 (2026-08-11), class user-rmmp-poll. */
+  async pollRmmp(): Promise<string> {
+    const r = await this.rws1Get(buildPath(USERS_UAS.pollRmmp.rws1 as PathSpec));
+    const s = (r.state as { status?: string; privilege?: string } | null) ?? {};
+    return s.status ?? s.privilege ?? 'none';
+  }
+
+  /** Cancel this session's pending/held RMMP request. RWS 1.0 uses the
+   *  query-action form /users/rmmp?action=cancel. Live-verified 204 on RW6.16. */
+  async cancelRmmp(): Promise<void> {
+    await this.rws1Post(buildPath(USERS_UAS.cancelRmmp.rws1 as PathSpec), '');
+  }
+
   // ── Stage 7: Backup / Restore / Progress (5 methods) ───────────────────
 
   async createBackup(name: string): Promise<void> {

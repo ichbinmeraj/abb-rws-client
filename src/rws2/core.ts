@@ -1368,6 +1368,28 @@ export class Rws2Core {
     }
   }
 
+  /** Poll a pending RMMP request. Call repeatedly after requestRmmp to keep the
+   *  approval window alive and read its status (e.g. 'GRANTED', 'PENDING',
+   *  'NO SUCH REQUEST'). Live-verified 200 on RW7.21 (2026-08-11), class
+   *  user-rmmp-poll. RW8.1.1's broken RMMP service (HTTP 500) maps to 'none'. */
+  async pollRmmp(): Promise<string> {
+    let xml: string;
+    try {
+      xml = await this.req('GET', buildPath(USERS_UAS.pollRmmp.rws2 as PathSpec));
+    } catch (e) {
+      if (e instanceof RwsError && e.httpStatus === 500) { return 'none'; }
+      throw e;
+    }
+    const p = parse(xml);
+    return p.get('status') ?? p.get('privilege') ?? 'none';
+  }
+
+  /** Cancel this session's pending/held RMMP request (RWS 2.0 path-action
+   *  /users/rmmp/cancel). Live-verified 204 on RW7.21 (2026-08-11). */
+  async cancelRmmp(): Promise<void> {
+    await this.req('POST', buildPath(USERS_UAS.cancelRmmp.rws2 as PathSpec)).then(() => {});
+  }
+
   /** Info about the logged-in user session (uas-id, user-name, locale,
    *  application). Live-verified 2026-08-04 (RW7.21), class user-login-info. */
   async getLoginInfo(): Promise<Record<string, string>> {
