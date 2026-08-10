@@ -454,20 +454,41 @@ export function createDirectory(parentPath: string): { path: string } {
   return { path: fileServicePath(parentPath) };
 }
 
+/** Directory portion of a controller path (`$HOME/Backup/a.mod` -> `$HOME/Backup`),
+ *  normalised without a leading slash. Treats both `/` and `\` as separators (to
+ *  match the basename extraction below). A bare filename yields ''. */
+function dirOf(remotePath: string): string {
+  const norm = remotePath.replace(/^\//, '');
+  const idx = Math.max(norm.lastIndexOf('/'), norm.lastIndexOf('\\'));
+  return idx === -1 ? '' : norm.slice(0, idx);
+}
+
 /**
  * Path to copy a file on the controller filesystem.
  * POST to this path with body 'fs-action=copy&fs-newname={filename}'.
  *
  * RWS 1.0 fileservice copy operates *within the source's directory only*:
- * fs-newname must be a bare filename, not a path. Passing a full path
- * returns 400 "Invalid". To copy across directories, copy first then move
- * (or upload to the new path directly).
+ * fs-newname must be a bare filename, not a path. So `destPath` must name a file
+ * in the SAME directory as the source. A destination in a different directory
+ * cannot be honoured by this endpoint - rather than silently copying next to the
+ * source (which the old basename-only behaviour did), a cross-directory
+ * destination throws INVALID_ARGUMENT. To copy across directories, copy within
+ * the source dir then move, or upload to the new path directly.
  *
  * @param sourcePath - Source file path, e.g. '$HOME/Source.mod'
- * @param destPath   - Destination path. The basename is extracted and used
- *                     as fs-newname; any directory component is ignored.
+ * @param destPath   - Destination file, e.g. '$HOME/Copy.mod' or a bare
+ *                     'Copy.mod'. Must resolve to the source's directory.
  */
 export function copyFile(sourcePath: string, destPath: string): { path: string; body: string } {
+  const destDir = dirOf(destPath);
+  // '' means the caller gave a bare filename => implicitly the source directory.
+  if (destDir !== '' && destDir !== dirOf(sourcePath)) {
+    throw new RwsError(
+      `copyFile: RWS 1.0 can only copy within the source directory. Source dir '${dirOf(sourcePath)}' ` +
+      `!= destination dir '${destDir}'. Pass a same-directory destination, or copy-then-move.`,
+      'INVALID_ARGUMENT',
+    );
+  }
   const destBasename = destPath.replace(/^.*[\\/]/, '');
   return {
     path: fileServicePath(sourcePath),
