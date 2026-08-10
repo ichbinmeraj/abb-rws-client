@@ -301,19 +301,21 @@ export const CTRL: DomainTable = {
     summary: 'Compress a controller path.',
     // Spec field names (source/destination) are WRONG - controller wants srcpath/dstpath.
     rws2: { method: 'POST', path: '/ctrl/compress', fields: ['srcpath', 'dstpath'] },
-    // IRC5 advertises /ctrl/compress (OPTIONS Allow: GET,POST,OPTIONS) but its
-    // RW6 request form is undiscoverable by probing (live 2026-08-11): the OPTIONS
-    // form body is EMPTY in every representation, and the RW7 srcpath/dstpath form
-    // - plus HOME/$HOME//fileservice path variants and a `path` field - all answer
-    // 400 INVALID Request (-1073414146). Left a gap rather than ship a method that
-    // 400s; closing it needs ABB RW6 form docs, not guesswork.
-    rws1: { method: 'POST', path: '/ctrl/compress', gap: 'advertised on RW6 but its request form is not the RW7 srcpath/dstpath form and is not advertised (empty OPTIONS); all probed forms 400. Needs RW6 form docs.' },
-    note: 'wrapped on RWS 2.0 (fields srcpath/dstpath); RW6 advertises the endpoint but with a different, undocumented form.',
+    // RWS 1.0 uses a QUERY-action (?action=comp), unlike the RWS 2.0 path form,
+    // and requires `/fileservice/`-prefixed paths. Documented in the ABB RWS 1.0
+    // reference and live-verified on IRC5 RW6.16 (2026-08-11): POST returns 202
+    // ACCEPTED. ($HOME/$system are protected -> "Compression Forbidden"; $TEMP /
+    // $BACKUP compress fine.)
+    rws1: { method: 'POST', path: '/ctrl/compress', action: 'comp', fields: ['srcpath', 'dstpath'] },
+    note: 'RWS 2.0 path-action POST /ctrl/compress; RWS 1.0 query-action POST /ctrl/compress?action=comp with /fileservice/ paths, 202 ACCEPTED.',
   },
   decompressPath: {
     summary: 'Decompress a controller path.',
     rws2: { method: 'POST', path: '/ctrl/decompress', fields: ['srcpath', 'dstpath'] },
-    note: 'RWS 2.0 only; sibling of /ctrl/compress, not a subresource.',
+    // RWS 1.0 has NO separate /ctrl/decompress - it is the same /ctrl/compress
+    // endpoint with ?action=dcomp (ABB RWS 1.0 reference; /fileservice/ paths).
+    rws1: { method: 'POST', path: '/ctrl/compress', action: 'dcomp', fields: ['srcpath', 'dstpath'] },
+    note: 'RWS 2.0 has a distinct /ctrl/decompress; RWS 1.0 reuses /ctrl/compress?action=dcomp.',
   },
 
   // ── Options (the controller advertises /ctrl/options, but…) ───────────────

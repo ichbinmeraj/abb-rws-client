@@ -282,6 +282,27 @@ describe('RWS1Adapter ctrl gap-closer (vttimeslice on RWS 1.0)', () => {
     expect(calls.some(c => c.what.startsWith('GET /ctrl/virtualtime/vttimeslice'))).toBe(true);
   });
 
+  it('compressPath POSTs ?action=comp with /fileservice/-prefixed paths', async () => {
+    const { calls, client } = makeFake();  // 204
+    const adapter = new RWS1Adapter(client);
+    await adapter.compressPath('$TEMP/a.txt', '$TEMP/a.rzo');
+    const post = calls.find(c => c.what.startsWith('POST /ctrl/compress'));
+    expect(post).toBeTruthy();
+    expect(post!.what).toContain('action=comp');
+    // bare $TEMP paths are normalized to the /fileservice/ form the endpoint requires
+    expect(decodeURIComponent(post!.body ?? '')).toContain('srcpath=/fileservice/$TEMP/a.txt');
+    expect(decodeURIComponent(post!.body ?? '')).toContain('dstpath=/fileservice/$TEMP/a.rzo');
+  });
+
+  it('decompressPath reuses /ctrl/compress with ?action=dcomp (no separate endpoint)', async () => {
+    const { calls, client } = makeFake();
+    const adapter = new RWS1Adapter(client);
+    await adapter.decompressPath('/fileservice/$TEMP/a.rzo', '$TEMP/');
+    const post = calls.find(c => c.what.startsWith('POST /ctrl/compress'));
+    expect(post).toBeTruthy();
+    expect(post!.what).toContain('action=dcomp');
+    expect(decodeURIComponent(post!.body ?? '')).toContain('srcpath=/fileservice/$TEMP/a.rzo');
+  });
 });
 
 describe('RWS1Adapter FK/IK route through the shared client', () => {

@@ -1,8 +1,8 @@
 {
  "crawledAt": "2026-08-10",
  "summary": {
-  "implemented": 57,
-  "deliberate-gap": 3,
+  "implemented": 58,
+  "deliberate-gap": 2,
   "unmapped": 0,
   "orphan": 0
  },
@@ -28,7 +28,7 @@
   {
    "gen": "rws1",
    "resource": "/ctrl/compress",
-   "verdict": "deliberate-gap",
+   "verdict": "implemented",
    "by": "ctrl.compressPath"
   },
   {

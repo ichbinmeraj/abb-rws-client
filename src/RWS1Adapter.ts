@@ -789,6 +789,35 @@ export class RWS1Adapter implements IRWSAdapter {
     return Number(s.VTTimeslice ?? s.vttimeslice ?? 0);
   }
 
+  /** Ensure a controller path is in the `/fileservice/`-prefixed form the RWS 1.0
+   *  compress endpoint requires (it rejects a bare `$HOME/...` as "Invalid File
+   *  Service path"). Leaves an already-prefixed path untouched. */
+  private static fsPath(p: string): string {
+    const norm = p.replace(/^\//, '');
+    return norm.startsWith('fileservice/') ? `/${norm}` : `/fileservice/${norm}`;
+  }
+
+  /**
+   * Compress a controller path into a `.rzo` archive. RWS 1.0 counterpart of the
+   * RWS 2.0 method. Unlike RWS 2.0's path-action form, RWS 1.0 uses the
+   * query-action `POST /ctrl/compress?action=comp` and requires
+   * `/fileservice/`-prefixed paths - both documented in the ABB RWS 1.0 reference
+   * and live-verified on IRC5 RW6.16 (2026-08-11): returns HTTP 202 ACCEPTED.
+   * ($HOME / $system are protected and answer "Compression Forbidden"; user
+   * areas such as $TEMP / $BACKUP compress.)
+   */
+  async compressPath(source: string, destination: string): Promise<void> {
+    await this.rws1Post(buildPath(CTRL.compressPath.rws1 as PathSpec),
+      `srcpath=${encodeURIComponent(RWS1Adapter.fsPath(source))}&dstpath=${encodeURIComponent(RWS1Adapter.fsPath(destination))}`);
+  }
+
+  /** Decompress an `.rzo` archive. RWS 1.0 has no separate `/ctrl/decompress`; it
+   *  reuses `/ctrl/compress?action=dcomp` with the same `/fileservice/` paths. */
+  async decompressPath(source: string, destination: string): Promise<void> {
+    await this.rws1Post(buildPath(CTRL.decompressPath.rws1 as PathSpec),
+      `srcpath=${encodeURIComponent(RWS1Adapter.fsPath(source))}&dstpath=${encodeURIComponent(RWS1Adapter.fsPath(destination))}`);
+  }
+
   // ── Stage 11: Vision (5 methods) ───────────────────────────────────────
 
   async listVisionSystems(): Promise<Array<{ name: string; status?: string }>> {
