@@ -780,6 +780,15 @@ export class RWS1Adapter implements IRWSAdapter {
     await this.rws1Post(buildPath(CTRL.setVirtualTimeScale.rws1 as PathSpec), `vtcurrspeed=${scale}`);
   }
 
+  /** Virtual-time timeslice (ms). RWS 1.0 counterpart of the RWS 2.0 method -
+   *  live-verified on IRC5 RW6.16 (2026-08-11): GET /ctrl/virtualtime/vttimeslice
+   *  answers a `ctrl-vttimeslice` state carrying `VTTimeslice`. */
+  async getVirtualTimeTimeslice(): Promise<number> {
+    const r = await this.rws1Get(buildPath(CTRL.getVirtualTimeTimeslice.rws1 as PathSpec));
+    const s = (r.state as { VTTimeslice?: string; vttimeslice?: string } | null) ?? {};
+    return Number(s.VTTimeslice ?? s.vttimeslice ?? 0);
+  }
+
   // ── Stage 11: Vision (5 methods) ───────────────────────────────────────
 
   async listVisionSystems(): Promise<Array<{ name: string; status?: string }>> {

@@ -254,7 +254,7 @@ export const CTRL: DomainTable = {
     // The IRC5 also advertises this (conformance check, 2026-08-10), but the
     // client only wraps it on RWS 2.0 - recorded as a gap so the divergence is
     // documented rather than showing as unmapped drift.
-    rws1: { method: 'GET', path: '/ctrl/virtualtime/vttimeslice', gap: 'advertised on RW6 but the client wraps it only on RWS 2.0' },
+    rws1: { method: 'GET', path: '/ctrl/virtualtime/vttimeslice' },
     note: 'wrapped on RWS 2.0; RW6 advertises it too but the client does not use it there.',
   },
   setVirtualTimeTimeslice: {
@@ -301,10 +301,14 @@ export const CTRL: DomainTable = {
     summary: 'Compress a controller path.',
     // Spec field names (source/destination) are WRONG - controller wants srcpath/dstpath.
     rws2: { method: 'POST', path: '/ctrl/compress', fields: ['srcpath', 'dstpath'] },
-    // The IRC5 advertises /ctrl/compress too (conformance check, 2026-08-10),
-    // but the client wraps compress only on RWS 2.0. Recorded as a gap.
-    rws1: { method: 'POST', path: '/ctrl/compress', gap: 'advertised on RW6 but the client wraps compress only on RWS 2.0' },
-    note: 'wrapped on RWS 2.0 (fields srcpath/dstpath, not the spec source/destination); RW6 advertises it too but the client does not use it there.',
+    // IRC5 advertises /ctrl/compress (OPTIONS Allow: GET,POST,OPTIONS) but its
+    // RW6 request form is undiscoverable by probing (live 2026-08-11): the OPTIONS
+    // form body is EMPTY in every representation, and the RW7 srcpath/dstpath form
+    // - plus HOME/$HOME//fileservice path variants and a `path` field - all answer
+    // 400 INVALID Request (-1073414146). Left a gap rather than ship a method that
+    // 400s; closing it needs ABB RW6 form docs, not guesswork.
+    rws1: { method: 'POST', path: '/ctrl/compress', gap: 'advertised on RW6 but its request form is not the RW7 srcpath/dstpath form and is not advertised (empty OPTIONS); all probed forms 400. Needs RW6 form docs.' },
+    note: 'wrapped on RWS 2.0 (fields srcpath/dstpath); RW6 advertises the endpoint but with a different, undocumented form.',
   },
   decompressPath: {
     summary: 'Decompress a controller path.',
