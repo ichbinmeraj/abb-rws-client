@@ -272,6 +272,18 @@ describe('RWS1Adapter jog', () => {
   });
 });
 
+describe('RWS1Adapter ctrl gap-closer (vttimeslice on RWS 1.0)', () => {
+  it('getVirtualTimeTimeslice reads VTTimeslice from /ctrl/virtualtime/vttimeslice', async () => {
+    const { calls, client } = makeFake((_m, url) => url.startsWith('/ctrl/virtualtime/vttimeslice')
+      ? { status: 200, body: JSON.stringify({ _embedded: { _state: [{ _type: 'ctrl-vttimeslice', VTTimeslice: '42' }] } }) }
+      : undefined);
+    const adapter = new RWS1Adapter(client);
+    expect(await adapter.getVirtualTimeTimeslice()).toBe(42);
+    expect(calls.some(c => c.what.startsWith('GET /ctrl/virtualtime/vttimeslice'))).toBe(true);
+  });
+
+});
+
 describe('RWS1Adapter FK/IK route through the shared client', () => {
   it('calcCartesianFromJoints parses the _state envelope from client.request', async () => {
     const { calls, client } = makeFake(() => ({ status: 200, body: JSON.stringify({ _embedded: { _state: [
