@@ -242,6 +242,19 @@ describe('RwsClient - request shaping against a mock controller', () => {
     expect(String(last.headers['content-type'])).toBe('application/x-www-form-urlencoded');
   });
 
+  it('setControllerClock PUTs a form body as x-www-form-urlencoded (not octet-stream)', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.setControllerClock(2026, 8, 10, 12, 0, 0);
+
+    const last = mock.seen[mock.seen.length - 1];
+    expect(last.method).toBe('PUT');
+    // The controller's form parser only reads sys-clock-* fields under the form
+    // content type; octet-stream (from TextEncoder-wrapping) left the clock unset.
+    expect(String(last.headers['content-type'])).toBe('application/x-www-form-urlencoded');
+    expect(last.body).toContain('sys-clock-year=2026');
+  });
+
   it('writeSignal composes the lvalue body around the ResourceMapper path', async () => {
     const client = makeClient(mock.port);
     await client.connect();
