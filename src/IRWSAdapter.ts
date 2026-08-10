@@ -122,6 +122,12 @@ export interface IRWSAdapter {
   /** Request 'modify' RMMP. Triggers a FlexPendant approval popup. Returns immediately. */
   requestRmmp?(level?: 'modify' | 'exclusive'): Promise<void>;
 
+  /** Poll a pending RMMP request - keeps the approval window alive and reports status. */
+  pollRmmp?(): Promise<string>;
+
+  /** Cancel this session's pending/held RMMP request. */
+  cancelRmmp?(): Promise<void>;
+
   // ── System info ──────────────────────────────────────────────────────────
   getSystemInfo(): Promise<SystemInfo>;
   getControllerIdentity(): Promise<ControllerIdentity>;

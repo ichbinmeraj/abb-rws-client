@@ -30,6 +30,18 @@ export const USERS_UAS: DomainTable = {
     rws1: { method: 'POST', path: '/users/rmmp', fields: ['privilege'] },
     note: 'Same path and field as the getter. Encoding differs: 2.0 passes a field object, 1.0 a pre-encoded privilege={level} string. RW8.1.1 500 -> UNSUPPORTED_OPERATION.',
   },
+  pollRmmp: {
+    summary: 'Poll a pending RMMP request - keeps the grant window alive and reports its status.',
+    rws2: { method: 'GET', path: '/users/rmmp/poll' },
+    rws1: { method: 'GET', path: '/users/rmmp/poll' },
+    note: 'Same path both generations. Live-verified 200 on RW6.16 and RW7.21 (2026-08-11), class user-rmmp-poll (code + status, e.g. "NO SUCH REQUEST" when none pending).',
+  },
+  cancelRmmp: {
+    summary: 'Cancel this session\'s pending/held RMMP request.',
+    rws2: { method: 'POST', path: '/users/rmmp/cancel' },
+    rws1: { method: 'POST', path: '/users/rmmp', action: 'cancel' },
+    note: 'Generation split: RWS 2.0 path-action /users/rmmp/cancel, RWS 1.0 query-action /users/rmmp?action=cancel. Both live-verified 204 (2026-08-11, RW7.21 / RW6.16).',
+  },
 
   // ── Login info ────────────────────────────────────────────────────────────
   getLoginInfo: {
