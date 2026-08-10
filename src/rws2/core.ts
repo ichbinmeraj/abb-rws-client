@@ -35,7 +35,7 @@ const ACCEPT_HAL = 'application/hal+json;v=2.0';
  *  which promises a raw XHTML document) can pass it as an Accept override. */
 export const ACCEPT_XHTML = 'application/xhtml+xml;v=2.0';
 
-export function isXhtmlOnlyPath(path: string): boolean {
+function isXhtmlOnlyPath(path: string): boolean {
   return path.startsWith('/fileservice') || path === '/logout';
 }
 
@@ -46,7 +46,7 @@ export function parse(body: string): XhtmlParser | HalJsonParser {
 }
 
 /** Error block from either representation (JSON status.code/msg or XHTML spans). */
-export function extractError(body: string): { code: string; msg: string } | null {
+function extractError(body: string): { code: string; msg: string } | null {
   return parse(body).getError();
 }
 
@@ -85,7 +85,7 @@ export function requireState(
  * True for the keep-alive race: a pooled socket the controller closed while it
  * sat idle, which fails as ECONNRESET / "socket hang up" with no response.
  */
-export function isStaleSocketError(e: unknown): boolean {
+function isStaleSocketError(e: unknown): boolean {
   if (!(e instanceof RwsError) || e.code !== 'NETWORK_ERROR') { return false; }
   return /socket hang up|ECONNRESET|EPIPE/i.test(e.message);
 }
