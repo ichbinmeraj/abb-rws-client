@@ -6,8 +6,6 @@ import type {
 } from './types.js';
 import { decodeElogArgs, RwsError } from './types.js';
 import { classifyControllerError } from './ControllerError.js';
-import * as http from 'http';
-import * as crypto from 'crypto';
 import type { IRWSAdapter } from './IRWSAdapter.js';
 import {
   RAPID, MOTION, IO, CFG_ELOG_DIPC, CTRL, SYSTEM_MASTERSHIP, USERS_UAS, FILES_VISION,
@@ -223,16 +221,15 @@ export class RWS1Adapter implements IRWSAdapter {
     wobj = 'wobj0',
   ): Promise<RobTarget> {
     if (!this.creds) { throw new RwsError('FK requires credentials in the adapter constructor', 'INVALID_ARGUMENT'); }
-    const { host, port, username, password } = this.creds;
     const body = [
       `curr_joints=[${joints.rax_1},${joints.rax_2},${joints.rax_3},${joints.rax_4},${joints.rax_5},${joints.rax_6}]`,
       `curr_ext_joints=[9E9,9E9,9E9,9E9,9E9,9E9]`,
       `tool=${tool}`,
       `wobj=${wobj}`,
     ].join('&');
-    const path = `${buildPath(MOTION.calcCartesianFromJoints.rws1 as PathSpec, { mechunit })}&json=1`;
-    const result = await this.digestPost(host, port, path, body, username, password) as { _embedded?: { _state?: Array<Record<string, string>> } };
-    const state = result._embedded?._state?.[0];
+    const path = buildPath(MOTION.calcCartesianFromJoints.rws1 as PathSpec, { mechunit });
+    const result = await this.rws1Post(path, body) as { _embedded?: { _state?: Array<Record<string, string>> } } | null;
+    const state = result?._embedded?._state?.[0];
     if (!state) { throw new RwsError('FK: no result in response', 'PARSE_ERROR'); }
     return {
       x: +state.x, y: +state.y, z: +state.z,
@@ -275,11 +272,16 @@ export class RWS1Adapter implements IRWSAdapter {
       `ccount=${this.jogCcount}`,
     ].join('&');
 
-    const { host, port, username, password } = this.creds;
-    const path = `${buildPath(MOTION.jog.rws1 as PathSpec)}&json=1`;
-    const result = await this.digestPost(host, port, path, bodyStr, username, password);
+    // Route through the shared HttpSession (via rws1Post), NOT a fresh
+    // per-call connection: reusing the session cookie avoids minting a new
+    // controller session on every jog (which fills the ~70-slot pool under an
+    // interactive jog UI and yields persistent 503s), and it puts jog on the
+    // same session that holds motion mastership. rws1Post appends json=1, signs
+    // path+query, and throws a typed error on >=400.
+    const path = buildPath(MOTION.jog.rws1 as PathSpec);
+    const result = await this.rws1Post(path, bodyStr) as { _embedded?: { status?: { msg?: string } } } | null;
     // Successful jog has no useful body - only check for error status.
-    const status = (result._embedded as { status?: { msg?: string } } | undefined)?.status;
+    const status = result?._embedded?.status;
     if (status?.msg && status.msg.length > 0 && /error|fail/i.test(status.msg)) {
       throw new RwsError(status.msg, 'UNKNOWN');
     }
@@ -1287,7 +1289,6 @@ export class RWS1Adapter implements IRWSAdapter {
     if (!this.creds) {
       throw new RwsError('IK requires credentials - reconnect to enable', 'INVALID_ARGUMENT');
     }
-    const { host, port, username, password } = this.creds;
     const seed = seedJoints
       ? `[${seedJoints.rax_1},${seedJoints.rax_2},${seedJoints.rax_3},${seedJoints.rax_4},${seedJoints.rax_5},${seedJoints.rax_6}]`
       : '[0,0,0,0,0,0]';
@@ -1307,70 +1308,14 @@ export class RWS1Adapter implements IRWSAdapter {
       `elog_at_error=false`,
     ].join('&');
 
-    const path = `${buildPath(MOTION.calcJointsFromCartesian.rws1 as PathSpec, { mechunit })}&json=1`;
-    const result = await this.digestPost(host, port, path, bodyStr, username, password);
+    const path = buildPath(MOTION.calcJointsFromCartesian.rws1 as PathSpec, { mechunit });
+    const result = await this.rws1Post(path, bodyStr) as { _embedded?: { _state?: Array<Record<string, string>> } } | null;
     // RWS 1.0 IK response shape: { _embedded: { _state: [{ rax_1, rax_2, ... }] } }
-    const state = (result as { _embedded?: { _state?: Array<Record<string, string>> } })._embedded?._state?.[0];
+    const state = result?._embedded?._state?.[0];
     if (!state) { throw new RwsError('IK: no result in response', 'PARSE_ERROR'); }
     return {
       rax_1: +state.rax_1, rax_2: +state.rax_2, rax_3: +state.rax_3,
       rax_4: +state.rax_4, rax_5: +state.rax_5, rax_6: +state.rax_6,
     };
-  }
-
-  private digestPost(host: string, port: number, path: string, body: string, user: string, pass: string): Promise<Record<string, unknown>> {
-    // Two-step Digest: first GET challenge, then POST with auth header
-    return new Promise((resolve, reject) => {
-      // Step 1: send no-auth POST to get the 401 challenge
-      const challenge = http.request({ method: 'POST', hostname: host, port, path, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, res1 => {
-        const wwwAuth = (res1.headers['www-authenticate'] ?? '') as string;
-        res1.resume();
-        if (res1.statusCode !== 401) { reject(new Error(`IK: expected 401 challenge, got ${res1.statusCode}`)); return; }
-
-        // Parse Digest challenge
-        const realm  = wwwAuth.match(/realm="([^"]+)"/)?.[1] ?? '';
-        const nonce  = wwwAuth.match(/nonce="([^"]+)"/)?.[1] ?? '';
-        const qop    = wwwAuth.match(/qop="([^"]+)"/)?.[1] ?? 'auth';
-
-        // Build auth header (RFC 2617)
-        const cnonce = crypto.randomBytes(8).toString('hex');
-        const nc     = '00000001';
-        const ha1    = crypto.createHash('md5').update(`${user}:${realm}:${pass}`).digest('hex');
-        const ha2    = crypto.createHash('md5').update(`POST:${path.split('?')[0]}`).digest('hex');
-        const respH  = crypto.createHash('md5').update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`).digest('hex');
-        const authH  = `Digest username="${user}", realm="${realm}", nonce="${nonce}", uri="${path.split('?')[0]}", qop=${qop}, nc=${nc}, cnonce="${cnonce}", response="${respH}"`;
-
-        // Step 2: POST with Digest auth
-        const encoded = Buffer.from(body);
-        const req2 = http.request({
-          method: 'POST', hostname: host, port, path,
-          headers: {
-            Authorization: authH,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': String(encoded.length),
-            Accept: 'application/json',
-          },
-        }, res2 => {
-          const chunks: Buffer[] = [];
-          res2.on('data', (c: Buffer) => chunks.push(c));
-          res2.on('end', () => {
-            const raw = Buffer.concat(chunks).toString('utf8');
-            if ((res2.statusCode ?? 0) >= 400) {
-              let msg = `IK HTTP ${res2.statusCode}`;
-              try { msg = JSON.parse(raw)._embedded?.status?.msg ?? msg; } catch { /* ok */ }
-              reject(new Error(msg));
-              return;
-            }
-            try { resolve(JSON.parse(raw) as Record<string, unknown>); }
-            catch { reject(new Error('IK: could not parse response')); }
-          });
-        });
-        req2.on('error', reject);
-        req2.write(encoded);
-        req2.end();
-      });
-      challenge.on('error', reject);
-      challenge.end();
-    });
   }
 }
