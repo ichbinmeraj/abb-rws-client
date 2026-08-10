@@ -221,3 +221,65 @@ describe('RWS1Adapter live-audit fixes', () => {
     expect(await a.listCurrentUserGrants()).toEqual(['UAS_FULL_ACCESS', 'UAS_BACKUP']);
   });
 });
+
+// ─── Jog / IK / FK route through the SHARED session (no per-call session leak) ──
+// Before the fix these went through a private digestPost that opened a fresh raw
+// connection and minted a new controller session every call. They now go through
+// this.client.request (the shared HttpSession that reuses the cookie), which is
+// exactly what these fakes record.
+
+const CREDS = { host: '127.0.0.1', port: 80, username: 'Default User', password: 'robotics' };
+
+describe('RWS1Adapter jog', () => {
+  it('POSTs the jog form through the shared client, not a fresh connection', async () => {
+    const { calls, client } = makeFake();  // default 204
+    const adapter = new RWS1Adapter(client, CREDS);
+    await adapter.jog({ mode: 'Joint', axes: [1, 0, 0, 0, 0, 0], speed: 50, mechunit: 'ROB_1' });
+
+    // Exactly one POST, through client.request, carrying json=1 and the jog fields.
+    const post = calls.find(c => c.what.startsWith('POST'));
+    expect(post).toBeTruthy();
+    expect(post!.what).toContain('json=1');
+    expect(post!.body).toContain('jogmode=Joint');
+    expect(post!.body).toContain('mechunit=ROB_1');
+    expect(post!.body).toContain('cjogspeed=50');
+    expect(post!.body).toMatch(/ccount=\d+/);
+  });
+
+  it('increments ccount across calls (controller rejects duplicates)', async () => {
+    const { calls, client } = makeFake();
+    const adapter = new RWS1Adapter(client, CREDS);
+    await adapter.jog({ mode: 'Joint', axes: [1, 0, 0, 0, 0, 0], speed: 10 });
+    await adapter.jog({ mode: 'Joint', axes: [0, 1, 0, 0, 0, 0], speed: 10 });
+    const counts = calls.filter(c => c.what.startsWith('POST'))
+      .map(c => Number(/ccount=(\d+)/.exec(c.body ?? '')?.[1]));
+    expect(counts).toHaveLength(2);
+    expect(counts[1]).toBe(counts[0] + 1);
+  });
+
+  it('surfaces an error status carried in a 200 body', async () => {
+    const { client } = makeFake(() => ({ status: 200, body: JSON.stringify({ _embedded: { status: { msg: 'jog failed: guard stop' } } }) }));
+    const adapter = new RWS1Adapter(client, CREDS);
+    await expect(adapter.jog({ mode: 'Joint', axes: [1, 0, 0, 0, 0, 0], speed: 10 }))
+      .rejects.toThrow(/jog failed/i);
+  });
+
+  it('throws INVALID_ARGUMENT without credentials', async () => {
+    const { client } = makeFake();
+    const adapter = new RWS1Adapter(client);   // no creds
+    await expect(adapter.jog({ mode: 'Joint', axes: [1, 0, 0, 0, 0, 0], speed: 10 }))
+      .rejects.toThrow(/credentials/i);
+  });
+});
+
+describe('RWS1Adapter FK/IK route through the shared client', () => {
+  it('calcCartesianFromJoints parses the _state envelope from client.request', async () => {
+    const { calls, client } = makeFake(() => ({ status: 200, body: JSON.stringify({ _embedded: { _state: [
+      { x: '100', y: '200', z: '300', q1: '1', q2: '0', q3: '0', q4: '0' },
+    ] } }) }));
+    const adapter = new RWS1Adapter(client, CREDS);
+    const rt = await adapter.calcCartesianFromJoints({ rax_1: 0, rax_2: 0, rax_3: 0, rax_4: 0, rax_5: 0, rax_6: 0 });
+    expect(rt).toEqual({ x: 100, y: 200, z: 300, q1: 1, q2: 0, q3: 0, q4: 0 });
+    expect(calls.some(c => c.what.startsWith('POST') && c.what.includes('json=1'))).toBe(true);
+  });
+});
