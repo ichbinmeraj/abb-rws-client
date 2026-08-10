@@ -23,6 +23,78 @@ import type {
   DiagnosticsInfo, UserRegistration, SubscriptionHandle,
 } from './types.js';
 
+// ─── Shared response helpers ────────────────────────────────────────────────
+// Module-level, stateless functions used by the transport core AND every domain
+// mixin. They were `private static` on the class; lifting them out lets the
+// domain modules (src/rws2/*) share one copy without re-exposing class internals.
+
+/** GET paths that must keep the XHTML Accept: fileservice serves raw file bytes
+ *  (a content-type-based negotiation retry would double every file read, and the
+ *  service rejects some Accept values), and /logout's body is ignored anyway. */
+function isXhtmlOnlyPath(path: string): boolean {
+  return path.startsWith('/fileservice') || path === '/logout';
+}
+
+/** Picks the parser for a response body: HAL JSON (primary GET representation)
+ *  or XHTML (fallback GETs, form-POST responses). Both expose the same reads. */
+function parse(body: string): XhtmlParser | HalJsonParser {
+  return HalJsonParser.looksLikeJson(body) ? new HalJsonParser(body) : new XhtmlParser(body);
+}
+
+/** Error block from either representation (JSON status.code/msg or XHTML spans). */
+function extractError(body: string): { code: string; msg: string } | null {
+  return parse(body).getError();
+}
+
+/**
+ * Read a state block that MUST be present, throwing `PARSE_ERROR` when it is
+ * not - instead of letting a caller's `?? default` invent an answer.
+ *
+ * `getState()` returns `{}` both when a block is absent and when it is present
+ * but empty, so `getState('pnl-opmode')['opmode'] ?? 'MANR'` cannot tell a
+ * genuine reading from an unparseable response - and answers `MANR` either
+ * way. For a robotics client that is not a cosmetic difference: a garbled or
+ * truncated response would report a specific, plausible, safety-relevant state
+ * that the controller never sent. RWS 1.0's parser throws `PARSE_ERROR` for
+ * the same input, so this also removes a real behavioural fork between the two
+ * generations.
+ *
+ * Field-level `??` defaults stay: a block that IS present but omits one span
+ * is a different situation from no block at all.
+ *
+ * Found by structural cell S12 (malformed/truncated responses), 2026-08-09.
+ */
+function requireState(
+  p: XhtmlParser | HalJsonParser, classes: string[], what: string,
+): Record<string, string> {
+  for (const c of classes) {
+    const d = p.getState(c);
+    if (Object.keys(d).length > 0) { return d; }
+  }
+  throw new RwsError(
+    `RWS2 ${what}: response carried no ${classes.join(' / ')} block - unparseable or truncated`,
+    'PARSE_ERROR',
+  );
+}
+
+/**
+ * True for the keep-alive race: a pooled socket the controller closed while it
+ * sat idle, which fails as ECONNRESET / "socket hang up" with no response.
+ */
+function isStaleSocketError(e: unknown): boolean {
+  if (!(e instanceof RwsError) || e.code !== 'NETWORK_ERROR') { return false; }
+  return /socket hang up|ECONNRESET|EPIPE/i.test(e.message);
+}
+
+/** Resolve the `rel="next"` pagination link (HAL or XHTML) against the current path. */
+function nextPagePath(responseBody: string, currentPath: string): string {
+  const rel = HalJsonParser.looksLikeJson(responseBody)
+    ? new HalJsonParser(responseBody).nextHref()
+    : responseBody.match(/<a\s+href="([^"]+)"\s+rel="next"/)?.[1];
+  if (!rel) { return ''; }
+  return currentPath.replace(/[^/]*$/, '') + rel.replace(/&amp;/g, '&');
+}
+
 /**
  * RWS 2.0 protocol client for ABB OmniCore controllers (RobotWare 7.x).
  *
@@ -121,55 +193,6 @@ export class RwsClient2 {
    *  this instance then go straight to XHTML instead of re-negotiating each time. */
   private preferXhtml = false;
 
-  /** GET paths that must keep the XHTML Accept: fileservice serves raw file bytes
-   *  (a content-type-based negotiation retry would double every file read, and the
-   *  service rejects some Accept values), and /logout's body is ignored anyway. */
-  private static isXhtmlOnlyPath(path: string): boolean {
-    return path.startsWith('/fileservice') || path === '/logout';
-  }
-
-  /** Picks the parser for a response body: HAL JSON (primary GET representation)
-   *  or XHTML (fallback GETs, form-POST responses). Both expose the same reads. */
-  private static parse(body: string): XhtmlParser | HalJsonParser {
-    return HalJsonParser.looksLikeJson(body) ? new HalJsonParser(body) : new XhtmlParser(body);
-  }
-
-  /** Error block from either representation (JSON status.code/msg or XHTML spans). */
-  private static extractError(body: string): { code: string; msg: string } | null {
-    return RwsClient2.parse(body).getError();
-  }
-
-  /**
-   * Read a state block that MUST be present, throwing `PARSE_ERROR` when it is
-   * not - instead of letting a caller's `?? default` invent an answer.
-   *
-   * `getState()` returns `{}` both when a block is absent and when it is present
-   * but empty, so `getState('pnl-opmode')['opmode'] ?? 'MANR'` cannot tell a
-   * genuine reading from an unparseable response - and answers `MANR` either
-   * way. For a robotics client that is not a cosmetic difference: a garbled or
-   * truncated response would report a specific, plausible, safety-relevant state
-   * that the controller never sent. RWS 1.0's parser throws `PARSE_ERROR` for
-   * the same input, so this also removes a real behavioural fork between the two
-   * generations.
-   *
-   * Field-level `??` defaults stay: a block that IS present but omits one span
-   * is a different situation from no block at all.
-   *
-   * Found by structural cell S12 (malformed/truncated responses), 2026-08-09.
-   */
-  private static requireState(
-    p: XhtmlParser | HalJsonParser, classes: string[], what: string,
-  ): Record<string, string> {
-    for (const c of classes) {
-      const d = p.getState(c);
-      if (Object.keys(d).length > 0) { return d; }
-    }
-    throw new RwsError(
-      `RWS2 ${what}: response carried no ${classes.join(' / ')} block - unparseable or truncated`,
-      'PARSE_ERROR',
-    );
-  }
-
   /**
    * Wait for this request's turn to start, keeping at least MIN_MS between the
    * starts of any two requests from this client.
@@ -208,15 +231,6 @@ export class RwsClient2 {
   private static readonly IDEMPOTENT = new Set(['GET', 'OPTIONS', 'HEAD']);
 
   /**
-   * True for the keep-alive race: a pooled socket the controller closed while it
-   * sat idle, which fails as ECONNRESET / "socket hang up" with no response.
-   */
-  private static isStaleSocketError(e: unknown): boolean {
-    if (!(e instanceof RwsError) || e.code !== 'NETWORK_ERROR') { return false; }
-    return /socket hang up|ECONNRESET|EPIPE/i.test(e.message);
-  }
-
-  /**
    * One paced request, retried once if a POOLED connection turned out to be dead.
    *
    * The client keeps connections alive, so a controller that closes an idle one
@@ -244,7 +258,7 @@ export class RwsClient2 {
     try {
       return await this.attemptReq(method, path, body, rawBody, rawContentType, acceptExtra, acceptOverride);
     } catch (e) {
-      if (!RwsClient2.isStaleSocketError(e) || !RwsClient2.IDEMPOTENT.has(method.toUpperCase())) {
+      if (!isStaleSocketError(e) || !RwsClient2.IDEMPOTENT.has(method.toUpperCase())) {
         throw e;
       }
       Logger.trace?.('http.req', `RWS2 ${method} ${path} - retrying once on a fresh connection`, {
@@ -272,7 +286,7 @@ export class RwsClient2 {
     const writingMethod = method === 'POST' || method === 'PUT' || method === 'DELETE';
     // GETs negotiate HAL JSON; writes stay XHTML (form-POST responses are XHTML-only).
     const wantsHal = method === 'GET' && !this.preferXhtml
-      && !acceptOverride && !RwsClient2.isXhtmlOnlyPath(path);
+      && !acceptOverride && !isXhtmlOnlyPath(path);
     const accept = acceptOverride
       ?? (wantsHal ? RwsClient2.ACCEPT_HAL : RwsClient2.ACCEPT_XHTML);
     const options: http.RequestOptions & { agent?: https.Agent | http.Agent; rejectUnauthorized?: boolean } = {
@@ -349,7 +363,7 @@ export class RwsClient2 {
             resolve(raw); return;
           }
           if (status >= 400) {
-            const err = RwsClient2.extractError(raw);
+            const err = extractError(raw);
             Logger.trace?.('http.err', `RWS2 ${method} ${path} → ${status}`, { protocol: 'rws2', method, path, status, durationMs, errCode: err?.code, errMsg: err?.msg, bodyPreview: raw.slice(0, 300) });
             const fallback: RwsErrorCode =
               status === 401 ? 'AUTH_FAILED' :
@@ -393,7 +407,7 @@ export class RwsClient2 {
     const body = await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getSystemInfo.rws2 as PathSpec));
     // Cache the RobotWare version - it decides how write access works: RW7 uses
     // /rw/mastership, RW8 removed it (410 GONE) for the Control Station Service.
-    const ver = RwsClient2.parse(body).getState('sys-system')['rwversion'] ?? '';
+    const ver = parse(body).getState('sys-system')['rwversion'] ?? '';
     if (ver) {
       this.rwVersionRaw = ver;
       const major = Number(ver.split('.')[0]);
@@ -438,8 +452,8 @@ export class RwsClient2 {
   // ─── Panel ─────────────────────────────────────────────────────────────────
 
   async getControllerState(): Promise<ControllerState> {
-    const p = RwsClient2.parse(await this.req('GET', R2.controllerState()));
-    const d = RwsClient2.requireState(p, ['pnl-ctrlstate'], 'getControllerState');
+    const p = parse(await this.req('GET', R2.controllerState()));
+    const d = requireState(p, ['pnl-ctrlstate'], 'getControllerState');
     return (d['ctrlstate'] ?? 'init') as ControllerState;
   }
 
@@ -449,14 +463,14 @@ export class RwsClient2 {
   }
 
   async getOperationMode(): Promise<OperationMode> {
-    const p = RwsClient2.parse(await this.req('GET', R2.operationMode()));
-    const d = RwsClient2.requireState(p, ['pnl-opmode'], 'getOperationMode');
+    const p = parse(await this.req('GET', R2.operationMode()));
+    const d = requireState(p, ['pnl-opmode'], 'getOperationMode');
     return (d['opmode'] ?? 'MANR') as OperationMode;
   }
 
   async getSpeedRatio(): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', R2.speedRatio()));
-    const d = RwsClient2.requireState(p, ['pnl-speedratio'], 'getSpeedRatio');
+    const p = parse(await this.req('GET', R2.speedRatio()));
+    const d = requireState(p, ['pnl-speedratio'], 'getSpeedRatio');
     return Number(d['speedratio'] ?? 100);
   }
 
@@ -486,7 +500,7 @@ export class RwsClient2 {
   }
 
   async getCollisionDetectionState(): Promise<CollisionDetectionState> {
-    const p = RwsClient2.parse(await this.req('GET', R2.collisionDetectionState()));
+    const p = parse(await this.req('GET', R2.collisionDetectionState()));
     return (p.getState('pnl-coldetstate')['coldetstate'] ?? 'INIT') as CollisionDetectionState;
   }
 
@@ -511,7 +525,7 @@ export class RwsClient2 {
   /** Lock state of the operation-mode selector ('locked' | 'unlocked').
    *  Live-verified 2026-08-04 (RW7.21), class pnl-opmode-lockstate-li. */
   async getOperationModeLockState(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(PANEL.getOperationModeLockState.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(PANEL.getOperationModeLockState.rws2 as PathSpec)));
     return p.getState('pnl-opmode-lockstate-li')['lockstate'] ?? 'unknown';
   }
 
@@ -547,13 +561,13 @@ export class RwsClient2 {
   // ─── RAPID execution ────────────────────────────────────────────────────────
 
   async getRapidExecutionState(): Promise<ExecutionState> {
-    const p = RwsClient2.parse(await this.req('GET', R2.rapidExecution()));
-    const d = RwsClient2.requireState(p, ['rap-execution'], 'getRapidExecutionState');
+    const p = parse(await this.req('GET', R2.rapidExecution()));
+    const d = requireState(p, ['rap-execution'], 'getRapidExecutionState');
     return (d['ctrlexecstate'] ?? 'stopped') as ExecutionState;
   }
 
   async getRapidExecutionInfo(): Promise<ExecutionInfo> {
-    const p = RwsClient2.parse(await this.req('GET', R2.rapidExecution()));
+    const p = parse(await this.req('GET', R2.rapidExecution()));
     // Live: <li class="rap-execution"><span class="ctrlexecstate">stopped</span><span class="cycle">forever</span>
     const d = p.getState('rap-execution');
     return {
@@ -617,7 +631,7 @@ export class RwsClient2 {
   }
 
   async getRapidTasks(): Promise<RapidTask[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getRapidTasks.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(RAPID.getRapidTasks.rws2 as PathSpec)));
     return p.getAllStates('rap-task-li').map(t => ({
       name:       t['name'] ?? '',
       type:       t['type'] ?? 'normal',
@@ -674,7 +688,7 @@ export class RwsClient2 {
   // ─── RAPID modules & variables ──────────────────────────────────────────────
 
   async listModules(task: string): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.listModules.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.listModules.rws2 as PathSpec, { task })));
     return p.getAllStates('rap-module-info-li').map(m => m['name']).filter(Boolean) as string[];
   }
 
@@ -683,7 +697,7 @@ export class RwsClient2 {
    * Single round-trip - same endpoint as `listModules` but exposes more fields.
    */
   async listModulesDetailed(task: string): Promise<Array<{ name: string; type: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.listModulesDetailed.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.listModulesDetailed.rws2 as PathSpec, { task })));
     return p.getAllStates('rap-module-info-li')
       .map(m => ({ name: m['name'] ?? '', type: m['type'] ?? '' }))
       .filter(m => m.name);
@@ -711,7 +725,7 @@ export class RwsClient2 {
   async getRapidVariable(task: string, module: string, symbol: string): Promise<string> {
     // RWS 2.0 symbol API: suffix-style - /rw/rapid/symbol/{symburl}/data
     // (RWS 1.0 puts /data at the front: /rw/rapid/symbol/data/{symburl})
-    const p = RwsClient2.parse(
+    const p = parse(
       await this.req('GET', buildPath(RAPID.getRapidVariable.rws2 as PathSpec, { task, module, symbol }))
     );
     return p.get('value') ?? '';
@@ -734,7 +748,7 @@ export class RwsClient2 {
   }
 
   async getRapidSymbolProperties(task: string, module: string, symbol: string): Promise<RapidSymbolProperties> {
-    const p = RwsClient2.parse(
+    const p = parse(
       await this.req('GET', buildPath(RAPID.getRapidSymbolProperties.rws2 as PathSpec, { task, module, symbol }))
     );
     // The class encodes the symbol KIND: rap-sympropvar (VAR),
@@ -804,7 +818,7 @@ export class RwsClient2 {
     ];
     const out: RapidSymbolInfo[] = [];
     for (const cls of liClasses) {
-      const p = RwsClient2.parse(xhtml);
+      const p = parse(xhtml);
       for (const s of p.getAllStates(cls)) {
         out.push({
           symburl: s['symburl'] ?? '',
@@ -823,7 +837,7 @@ export class RwsClient2 {
 
   async getActiveUiInstruction(): Promise<UiInstruction | null> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getActiveUiInstruction.rws2 as PathSpec)));
+      const p = parse(await this.req('GET', buildPath(RAPID.getActiveUiInstruction.rws2 as PathSpec)));
       const d = p.getState('rap-uiinstr-li') || p.getState('rap-uiinstr');
       if (!d['instr']) { return null; }
       return { instr: d['instr'], event: d['event'] ?? '', stack: d['stack'] ?? '', execlv: d['execlv'] ?? '', msg: d['msg'] ?? '' };
@@ -842,7 +856,7 @@ export class RwsClient2 {
   // ─── Motion ─────────────────────────────────────────────────────────────────
 
   async getJointPositions(mechunit = 'ROB_1'): Promise<JointTarget> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getJointPositions.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getJointPositions.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-jointtarget');
     return {
       rax_1: +d['rax_1'], rax_2: +d['rax_2'], rax_3: +d['rax_3'],
@@ -851,7 +865,7 @@ export class RwsClient2 {
   }
 
   async getCartesianFull(mechunit = 'ROB_1'): Promise<CartesianFull> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getCartesianFull.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getCartesianFull.rws2 as PathSpec, { mechunit })));
     // Live: cf1/cf4/cf6/cfx in RWS 2.0 map to j1/j4/j6/jx in CartesianFull type
     const d = p.getState('ms-mechunit-cartesian');
     return {
@@ -862,7 +876,7 @@ export class RwsClient2 {
   }
 
   async listMechunits(): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.listMechunits.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(MOTION.listMechunits.rws2 as PathSpec)));
     // Live: <li class="ms-mechunit-li" title="ROB_1">
     return p.getAllStates('ms-mechunit-li')
       .map(m => m['_title'])
@@ -872,7 +886,7 @@ export class RwsClient2 {
   // ─── System info ─────────────────────────────────────────────────────────────
 
   async getSystemInfo(): Promise<SystemInfo> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getSystemInfo.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getSystemInfo.rws2 as PathSpec)));
     const d = p.getState('sys-system');
     // Type-name drift between representations (live-verified 2026-07-09, RW7.21):
     // XHTML lists options as class="sys-option"; HAL JSON nests them under the
@@ -883,13 +897,13 @@ export class RwsClient2 {
   }
 
   async getControllerIdentity(): Promise<ControllerIdentity> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getControllerIdentity.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getControllerIdentity.rws2 as PathSpec)));
     const d = p.getState('ctrl-identity-info');
     return { name: d['ctrl-name'] ?? '', id: '', type: d['ctrl-type'] ?? '', mac: '' };
   }
 
   async getControllerClock(): Promise<ControllerClock> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getControllerClock.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getControllerClock.rws2 as PathSpec)));
     return { datetime: p.getState('ctrl-clock-info')['datetime'] ?? '' };
   }
 
@@ -960,7 +974,7 @@ export class RwsClient2 {
       if (visited.has(path)) { break; }   // guard against a self-referential `next`
       visited.add(path);
       const body = await this.req('GET', path, undefined, undefined, undefined, [], accept);
-      const p = RwsClient2.parse(body);
+      const p = parse(body);
       for (const m of p.getAllStates('elog-message-li')) {
         const parts = (m['_title'] ?? '').split('/');
         out.push({
@@ -977,7 +991,7 @@ export class RwsClient2 {
           args:         decodeElogArgs(m),
         });
       }
-      path = RwsClient2.nextPagePath(body, buildPath(CFG_ELOG_DIPC.getEventLog.rws2 as PathSpec, { domain }));
+      path = nextPagePath(body, buildPath(CFG_ELOG_DIPC.getEventLog.rws2 as PathSpec, { domain }));
     }
     return out;
   }
@@ -997,7 +1011,7 @@ export class RwsClient2 {
    *  2026-08-04 (RW7.21), class elog-message. Returns null when unknown. */
   async getEventLogMessage(domain: number, seqnum: number, lang = 'en'): Promise<ElogMessage | null> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', `${buildPath(CFG_ELOG_DIPC.getEventLogMessage.rws2 as PathSpec, { domain, seqnum })}?lang=${encodeURIComponent(lang)}`));
+      const p = parse(await this.req('GET', `${buildPath(CFG_ELOG_DIPC.getEventLogMessage.rws2 as PathSpec, { domain, seqnum })}?lang=${encodeURIComponent(lang)}`));
       const m = p.getState('elog-message');
       if (!m['code']) { return null; }
       return {
@@ -1014,7 +1028,7 @@ export class RwsClient2 {
    *  Live-verified 2026-08-04 (RW7.21): GET /rw/elog/seqnum/{n}. */
   async getEventLogMessageBySeqnum(seqnum: number, lang = 'en'): Promise<ElogMessage | null> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', `${buildPath(CFG_ELOG_DIPC.getEventLogMessageBySeqnum.rws2 as PathSpec, { seqnum })}?lang=${encodeURIComponent(lang)}`));
+      const p = parse(await this.req('GET', `${buildPath(CFG_ELOG_DIPC.getEventLogMessageBySeqnum.rws2 as PathSpec, { seqnum })}?lang=${encodeURIComponent(lang)}`));
       const m = p.getState('elog-message');
       if (!m['code']) { return null; }
       return {
@@ -1062,20 +1076,20 @@ export class RwsClient2 {
       if (visited.has(path)) { break; }
       visited.add(path);
       const body = await this.req('GET', path);
-      const p = RwsClient2.parse(body);
+      const p = parse(body);
       for (const s of p.getAllStates('ios-signal-li')) {
         const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
         const parts = (s['_title'] ?? '').split('/');
         if (parts.length >= 3) { this.sigCoords.set(name, { n: parts[0], d: parts[1] }); }
         out.push({ name, value: s['lvalue'] ?? '0', type: (s['type'] ?? 'DI') as Signal['type'], lvalue: s['lvalue'] ?? '0' });
       }
-      path = RwsClient2.nextPagePath(body, buildPath(IO.listAllSignals.rws2 as PathSpec));
+      path = nextPagePath(body, buildPath(IO.listAllSignals.rws2 as PathSpec));
     }
     return out;
   }
 
   async readSignal(network: string, device: string, name: string): Promise<Signal> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(IO.readSignal.rws2 as PathSpec, { network, device, name })));
+    const p = parse(await this.req('GET', buildPath(IO.readSignal.rws2 as PathSpec, { network, device, name })));
     const d = p.getState('ios-signal-li');
     return { name: d['name'] ?? name, value: d['lvalue'] ?? '0', type: (d['type'] ?? 'DI') as Signal['type'], lvalue: d['lvalue'] ?? '0' };
   }
@@ -1098,7 +1112,7 @@ export class RwsClient2 {
    * populate the same coordinate cache from the same shape.
    */
   private parseSignalList(html: string): Signal[] {
-    const p = RwsClient2.parse(html);
+    const p = parse(html);
     return p.getAllStates('ios-signal-li').map(s => {
       const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
       const parts = (s['_title'] ?? '').split('/');
@@ -1111,7 +1125,7 @@ export class RwsClient2 {
    *  device mapping, access, ...). Live-verified 2026-08-04 (RW7.21), class
    *  ios-signal-config-general. */
   async getSignalConfig(network: string, device: string, name: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(IO.getSignalConfig.rws2 as PathSpec, { network, device, name })));
     return p.getState('ios-signal-config-general');
   }
@@ -1119,7 +1133,7 @@ export class RwsClient2 {
   /** Motion (jog) supervision state of a mechunit: enabled + sensitivity level.
    *  Live-verified 2026-08-04 (RW7.21), class ms-motionsupervision. */
   async getMotionSupervision(mechunit = 'ROB_1'): Promise<{ enabled: boolean; level: number }> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(MOTION.getMotionSupervision.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-motionsupervision');
     return { enabled: (d['mode-enabled'] ?? '').toUpperCase() === 'TRUE', level: Number(d['level'] ?? 0) };
@@ -1128,7 +1142,7 @@ export class RwsClient2 {
   /** Path supervision state of a mechunit: mode + level. Live-verified
    *  2026-08-04 (RW7.21), class ms-pathsupervision. */
   async getPathSupervision(mechunit = 'ROB_1'): Promise<{ mode: string; level: number }> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(MOTION.getPathSupervision.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-pathsupervision');
     return { mode: d['mode'] ?? 'unknown', level: Number(d['level'] ?? 0) };
@@ -1137,7 +1151,7 @@ export class RwsClient2 {
   /** Collision-prediction model of a mechunit (model file + init state).
    *  Live-verified 2026-08-04 (RW7.21), class ms-mechunit-collision-prediction-model. */
   async getCollisionPredictionModel(mechunit = 'ROB_1'): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(MOTION.getCollisionPredictionModel.rws2 as PathSpec, { mechunit })));
     return p.getState('ms-mechunit-collision-prediction-model');
   }
@@ -1145,7 +1159,7 @@ export class RwsClient2 {
   /** Pose of one axis of a mechunit. Live-verified 2026-08-04 (RW7.21),
    *  class ms-mechunit-axispose (x/y/z + q1..q4). */
   async getAxisPose(mechunit: string, axis: number): Promise<RobTarget> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(MOTION.getAxisPose.rws2 as PathSpec, { mechunit, axis })));
     const d = p.getState('ms-mechunit-axispose');
     return { x: +d['x'], y: +d['y'], z: +d['z'], q1: +d['q1'], q2: +d['q2'], q3: +d['q3'], q4: +d['q4'] };
@@ -1155,7 +1169,7 @@ export class RwsClient2 {
    *  previously read from getMotionChangeCount. Live-verified 2026-08-04
    *  (RW7.21), class check-changecount, span change-state. */
   async checkMotionChangeCount(changecount: number): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.checkMotionChangeCount.rws2 as PathSpec, { changecount })));
+    const p = parse(await this.req('GET', buildPath(MOTION.checkMotionChangeCount.rws2 as PathSpec, { changecount })));
     return (p.getState('check-changecount')['change-state'] ?? '').toUpperCase() === 'TRUE';
   }
 
@@ -1216,7 +1230,7 @@ export class RwsClient2 {
    *  a device-tree node path. Returns the matching device rows. */
   async searchDevices(property: string): Promise<Array<Record<string, string>>> {
     const { path, body } = R2.searchDevices(property);
-    const p = RwsClient2.parse(await this.req('POST', path, body));
+    const p = parse(await this.req('POST', path, body));
     return p.getAllStates('dev-id-li');
   }
 
@@ -1259,7 +1273,7 @@ export class RwsClient2 {
    *  count. Class rap-module-text (spans change-count, module-text). Unlike
    *  getModuleSource this needs no TEMP round trip, but it is RWS 2.0 only. */
   async getModuleText(task: string, module: string): Promise<{ text: string; changeCount: number }> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(RAPID.getModuleText.rws2 as PathSpec, { task, module })));
     const d = p.getState('rap-module-text');
     return { text: d['module-text'] ?? '', changeCount: Number((d['change-count'] ?? '0').trim()) };
@@ -1267,7 +1281,7 @@ export class RwsClient2 {
 
   /** A source range of a module (rows/columns are 1-based). Class rap-mod-text. */
   async getModuleTextRange(task: string, module: string, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', `${buildPath(RAPID.getModuleTextRange.rws2 as PathSpec, { task, module })}?startrow=${startRow}&startcol=${startCol}&endrow=${endRow}&endcol=${endCol}`));
     return p.getState('rap-mod-text')['text'] ?? '';
   }
@@ -1276,7 +1290,7 @@ export class RwsClient2 {
    *  documented `searchstring` answers "Search Text invalid"); each hit is a
    *  rap-text-position with capitalized Row/Column spans (live RW7.21/RW8.1.1). */
   async searchModuleText(task: string, module: string, text: string): Promise<Array<{ row: number; column: number }>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', `${buildPath(RAPID.searchModuleText.rws2 as PathSpec, { task, module })}?text=${encodeURIComponent(text)}`));
     return p.getAllStates('rap-text-position').map(d => ({
       row: Number(d['Row'] ?? 0), column: Number(d['Column'] ?? 0),
@@ -1285,14 +1299,14 @@ export class RwsClient2 {
 
   /** Change count of one module (class rap-module-changecount, span count). */
   async getModuleChangeCount(task: string, module: string): Promise<number> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(RAPID.getModuleChangeCount.rws2 as PathSpec, { task, module })));
     return Number(p.getState('rap-module-changecount')['count'] ?? 0);
   }
 
   /** SyncPers status of a module (class rap-syncper-status). */
   async getModuleSyncPersStatus(task: string, module: string): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(RAPID.getModuleSyncPersStatus.rws2 as PathSpec, { task, module })));
     return (p.getState('rap-syncper-status')['syncperstatus'] ?? '0') === '1';
   }
@@ -1300,7 +1314,7 @@ export class RwsClient2 {
   /** Module extension info: line count, max column, change count
    *  (class rap-module-extension). */
   async getModuleExtension(task: string, module: string): Promise<{ lines: number; maxColumns: number; changeCount: number }> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(RAPID.getModuleExtension.rws2 as PathSpec, { task, module })));
     const d = p.getState('rap-module-extension');
     return { lines: Number(d['num-of-lines'] ?? 0), maxColumns: Number(d['max-num-of-col'] ?? 0), changeCount: Number(d['count'] ?? 0) };
@@ -1308,39 +1322,39 @@ export class RwsClient2 {
 
   /** Program-pointer sync state across all tasks (class rap-sync-state). */
   async getProgramPointerSyncState(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getProgramPointerSyncState.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(RAPID.getProgramPointerSyncState.rws2 as PathSpec)));
     return p.getState('rap-sync-state')['program-pointer-state'] ?? 'unknown';
   }
 
   /** Motion-pointer sync state across all tasks (class rap-sync-state). */
   async getMotionPointerSyncState(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getMotionPointerSyncState.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(RAPID.getMotionPointerSyncState.rws2 as PathSpec)));
     return p.getState('rap-sync-state')['motion-pointer-state'] ?? 'unknown';
   }
 
   /** RAPID spy (execution trace) logging status, e.g. 'Not Logging'
    *  (class rap-spy-status). */
   async getSpyStatus(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getSpyStatus.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(RAPID.getSpyStatus.rws2 as PathSpec)));
     return p.getState('rap-spy-status')['status'] ?? 'unknown';
   }
 
   /** Safety controller mode, e.g. 'active' (class safetymodestatus). */
   async getSafetyMode(): Promise<{ mode: string; userdata?: string }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getSafetyMode.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getSafetyMode.rws2 as PathSpec)));
     const d = p.getState('safetymodestatus');
     return { mode: d['safetymode'] ?? 'unknown', userdata: d['userdata'] };
   }
 
   /** Safety violation counters (class safety-violationinfo). */
   async getSafetyViolationInfo(): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getSafetyViolationInfo.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getSafetyViolationInfo.rws2 as PathSpec)));
     return p.getState('safety-violationinfo');
   }
 
   /** Safety configuration load status (class scorch-load-status). */
   async getSafetyLoadStatus(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getSafetyLoadStatus.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getSafetyLoadStatus.rws2 as PathSpec)));
     return p.getState('scorch-load-status')['status'] ?? 'unknown';
   }
 
@@ -1348,7 +1362,7 @@ export class RwsClient2 {
    *  class as startup-safety-config-load-satus (missing 't' - live RW7.21);
    *  the corrected spelling is read as fallback. */
   async getSafetyStartupStatus(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getSafetyStartupStatus.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getSafetyStartupStatus.rws2 as PathSpec)));
     let d = p.getState('startup-safety-config-load-satus');
     if (!('config-status-at-startup' in d)) { d = p.getState('startup-safety-config-load-status'); }
     return d['config-status-at-startup'] ?? 'unknown';
@@ -1356,7 +1370,7 @@ export class RwsClient2 {
 
   /** Current virtual-time timeslice (VC only; class ctrl-vttimeslice). */
   async getVirtualTimeTimeslice(): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getVirtualTimeTimeslice.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getVirtualTimeTimeslice.rws2 as PathSpec)));
     return Number(p.getState('ctrl-vttimeslice')['vttimeslice'] ?? 0);
   }
 
@@ -1368,7 +1382,7 @@ export class RwsClient2 {
    * carries messages in other domains (0, 1 and 9 were populated on RW7.21).
    */
   async listEventLogDomains(): Promise<Array<{ domain: number; events: number; bufferSize: number }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.listEventLogDomains.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.listEventLogDomains.rws2 as PathSpec)));
     return p.getAllStates('elog-domain-li').map(d => ({
       domain: Number(d['_title'] ?? 0),
       events: Number(d['numevts'] ?? 0),
@@ -1383,7 +1397,7 @@ export class RwsClient2 {
    * listInstructions() to build an instruction picker.
    */
   async listInstructionCategories(task: string): Promise<Array<{ number: number; name: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.listInstructionCategories.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.listInstructionCategories.rws2 as PathSpec, { task })));
     return p.getAllStates('rap-pallet-head').map(d => ({
       number: Number(d['Number'] ?? 0), name: d['Name'] ?? '',
     })).filter(c => c.name);
@@ -1395,7 +1409,7 @@ export class RwsClient2 {
    * category number comes from listInstructionCategories().
    */
   async listInstructions(task: string, category: number): Promise<Array<Record<string, string>>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(RAPID.listInstructions.rws2 as PathSpec, { task, category })));
     return p.getAllStates('rap-pallet');
   }
@@ -1408,7 +1422,7 @@ export class RwsClient2 {
    * the root; these are the actual files.
    */
   async getRegistryFile(name: string): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getRegistryFile.rws2 as PathSpec, { name })));
+    const p = parse(await this.req('GET', buildPath(CTRL.getRegistryFile.rws2 as PathSpec, { name })));
     const d = p.getState('ctrl-reg-file-li');
     return d[name] ?? Object.values(d).find(v => typeof v === 'string' && v.startsWith('<?xml')) ?? '';
   }
@@ -1420,7 +1434,7 @@ export class RwsClient2 {
    * installed. Live-verified 2026-08-06 on RW7.21 and RW8.1.1.
    */
   async listLdapResources(): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(USERS_UAS.listLdapResources.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(USERS_UAS.listLdapResources.rws2 as PathSpec)));
     const names: string[] = [];
     for (const t of ['enabled', 'searchpassword', 'configuration', 'settings', 'certificate', 'verify']) {
       const title = p.getState(`uas-ldap-${t}-li`)['_title'];
@@ -1449,7 +1463,7 @@ export class RwsClient2 {
    * throws GRANT_DENIED, which is the honest answer.
    */
   async getLdapResource(name: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(USERS_UAS.getLdapResource.rws2 as PathSpec, { name })));
+    const p = parse(await this.req('GET', buildPath(USERS_UAS.getLdapResource.rws2 as PathSpec, { name })));
     // List entries carry the `-li` suffix; detail resources on RWS 2.0
     // sometimes drop it (elog-message-li vs elog-message), so accept both.
     const d = p.getState(`uas-ldap-${name}-li`);
@@ -1470,7 +1484,7 @@ export class RwsClient2 {
    */
   async describeReturnCode(code: number): Promise<ReturnCodeInfo | null> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', `/rw/retcode?code=${code}`));
+      const p = parse(await this.req('GET', `/rw/retcode?code=${code}`));
       const d = p.getState('err-desc');
       if (!d['name']) { return null; }
       return {
@@ -1488,7 +1502,7 @@ export class RwsClient2 {
    * Live-verified 2026-08-06 on RW7.21 and RW8.1.1, class ctrl-backup-state.
    */
   async getBackupState(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getBackupState.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getBackupState.rws2 as PathSpec)));
     return p.getState('ctrl-backup-state')['backup-state'] ?? '';
   }
 
@@ -1501,7 +1515,7 @@ export class RwsClient2 {
    */
   async listCertificateStores(path = ''): Promise<string[]> {
     const suffix = path ? `/${path.replace(/^\/+/, '')}` : '';
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.listCertificateStores.rws2 as PathSpec) + suffix));
+    const p = parse(await this.req('GET', buildPath(CTRL.listCertificateStores.rws2 as PathSpec) + suffix));
     return p.getAllStates('ctrl-certstore-li')
       .map(s => s['store-name'] ?? s['_title'] ?? '')
       .filter(Boolean);
@@ -1513,7 +1527,7 @@ export class RwsClient2 {
    * presents. Live-verified 2026-08-06, class ctrl-certstore-cert.
    */
   async getCertificates(storePath: string): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', `/ctrl/certstore/${storePath.replace(/^\/+/, '')}`));
+    const p = parse(await this.req('GET', `/ctrl/certstore/${storePath.replace(/^\/+/, '')}`));
     return p.getAllStates('ctrl-certstore-cert')
       .map(s => s['cert-pem'] ?? '')
       .filter(Boolean);
@@ -1521,7 +1535,7 @@ export class RwsClient2 {
 
   /** Device groups the controller reports, e.g. HW_DEVICES and SW_RESOURCES. */
   async listDeviceGroups(): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/devices'));
+    const p = parse(await this.req('GET', '/rw/devices'));
     return p.getAllStates('dev-group-li')
       .concat(p.getAllStates('dev-id-li'))
       .map(s => s['_title'] ?? '')
@@ -1536,7 +1550,7 @@ export class RwsClient2 {
    * Live-verified 2026-08-06 on RW7.21 and RW8.1.1, class dev-id-li.
    */
   async listControllerDevices(group: string): Promise<Array<{ id: string; name: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', `/rw/devices/${encodeURIComponent(group)}`));
+    const p = parse(await this.req('GET', `/rw/devices/${encodeURIComponent(group)}`));
     return p.getAllStates('dev-id-li').map(s => ({
       id: s['_title'] ?? '',
       name: s['name'] ?? '',
@@ -1546,21 +1560,21 @@ export class RwsClient2 {
   /** Detail of one IO network (name, pstate, lstate). Live-verified 2026-08-04
    *  (RW7.21), class ios-network-li. */
   async getIoNetwork(network: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(IO.getIoNetwork.rws2 as PathSpec, { network })));
+    const p = parse(await this.req('GET', buildPath(IO.getIoNetwork.rws2 as PathSpec, { network })));
     return p.getState('ios-network-li');
   }
 
   /** Configuration of one IO network (its cfg instance). Live-verified
    *  2026-08-04 (RW7.21), class ios-network-config-general. */
   async getIoNetworkConfig(network: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(IO.getIoNetworkConfig.rws2 as PathSpec, { network })));
+    const p = parse(await this.req('GET', buildPath(IO.getIoNetworkConfig.rws2 as PathSpec, { network })));
     return p.getState('ios-network-config-general');
   }
 
   /** Detail of one IO device. Live-verified 2026-08-04 (RW7.21), class
    *  ios-device-li. */
   async getIoDeviceInfo(network: string, device: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(IO.getIoDeviceInfo.rws2 as PathSpec, { network, device })));
     return p.getState('ios-device-li');
   }
@@ -1568,7 +1582,7 @@ export class RwsClient2 {
   /** Configuration of one IO device (its cfg instance). Live-verified
    *  2026-08-04 (RW7.21), class ios-device-config-general. */
   async getIoDeviceConfig(network: string, device: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(IO.getIoDeviceConfig.rws2 as PathSpec, { network, device })));
     return p.getState('ios-device-config-general');
   }
@@ -1591,7 +1605,7 @@ export class RwsClient2 {
   }
 
   async listNetworks(): Promise<IoNetwork[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(IO.listNetworks.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(IO.listNetworks.rws2 as PathSpec)));
     // Live: <li class="ios-network-li" title="IntegratedIONetwork">
     //   <span class="name">IntegratedIONetwork</span><span class="pstate">running</span><span class="lstate">started</span>
     return p.getAllStates('ios-network-li').map(n => ({
@@ -1602,7 +1616,7 @@ export class RwsClient2 {
   }
 
   async listDevices(network: string): Promise<IoDevice[]> {
-    const p = RwsClient2.parse(await this.req('GET', `${buildPath(IO.listDevices.rws2 as PathSpec)}?network=${encodeURIComponent(network)}`));
+    const p = parse(await this.req('GET', `${buildPath(IO.listDevices.rws2 as PathSpec)}?network=${encodeURIComponent(network)}`));
     // Live: <li class="ios-device-li" title="IntBus/EPanel">
     //   <span class="name">EPanel</span><span class="lstate">enabled</span><span class="pstate">running</span><span class="address"></span>
     return p.getAllStates('ios-device-li').map(d => ({
@@ -1624,7 +1638,7 @@ export class RwsClient2 {
   }
 
   async listDirectory(path: string): Promise<FileEntry[]> {
-    const p = RwsClient2.parse(await this.req('GET', `/fileservice/${this.rws2Path(path)}`));
+    const p = parse(await this.req('GET', `/fileservice/${this.rws2Path(path)}`));
     const dirs  = p.getAllStates('fs-dir').map(d => ({ name: d['_title'] ?? '', type: 'dir' as const, modified: d['fs-mdate'] }));
     const files = p.getAllStates('fs-file').map(f => ({ name: f['_title'] ?? '', type: 'file' as const, size: f['fs-size'] ? +f['fs-size'] : undefined, created: f['fs-cdate'], modified: f['fs-mdate'], readonly: f['fs-readonly'] === 'true' }));
     return [...dirs, ...files];
@@ -1681,7 +1695,7 @@ export class RwsClient2 {
   // ─── Configuration database `/rw/cfg` ───────────────────────────────────────
 
   async listCfgDomains(): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.listCfgDomains.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.listCfgDomains.rws2 as PathSpec)));
     return p.getAllStates('cfg-domain-li').map(d => d['_title'] ?? d['name']).filter(Boolean) as string[];
   }
 
@@ -1693,14 +1707,6 @@ export class RwsClient2 {
    * ampersands in the href - even inside JSON strings - hence the unescape.
    * Returns '' when there is no further page.
    */
-  private static nextPagePath(responseBody: string, currentPath: string): string {
-    const rel = HalJsonParser.looksLikeJson(responseBody)
-      ? new HalJsonParser(responseBody).nextHref()
-      : responseBody.match(/<a\s+href="([^"]+)"\s+rel="next"/)?.[1];
-    if (!rel) { return ''; }
-    return currentPath.replace(/[^/]*$/, '') + rel.replace(/&amp;/g, '&');
-  }
-
   async listCfgTypes(domain: string): Promise<string[]> {
     // Live-verified class: cfg-dt-li (datatype-li). Paginated - controller returns 70/page.
     // Pagination quirk: the `rel="next"` href is relative to the response's <base href>
@@ -1710,9 +1716,9 @@ export class RwsClient2 {
     let pages = 0;
     while (path && pages < 50) {
       const html = await this.req('GET', path);
-      const p = RwsClient2.parse(html);
+      const p = parse(html);
       types.push(...p.getAllStates('cfg-dt-li').map(t => t['_title'] ?? t['name']).filter(Boolean) as string[]);
-      path = RwsClient2.nextPagePath(html, path);
+      path = nextPagePath(html, path);
       pages++;
     }
     return types;
@@ -1731,9 +1737,9 @@ export class RwsClient2 {
       let html: string;
       try { html = await this.req('GET', path); }
       catch { return instances; } // invalid type or no permission - silent empty
-      const p = RwsClient2.parse(html);
+      const p = parse(html);
       instances.push(...p.getAllStates('cfg-dt-instance-li').map(i => i['_title'] ?? '').filter(Boolean));
-      path = RwsClient2.nextPagePath(html, path);
+      path = nextPagePath(html, path);
       pages++;
     }
     return instances;
@@ -1744,7 +1750,7 @@ export class RwsClient2 {
     // Returns an outer cfg-dt-instance li with NESTED cfg-ia-t li elements.
     // Each attribute: <li class="cfg-ia-t" title="ATTR_NAME"><span class="value">VALUE</span></li>
     const html = await this.req('GET', buildPath(CFG_ELOG_DIPC.getCfgInstance.rws2 as PathSpec, { domain, type, instance }));
-    const p = RwsClient2.parse(html);
+    const p = parse(html);
     const attribs = p.getAllStates('cfg-ia-t');
     const result: Record<string, string> = {};
     for (const attr of attribs) {
@@ -1805,7 +1811,7 @@ export class RwsClient2 {
   /** Attribute schema of a cfg type (name, type, min/max, mandatory per
    *  attribute). Live-verified 2026-08-04 (RW7.21), class cfg-dt-attribute. */
   async listCfgTypeAttributes(domain: string, type: string): Promise<Array<Record<string, string>>> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', buildPath(CFG_ELOG_DIPC.listCfgTypeAttributes.rws2 as PathSpec, { domain, type })));
     return p.getAllStates('cfg-dt-attribute');
   }
@@ -1830,7 +1836,7 @@ export class RwsClient2 {
   async listBackups(): Promise<Array<{ name: string; created?: string; size?: number }>> {
     // Backups live under /fileservice/BACKUP - list that volume
     try {
-      const p = RwsClient2.parse(await this.req('GET', '/fileservice/BACKUP'));
+      const p = parse(await this.req('GET', '/fileservice/BACKUP'));
       return p.getAllStates('fs-dir').map(d => ({
         name: d['_title'] ?? '',
         created: d['fs-cdate'],
@@ -1864,7 +1870,7 @@ export class RwsClient2 {
    */
   async listProgress(): Promise<Array<{ id: string; state: string; operation?: string }>> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', '/progress'));
+      const p = parse(await this.req('GET', '/progress'));
       return p.getAllStates('progress-li').map(e => ({
         id:        (e['_href'] ?? '').split('/').filter(Boolean).pop() ?? e['_title'] ?? '',
         state:     e['state'] ?? '',
@@ -1877,7 +1883,7 @@ export class RwsClient2 {
    *  (RW7.21): class progress with spans state (e.g. 'pending') and code. */
   async getProgress(id: string): Promise<{ state: string; details?: Record<string, string> } | null> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', `/progress/${encodeURIComponent(id)}`));
+      const p = parse(await this.req('GET', `/progress/${encodeURIComponent(id)}`));
       const d = p.getState('progress') || p.getState('progress-ev');
       if (!Object.keys(d).length) { return null; }
       return { state: d['state'] ?? '', details: d };
@@ -1885,7 +1891,7 @@ export class RwsClient2 {
   }
 
   async getBackupStatus(): Promise<{ active: boolean; progress?: number; phase?: string }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getBackupStatus.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getBackupStatus.rws2 as PathSpec)));
     const d = p.getState('ctrl-backup-info-li') || p.getState('ctrl-backup-info');
     const phase = d['progress-state'] ?? d['phase'] ?? '';
     return {
@@ -1900,19 +1906,19 @@ export class RwsClient2 {
   // setting requires updating the active task's tooldata/wobjdata RAPID symbols.
 
   async getActiveTool(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getActiveTool.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getActiveTool.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-mechunit');
     return { name: d['tool-name'] ?? 'tool0' };
   }
 
   async getActiveWobj(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getActiveWobj.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getActiveWobj.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-mechunit');
     return { name: d['wobj-name'] ?? 'wobj0' };
   }
 
   async getActivePayload(mechunit = 'ROB_1'): Promise<{ name: string; data?: Record<string, string> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getActivePayload.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getActivePayload.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-mechunit');
     return { name: d['total-payload-name'] ?? d['payload-name'] ?? 'load0' };
   }
@@ -1932,7 +1938,7 @@ export class RwsClient2 {
    *  (RWS 1.0 spells them with hyphens - both read for safety). */
   async listServiceRoutines(task: string): Promise<Array<{ name: string; url: string }>> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.listServiceRoutines.rws2 as PathSpec, { task })));
+      const p = parse(await this.req('GET', buildPath(RAPID.listServiceRoutines.rws2 as PathSpec, { task })));
       return p.getAllStates('rap-task-routine')
         .map(d => ({ name: d['routine_name'] ?? d['routine-name'] ?? '', url: d['url_to_routine'] ?? d['url-to-routine'] ?? '' }))
         .filter(x => x.name);
@@ -1956,7 +1962,7 @@ export class RwsClient2 {
   // ─── DIPC `/rw/dipc` ───────────────────────────────────────────────────────
 
   async listDipcQueues(): Promise<Array<{ name: string; size?: number }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.listDipcQueues.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.listDipcQueues.rws2 as PathSpec)));
     return p.getAllStates('dipc-queue-li').map(q => ({
       name: q['queue-name'] ?? q['_title'] ?? '',
       size: q['queue-size'] ? +q['queue-size'] : undefined,
@@ -1982,7 +1988,7 @@ export class RwsClient2 {
       // <li class="dipc-read"> element (data in dipc-data), consumed on read.
       // (The message class is `dipc-read`, not `dipc-message` - the old name
       // never matched, so every read returned null.)
-      const p = RwsClient2.parse(await this.req('GET', R2.readDipcMessage(queue, timeoutMs)));
+      const p = parse(await this.req('GET', R2.readDipcMessage(queue, timeoutMs)));
       const d = p.getState('dipc-read');
       if (!d['dipc-data']) { return null; }
       return { payload: d['dipc-data'], type: d['dipc-msgtype'] ?? 'string' };
@@ -1999,7 +2005,7 @@ export class RwsClient2 {
    *  (RW7.21, class dipc-queue). */
   async getDipcQueueInfo(queue: string): Promise<{ name: string; size?: number; maxMsgSize?: number; slotId?: string } | null> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.getDipcQueueInfo.rws2 as PathSpec, { queue })));
+      const p = parse(await this.req('GET', buildPath(CFG_ELOG_DIPC.getDipcQueueInfo.rws2 as PathSpec, { queue })));
       const d = p.getState('dipc-queue');
       if (!d['queue-name'] && !d['_title']) { return null; }
       return {
@@ -2014,7 +2020,7 @@ export class RwsClient2 {
   /** Number of controller restarts. GET /ctrl/restart/restartcount, live-verified
    *  2026-08-04 (RW7.21, class ctrl / span restart-count). */
   async getRestartCount(): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.getRestartCount.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.getRestartCount.rws2 as PathSpec)));
     return Number(p.getState('ctrl')['restart-count'] ?? p.get('restart-count') ?? 0);
   }
 
@@ -2025,7 +2031,7 @@ export class RwsClient2 {
    * live-verified 2026-08-04 (RW7.21, class ms-robtargets).
    */
   async getRobTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): Promise<RobTarget> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET',
       `${buildPath(MOTION.getRobTarget.rws2 as PathSpec, { mechunit })}?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`,
     ));
@@ -2169,7 +2175,7 @@ export class RwsClient2 {
    */
   async requestMastershipWithId(domain: MastershipDomain): Promise<number> {
     const xhtml = await this.req('POST', buildPath(SYSTEM_MASTERSHIP.requestMastershipWithId.rws2 as PathSpec, { domain: this.rws2Domain(domain) }));
-    const id = RwsClient2.parse(xhtml).get('mastership-id');
+    const id = parse(xhtml).get('mastership-id');
     if (!id) { throw new RwsError('RWS2 request-with-id: no mastership-id in response', 'PARSE_ERROR'); }
     return Number(id);
   }
@@ -2199,14 +2205,14 @@ export class RwsClient2 {
 
   /** Read mastership status for one domain - returns 'nomaster' | 'remote' | 'local' | similar. */
   async getMastershipStatus(domain: MastershipDomain): Promise<{ mastership: string; uid?: string; application?: string }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getMastershipStatus.rws2 as PathSpec, { domain: this.rws2Domain(domain) })));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getMastershipStatus.rws2 as PathSpec, { domain: this.rws2Domain(domain) })));
     const d = p.getState('msh-resource');
     return { mastership: d['mastership'] ?? 'unknown', uid: d['uid'], application: d['application'] };
   }
 
   /** List all mastership domains the controller exposes (typically `['edit', 'motion']`). */
   async listMastershipDomains(): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.listMastershipDomains.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.listMastershipDomains.rws2 as PathSpec)));
     return p.getAllStates('msh-resource-li').map(d => d['_title']).filter(Boolean) as string[];
   }
 
@@ -2253,13 +2259,13 @@ export class RwsClient2 {
 
   /** Change count of release appeals (class ...-appeal-change-count). */
   async getWriteAccessAppealChangeCount(): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getWriteAccessAppealChangeCount.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getWriteAccessAppealChangeCount.rws2 as PathSpec)));
     return Number(p.getState('controlstation-release-write-access-appeal-change-count')['changecount'] ?? 0);
   }
 
   /** Who holds write access, and whether external control is enabled. */
   async getWriteAccessStatus(): Promise<{ held: boolean; heldById: string; heldByName: string; externalControlEnabled: boolean }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getWriteAccessStatus.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getWriteAccessStatus.rws2 as PathSpec)));
     const d = p.getState('controlstation-write-access-status');
     return {
       held:                   d['control-station-write-access-held'] === 'true',
@@ -2271,19 +2277,19 @@ export class RwsClient2 {
 
   /** Control-station type of this session: 'none' | 'remote' | 'local'. */
   async getControlStationType(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getControlStationType.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getControlStationType.rws2 as PathSpec)));
     return p.getState('controlstation-type')['control-station-type'] ?? 'none';
   }
 
   /** Control-station id bound to this session ('none' before registration). */
   async getControlStationId(): Promise<string> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getControlStationId.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getControlStationId.rws2 as PathSpec)));
     return p.getState('control-station')['control-station-Id'] ?? 'none';
   }
 
   /** Whether a local control station (pendant) is connected. */
   async isLocalControlStationConnected(): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.isLocalControlStationConnected.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.isLocalControlStationConnected.rws2 as PathSpec)));
     return p.getState('controlstation-local-connected')['control-station-local-isconnected'] === 'true';
   }
 
@@ -2291,7 +2297,7 @@ export class RwsClient2 {
    *  The controller spells the class 'controstation-allow-motion-control'
    *  (missing 'l' - live RW8.1.1); the corrected spelling is read as fallback. */
   async getAllowMotionControl(): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getAllowMotionControl.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getAllowMotionControl.rws2 as PathSpec)));
     let d = p.getState('controstation-allow-motion-control');
     if (!('is-enabled' in d)) { d = p.getState('controlstation-allow-motion-control'); }
     return d['is-enabled'] === 'true';
@@ -2311,7 +2317,7 @@ export class RwsClient2 {
 
   /** TPU (pendant) safety-protocol connection state. */
   async getTpuSafetyProtocolStatus(): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getTpuSafetyProtocolStatus.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getTpuSafetyProtocolStatus.rws2 as PathSpec)));
     return p.getState('controlstation-tpu-safety-protocol-status')['is-connected'] === 'true';
   }
 
@@ -2323,7 +2329,7 @@ export class RwsClient2 {
    * Drill into each group with `getDeviceTree(group)`.
    */
   async listSystemDevices(): Promise<Array<{ id: string; name: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', '/rw/devices'));
+    const p = parse(await this.req('GET', '/rw/devices'));
     return p.getAllStates('dev-id-li').map(d => ({
       id:   d['_title'] ?? '',
       name: d['name']   ?? '',
@@ -2344,7 +2350,7 @@ export class RwsClient2 {
    * one's handy when you want a flat overview without enumerating networks first.)
    */
   async listAllIoDevices(): Promise<Array<{ name: string; network: string; lstate: string; pstate: string; address: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(IO.listAllIoDevices.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(IO.listAllIoDevices.rws2 as PathSpec)));
     return p.getAllStates('ios-device-li').map(d => {
       const title = d['_title'] ?? '';
       const network = title.split('/')[0] ?? '';
@@ -2381,7 +2387,7 @@ export class RwsClient2 {
       tool, wobj,
     }).toString();
     const xhtml = await this.req('POST', buildPath(MOTION.calcCartesianFromJoints.rws2 as PathSpec, { mechunit }), undefined, body);
-    const p = RwsClient2.parse(xhtml);
+    const p = parse(xhtml);
     if (p.getError()) {
       throw new RwsError(`FK rejected: ${p.getError()?.msg ?? 'unknown'} (likely missing PC Interface 616-1 license)`, 'UNSUPPORTED_OPERATION');
     }
@@ -2415,7 +2421,7 @@ export class RwsClient2 {
    */
   async listVisionSystems(): Promise<Array<{ name: string; status?: string }>> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(FILES_VISION.listVisionSystems.rws2 as PathSpec)));
+      const p = parse(await this.req('GET', buildPath(FILES_VISION.listVisionSystems.rws2 as PathSpec)));
       // Prefer explicit camera entries when a controller has cameras attached.
       const cams = [...p.getAllStates('vision-system-li'), ...p.getAllStates('camera-info-li')]
         .map(s => ({ name: s['_title'] ?? s['name'] ?? '', status: s['status'] }))
@@ -2428,18 +2434,18 @@ export class RwsClient2 {
    *  (class number-of-cameras-li). 0 on a VC without cameras. */
   async getVisionCameraCount(): Promise<number> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(FILES_VISION.getVisionCameraCount.rws2 as PathSpec)));
+      const p = parse(await this.req('GET', buildPath(FILES_VISION.getVisionCameraCount.rws2 as PathSpec)));
       return Number(p.getState('number-of-cameras-li')['number-of-cameras'] ?? 0);
     } catch { return 0; }
   }
 
   async getVisionSystemInfo(name: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(FILES_VISION.getVisionSystemInfo.rws2 as PathSpec, { name })));
+    const p = parse(await this.req('GET', buildPath(FILES_VISION.getVisionSystemInfo.rws2 as PathSpec, { name })));
     return p.getState('vision-system');
   }
 
   async listVisionJobs(system: string): Promise<Array<{ name: string; active?: boolean }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(FILES_VISION.listVisionJobs.rws2 as PathSpec, { system })));
+    const p = parse(await this.req('GET', buildPath(FILES_VISION.listVisionJobs.rws2 as PathSpec, { system })));
     return p.getAllStates('vision-job-li').map(j => ({
       name: j['name'] ?? j['_title'] ?? '',
       active: j['active'] === 'true',
@@ -2479,7 +2485,7 @@ export class RwsClient2 {
    *  instead), so this returns an empty list. Kept for source compatibility. */
   async listSafetyZones(): Promise<Array<Record<string, string>>> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.listSafetyZones.rws2 as PathSpec)));
+      const p = parse(await this.req('GET', buildPath(CTRL.listSafetyZones.rws2 as PathSpec)));
       return p.getAllStates('ctrl-safety-zone-li');
     } catch { return []; }
   }
@@ -2504,7 +2510,7 @@ export class RwsClient2 {
    * Live-verified 2026-08 on RW7.21.
    */
   async getCyclicBrakeCheckStatus(drivenum = 1): Promise<{ status: string; lastStatus: string; nextCheckTime: number }> {
-    const p = RwsClient2.parse(await this.req('GET', `${buildPath(CTRL.getCyclicBrakeCheckStatus.rws2 as PathSpec)}?drivenum=${drivenum}`));
+    const p = parse(await this.req('GET', `${buildPath(CTRL.getCyclicBrakeCheckStatus.rws2 as PathSpec)}?drivenum=${drivenum}`));
     const d = p.getState('cbc-status');
     return {
       status: d['status'] ?? 'unknown',
@@ -2524,7 +2530,7 @@ export class RwsClient2 {
     //   /vtspeed → class="ctrl-vtspeed" → span "vtcurrspeed" (1.0=real, 10=10x)
     const fetch = async (sub: string) => {
       try {
-        const p = RwsClient2.parse(await this.req('GET', `/ctrl/virtualtime/${sub}`));
+        const p = parse(await this.req('GET', `/ctrl/virtualtime/${sub}`));
         return p.getState(`ctrl-${sub}`) || {};
       } catch { return {}; }
     };
@@ -2559,7 +2565,7 @@ export class RwsClient2 {
    */
   async listCertificates(): Promise<Array<{ name: string; subject?: string; expires?: string }>> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.listCertificateStores.rws2 as PathSpec)));
+      const p = parse(await this.req('GET', buildPath(CTRL.listCertificateStores.rws2 as PathSpec)));
       return p.getAllStates('ctrl-certstore-li').map(c => ({
         name: c['store-name'] ?? c['name'] ?? c['_title'] ?? '',
         subject: c['subject'],
@@ -2630,7 +2636,7 @@ export class RwsClient2 {
    */
   async listFileVolumes(): Promise<string[]> {
     try {
-      const p = RwsClient2.parse(await this.req('GET', buildPath(FILES_VISION.listFileVolumes.rws2 as PathSpec)));
+      const p = parse(await this.req('GET', buildPath(FILES_VISION.listFileVolumes.rws2 as PathSpec)));
       const names = p.getAllStates('fs-dir').map(v => v['_title'] ?? v['name']).filter(Boolean) as string[];
       if (names.length > 0) { return names; }
       return ['HOME', 'BACKUP', 'DATA', 'ADDINDATA', 'PRODUCTS', 'RAMDISK', 'TEMP'];
@@ -2695,7 +2701,7 @@ export class RwsClient2 {
       // GET /rw/rapid/tasks/{task}/program/breakpoints (verified path). The item
       // class was empty on the VC (no breakpoints set in AUTO), so both the
       // rap-breakpoint-li class and the row/col span names are best-effort.
-      const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.listBreakpoints.rws2 as PathSpec, { task })));
+      const p = parse(await this.req('GET', buildPath(RAPID.listBreakpoints.rws2 as PathSpec, { task })));
       return p.getAllStates('rap-breakpoint-li').map(b => ({
         module: b['module'] ?? b['modulename'] ?? '',
         row: +(b['row'] ?? b['begin-position-row'] ?? '0'),
@@ -2731,7 +2737,7 @@ export class RwsClient2 {
 
   async getMechunitBaseFrame(mechunit = 'ROB_1'): Promise<{ x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }> {
     // Live-verified class: ms-mechunit-baseframe (not ms-baseframe)
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getMechunitBaseFrame.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getMechunitBaseFrame.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-mechunit-baseframe') || p.getState('ms-baseframe');
     return {
       x: +d['x'], y: +d['y'], z: +d['z'],
@@ -2749,7 +2755,7 @@ export class RwsClient2 {
   async getMechunitAxes(mechunit = 'ROB_1'): Promise<Array<Record<string, string>>> {
     // Live-verified: /axes returns a count + sub-resource links (axes/1..N).
     // Fetch each axis individually and assemble the result.
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getMechunitAxes.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getMechunitAxes.rws2 as PathSpec, { mechunit })));
     const total = p.getState('ms-mechunit-axes');
     const axisCount = +(total['axes'] ?? 0);
     if (axisCount === 0) { return []; }
@@ -2761,7 +2767,7 @@ export class RwsClient2 {
         // axis-status, e.g. 'Synchronized') and ms-mechunit-logicalaxis (span
         // logical-axis). The previously parsed ms-mechunit-axis / ms-axis are
         // not emitted, so every axis came back with no fields (fixed 2026-08).
-        const ap = RwsClient2.parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes/${i}`));
+        const ap = parse(await this.req('GET', `/rw/motionsystem/mechunits/${mechunit}/axes/${i}`));
         axes.push({
           axis: String(i),
           ...ap.getState('ms-mechunit-axisstatus'),
@@ -2776,7 +2782,7 @@ export class RwsClient2 {
    *  previously parsed `ms-pjoints` is never emitted, so this returned an empty
    *  object on every controller (fixed 2026-08). */
   async getMechunitPjoints(mechunit = 'ROB_1'): Promise<Record<string, number>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getMechunitPjoints.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getMechunitPjoints.rws2 as PathSpec, { mechunit })));
     const d = p.getState('ms-mechunit-pjoints');
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(d)) { if (!k.startsWith('_')) { out[k] = +v; } }
@@ -2784,7 +2790,7 @@ export class RwsClient2 {
   }
 
   async getMechunitInfo(mechunit = 'ROB_1'): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getMechunitInfo.rws2 as PathSpec, { mechunit })));
+    const p = parse(await this.req('GET', buildPath(MOTION.getMechunitInfo.rws2 as PathSpec, { mechunit })));
     return p.getState('ms-mechunit');
   }
 
@@ -2862,7 +2868,7 @@ export class RwsClient2 {
     // <li class="rap-module" title="{task}/{module}"> with spans modname,
     // filename (bare name like 'BASE.sysx' - NO path) and attribute.
     // (rap-module-info-li is the class used by the module LIST endpoint.)
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getModuleInfo.rws2 as PathSpec, { task, module: moduleName })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getModuleInfo.rws2 as PathSpec, { task, module: moduleName })));
     const d = p.getState('rap-module');
     if (Object.keys(d).length > 0) { return d; }
     return p.getState('rap-module-info-li') || p.getState('rap-module-info');
@@ -2885,7 +2891,7 @@ export class RwsClient2 {
    * Use getTaskChangeCount() for the any-edit counter.
    */
   async getTaskStructuralChangeCount(task: string): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getTaskStructuralChangeCount.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getTaskStructuralChangeCount.rws2 as PathSpec, { task })));
     const d = p.getState('rap-task-struc-change-count');
     return Number(d['struc-change-count'] ?? d['change-count'] ?? 0);
   }
@@ -2893,12 +2899,12 @@ export class RwsClient2 {
   /** Any-edit change count of a task (the sibling of the structural count above,
    *  same resource and class). */
   async getTaskChangeCount(task: string): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getTaskChangeCount.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getTaskChangeCount.rws2 as PathSpec, { task })));
     return Number(p.getState('rap-task-struc-change-count')['change-count'] ?? 0);
   }
 
   async getTaskMotion(task: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getTaskMotion.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getTaskMotion.rws2 as PathSpec, { task })));
     // /motion is a directory of sub-resources (robtarget, jointtarget,
     // mechunits, extjointstate) - there is no `rap-task-motion` aggregate class,
     // so this always returned {}. Report which motion sub-resources the task
@@ -2914,7 +2920,7 @@ export class RwsClient2 {
   }
 
   async getTaskActivationRecord(task: string): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getTaskActivationRecord.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getTaskActivationRecord.rws2 as PathSpec, { task })));
     return p.getState('rap-activation-record') || {};
   }
 
@@ -2924,7 +2930,7 @@ export class RwsClient2 {
     if (!xml) { return {}; }
     // Class is rap-program (spans name, entrypoint); `rap-program-info` is never
     // emitted, so this returned {} even with a program loaded (fixed 2026-08).
-    return RwsClient2.parse(xml).getState('rap-program');
+    return parse(xml).getState('rap-program');
   }
 
   // ─── WebSocket subscriptions ──────────────────────────────────────────────────
@@ -3431,7 +3437,7 @@ export class RwsClient2 {
       if (e instanceof RwsError && e.httpStatus === 500) { return 'none'; }
       throw e;
     }
-    const p = RwsClient2.parse(xml);
+    const p = parse(xml);
     const priv     = p.get('privilege') ?? 'none';
     const heldByMe = (p.get('rmmpheldbyme') ?? 'false').toLowerCase() === 'true';
     if (priv === 'none') { return 'none'; }
@@ -3459,14 +3465,14 @@ export class RwsClient2 {
   /** Info about the logged-in user session (uas-id, user-name, locale,
    *  application). Live-verified 2026-08-04 (RW7.21), class user-login-info. */
   async getLoginInfo(): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(USERS_UAS.getLoginInfo.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(USERS_UAS.getLoginInfo.rws2 as PathSpec)));
     return p.getState('user-login-info');
   }
 
   /** Whether the logged-in user holds a UAS grant. Pre-check before an
    *  operation that would 403. Live-verified 2026-08-04 (RW7.21). */
   async checkGrantExists(grant: string): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req('GET', `${buildPath(USERS_UAS.checkGrantExists.rws2 as PathSpec)}?grant=${encodeURIComponent(grant)}`));
+    const p = parse(await this.req('GET', `${buildPath(USERS_UAS.checkGrantExists.rws2 as PathSpec)}?grant=${encodeURIComponent(grant)}`));
     return p.getState('user-grant-status')['status'] === 'true';
   }
 
@@ -3484,7 +3490,7 @@ export class RwsClient2 {
    * use. Both spellings are accepted now.
    */
   async listAllGrants(): Promise<Array<{ name: string; description?: string; displayName?: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(USERS_UAS.listAllGrants.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(USERS_UAS.listAllGrants.rws2 as PathSpec)));
     const rows = [...p.getAllStates('grant-info'), ...p.getAllStates('uas-grant')];
     return rows.map(g => ({
       name: g['grant-name'] ?? g['grantname'] ?? '',
@@ -3497,7 +3503,7 @@ export class RwsClient2 {
    *  class uas-grant. (/uas/users and /uas/roles answer 403 without the UAS
    *  administration grant.) */
   async listCurrentUserGrants(): Promise<string[]> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(USERS_UAS.listCurrentUserGrants.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(USERS_UAS.listCurrentUserGrants.rws2 as PathSpec)));
     return p.getAllStates('uas-grant').map(g => g['grantname']).filter(Boolean) as string[];
   }
 
@@ -3641,12 +3647,12 @@ export class RwsClient2 {
   // ─── System detail endpoints ────────────────────────────────────────────────
 
   async getLicenseInfo(): Promise<{ entries: Array<Record<string, string>> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getLicenseInfo.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getLicenseInfo.rws2 as PathSpec)));
     return { entries: p.getAllStates('sys-license') };
   }
 
   async listProducts(): Promise<Array<Record<string, string>>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.listProducts.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.listProducts.rws2 as PathSpec)));
     // Live-verified class: sys-product-li (with -li suffix). Each product has a _title
     // (the product name e.g. "RobotControl") plus version and version-name spans.
     return p.getAllStates('sys-product-li').map(p => ({
@@ -3657,14 +3663,14 @@ export class RwsClient2 {
   }
 
   async getRobotType(): Promise<{ type: string; variant?: string }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getRobotType.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getRobotType.rws2 as PathSpec)));
     const d = p.getState('sys-robottype');
     // Live-verified: span class is 'robot-type' (with hyphen), not 'robottype'
     return { type: d['robot-type'] ?? d['robottype'] ?? d['type'] ?? '', variant: d['variant'] };
   }
 
   async getEnergyStats(): Promise<Record<string, string>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getEnergyStats.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getEnergyStats.rws2 as PathSpec)));
     // Live-verified class: sys-energy-state (not sys-energy)
     return p.getState('sys-energy-state');
   }
@@ -3677,7 +3683,7 @@ export class RwsClient2 {
       // NOT rw-retcode with title/desc, which is never emitted (fixed 2026-08;
       // this used to return null for every code). `title` keeps carrying the
       // symbolic name (e.g. SYS_CTRL_E_MASTER_REJECT) for source compatibility.
-      const p = RwsClient2.parse(await this.req('GET', `/rw/retcode?code=${code}&lang=${lang}`));
+      const p = parse(await this.req('GET', `/rw/retcode?code=${code}&lang=${lang}`));
       const d = p.getState('err-desc');
       if (!d['description'] && !d['name']) { return null; }
       return { code, title: d['name'] ?? '', desc: d['description'] ?? '' };
@@ -3694,7 +3700,7 @@ export class RwsClient2 {
    * 2026-08 (fixed endpoint and class).
    */
   async listControllerOptions(): Promise<Array<{ name: string; description?: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.listControllerOptions.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.listControllerOptions.rws2 as PathSpec)));
     return p.getAllStates('sys-option-li').map(o => ({
       name: o['option'] ?? o['name'] ?? '',
       description: o['description'],
@@ -3705,26 +3711,26 @@ export class RwsClient2 {
    *  (`/ctrl/features/{id}`) and returns no list of its own, so the bare listing
    *  is empty on RW7/RW8 - pass a feature id to check it. */
   async listFeatures(): Promise<Array<Record<string, string>>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(CTRL.listFeatures.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(CTRL.listFeatures.rws2 as PathSpec)));
     return p.getAllStates('ctrl-feature');
   }
 
   // ─── Motion detail endpoints ────────────────────────────────────────────────
 
   async getMotionChangeCount(): Promise<number> {
-    const p = RwsClient2.parse(await this.req('GET', `${buildPath(MOTION.getMotionChangeCount.rws2 as PathSpec)}?resource=change-count`));
+    const p = parse(await this.req('GET', `${buildPath(MOTION.getMotionChangeCount.rws2 as PathSpec)}?resource=change-count`));
     return Number(p.get('change-count') ?? 0);
   }
 
   async getMotionErrorState(): Promise<{ state: string; details?: Record<string, string> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getMotionErrorState.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(MOTION.getMotionErrorState.rws2 as PathSpec)));
     const d = p.getState('ms-errorstate-li') || p.getState('ms-errorstate');
     return { state: d['err-state'] ?? d['state'] ?? 'unknown', details: d };
   }
 
   async getNonMotionExecution(): Promise<boolean> {
     // Live-verified: class="ms-nonmotionexecution", span "mode" returns quoted "OFF" or "ON".
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getNonMotionExecution.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(MOTION.getNonMotionExecution.rws2 as PathSpec)));
     const v = (p.get('mode') ?? p.get('state') ?? 'OFF').replace(/"/g, '').toUpperCase();
     return v === 'ON';
   }
@@ -3736,7 +3742,7 @@ export class RwsClient2 {
   async getCollisionPredictionMode(): Promise<string> {
     // Live-verified: class="ms-collision-prediction-mode" with span "collision-prediction-mode-enabled"
     // returning "true" / "false". Map back to ON/OFF for caller convenience.
-    const p = RwsClient2.parse(await this.req('GET', buildPath(MOTION.getCollisionPredictionMode.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(MOTION.getCollisionPredictionMode.rws2 as PathSpec)));
     const enabled = p.get('collision-prediction-mode-enabled') ?? p.get('mode') ?? 'false';
     return enabled.toLowerCase() === 'true' ? 'ON' : 'OFF';
   }
@@ -3748,7 +3754,7 @@ export class RwsClient2 {
   // ─── Panel detail endpoints ─────────────────────────────────────────────────
 
   async getEnableRequest(): Promise<{ state: string; raw: Record<string, string> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(PANEL.getEnableRequest.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(PANEL.getEnableRequest.rws2 as PathSpec)));
     const d = p.getState('pnl-enreq') || p.getState('pnl-enreq-li');
     return { state: d['state'] ?? d['enreq'] ?? 'unknown', raw: d };
   }
@@ -3756,7 +3762,7 @@ export class RwsClient2 {
   // ─── RAPID detail endpoints ─────────────────────────────────────────────────
 
   async listAliasIO(): Promise<Array<{ alias: string; signal: string }>> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.listAliasIO.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(RAPID.listAliasIO.rws2 as PathSpec)));
     return p.getAllStates('rap-aliasio-li').map(a => ({
       alias: a['name'] ?? a['alias'] ?? '',
       signal: a['signal'] ?? a['_title'] ?? '',
@@ -3770,7 +3776,7 @@ export class RwsClient2 {
    * name, state (ON/OFF), motiontask and usermodify.
    */
   async getTaskSelection(): Promise<{ selected: string[]; available: string[]; entries: Array<Record<string, string>> }> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getTaskSelection.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(RAPID.getTaskSelection.rws2 as PathSpec)));
     const entries = p.getAllStates('rap-taskselection');
     const available = entries.map(t => t['name']).filter(Boolean) as string[];
     const selected = entries.filter(t => (t['state'] ?? '').toUpperCase() === 'ON')
@@ -3790,7 +3796,7 @@ export class RwsClient2 {
     //   beginposition  → "row,col" combined string
     //   endposition    → "row,col"
     //   changecount, executiontype
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getProgramPointer.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getProgramPointer.rws2 as PathSpec, { task })));
     const d = p.getState('pcp-info') || p.getState('program-pointer-state') || p.getState('rap-pcp-li');
     const begin = (d['beginposition'] ?? '').split(',');
     return {
@@ -3805,7 +3811,7 @@ export class RwsClient2 {
   async getMotionPointer(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number; state?: string }> {
     // Live-verified: /syncstate/motion-pointer returns class="rap-task-sync-state"
     // with a single span class="motion-pointer-state" containing 'Off' or position info.
-    const p = RwsClient2.parse(await this.req('GET', buildPath(RAPID.getMotionPointer.rws2 as PathSpec, { task })));
+    const p = parse(await this.req('GET', buildPath(RAPID.getMotionPointer.rws2 as PathSpec, { task })));
     const d = p.getState('rap-task-sync-state');
     const stateVal = d['motion-pointer-state'] ?? '';
     return {
@@ -3850,7 +3856,7 @@ export class RwsClient2 {
       bodyStr,
       'application/x-www-form-urlencoded;v=2.0',
     );
-    const p = RwsClient2.parse(html);
+    const p = parse(html);
     const d = p.getState('ms-jointtarget');
     if (!d['rax_1']) { throw new RwsError('IK: no joint values in response', 'PARSE_ERROR'); }
     return {
@@ -4052,7 +4058,7 @@ export class RwsClient2 {
    * (live-verified 2026-08-09 on RW8.1.1). Defaults to 0 for that reason.
    */
   async getCollisionPredictionModelName(robotNumber = 0): Promise<string> {
-    const p = RwsClient2.parse(await this.req(
+    const p = parse(await this.req(
       'GET', `${buildPath(MOTION.getCollisionPredictionModelName.rws2 as PathSpec)}?robotnumber=${robotNumber}`,
     ));
     return p.get('modelname') ?? p.get('model-name') ?? '';
@@ -4147,7 +4153,7 @@ export class RwsClient2 {
       }
       throw e;
     }
-    const p = RwsClient2.parse(xml);
+    const p = parse(xml);
     const entries = p.getAllStates('ctrl-diagnostics-li');
     return { empty: entries.length === 0, entries };
   }
@@ -4236,7 +4242,7 @@ export class RwsClient2 {
    * (live-verified 2026-08-09 on RW7.21 and RW8.1.1).
    */
   async isPasswordChangeAllowed(): Promise<boolean> {
-    const p = RwsClient2.parse(await this.req('GET', buildPath(USERS_UAS.isPasswordChangeAllowed.rws2 as PathSpec)));
+    const p = parse(await this.req('GET', buildPath(USERS_UAS.isPasswordChangeAllowed.rws2 as PathSpec)));
     const v = p.get('password-change-allow') ?? p.get('status') ?? p.get('state') ?? 'false';
     return /^(true|yes|1|allowed)$/i.test(v.replace(/"/g, '').trim());
   }
