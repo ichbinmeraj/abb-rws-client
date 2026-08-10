@@ -70,7 +70,11 @@ export const FILES_VISION: DomainTable = {
   renameFile: {
     summary: 'Rename a file in place.',
     rws2: { method: 'POST', path: '/fileservice/{path}/rename', fields: ['fs-newname'] },
-    note: 'RWS 2.0 only. The published new-filename field is rejected - fs-newname is the live-verified field.',
+    // RWS 1.0 renames in-directory via the file's own fileservice path with
+    // fs-action=rename + a bare-filename fs-newname (same shape as copy).
+    // Live-verified on IRC5 RW6.16 (2026-08-11): 204.
+    rws1: { method: 'POST', path: '/fileservice/{path}', fields: ['fs-action', 'fs-newname'] },
+    note: 'The published new-filename field is rejected - fs-newname is the live-verified field. RWS 1.0 uses fs-action=rename (query-less POST to the file path).',
   },
 
   // ── Subscriptions ─────────────────────────────────────────────────────────

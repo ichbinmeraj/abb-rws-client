@@ -135,6 +135,7 @@ export class RWS1Adapter implements IRWSAdapter {
   listAllSignals(s?: number, l?: number)             { return this.client.listAllSignals(s, l); }
   readSignal(n: string, d: string, name: string)     { return this.client.readSignal(n, d, name); }
   writeSignal(n: string, d: string, name: string, v: string) { return this.client.writeSignal(n, d, name, v); }
+  searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }) { return this.client.searchSignals(criteria); }
   listNetworks()                                     { return this.client.listNetworks(); }
   listDevices(network: string)                       { return this.client.listDevices(network); }
 
@@ -145,6 +146,7 @@ export class RWS1Adapter implements IRWSAdapter {
   deleteFile(path: string)                     { return this.client.deleteFile(path); }
   createDirectory(parent: string, dir: string) { return this.client.createDirectory(parent, dir); }
   copyFile(src: string, dst: string)           { return this.client.copyFile(src, dst); }
+  renameFile(path: string, newName: string)    { return this.client.renameFile(path, newName); }
 
   // ── Mastership ──────────────────────────────────────────────────────────
   requestMastership(d: MastershipDomain) { return this.client.requestMastership(d); }

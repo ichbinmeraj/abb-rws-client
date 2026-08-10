@@ -42,7 +42,10 @@ export const IO: DomainTable = {
   searchSignals: {
     summary: 'Search signals by criteria (substring name, AND-composed).',
     rws2: { method: 'POST', path: '/rw/iosystem/signals/signal-search', fields: ['name', 'device', 'network', 'category', 'type'] },
-    note: 'RWS 2.0 only. name is SUBSTRING match; criteria AND-compose; `*` matches nothing (live-verified RW7.21).',
+    // RWS 1.0 uses the query-action form; same ios-signal-li result and semantics
+    // (substring name, AND-composed). Live-verified on IRC5 RW6.16 (2026-08-11).
+    rws1: { method: 'POST', path: '/rw/iosystem/signals', action: 'signal-search', fields: ['name', 'device', 'network', 'category', 'type'] },
+    note: 'name is SUBSTRING match; criteria AND-compose; `*` matches nothing (live-verified RW7.21 / RW6.16).',
   },
   searchSignalsEx: {
     summary: 'Extended signal search - up to two AND-narrowing criteria sets.',
