@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket as ServerWebSocket } from 'ws';
 import { RwsClient2 } from '../src/RwsClient2.js';
+import { Rws2Core } from '../src/rws2/core.js';
 import type { SubscriptionEvent } from '../src/types.js';
 import { TEST_TLS_KEY, TEST_TLS_CERT } from './TlsFixture.js';
 
@@ -212,8 +213,11 @@ async function deliverUntilSeen(
   }
 }
 
-/** Runtime access to RwsClient2's private reconnect tuning statics. */
-const tuning = RwsClient2 as unknown as {
+/** Runtime access to the reconnect tuning statics. They live on `Rws2Core` (the
+ *  transport/subscription base that `RwsClient2` composes), and the reconnect
+ *  loop reads them from there - so overrides must be written on `Rws2Core`, not
+ *  the `RwsClient2` subclass, where they would only shadow the inherited value. */
+const tuning = Rws2Core as unknown as {
   WS_RECONNECT_BASE_MS: number;
   WS_RECONNECT_MAX_ATTEMPTS: number;
   WS_OPEN_TIMEOUT_MS: number;
