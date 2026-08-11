@@ -3,11 +3,13 @@
 > Typed TypeScript/Node.js client for ABB Robot Web Services, covering **both** protocols:
 > RWS 1.0 (IRC5 / RobotWare 6.x, HTTP Digest, JSON via `?json=1`) and RWS 2.0 (OmniCore /
 > RobotWare 7.x, HTTP Basic, XHTML `;v=2.0`). ESM-only npm package, single runtime
-> dependency (`ws`). Version at time of writing: **0.7.2** (`package.json:3`).
+> dependency (`ws`). Version at time of writing: **1.2.0** (`package.json:3`).
 
 This document was produced by a full read of every source, test, and example file on
-2026-07-02. Line numbers refer to that snapshot. Claims marked **(inferred)** were not
-directly verified against a live controller.
+2026-07-02, and updated 2026-08-11 for the `Rws2Core` + nine-domain-mixin restructure
+and the two-generation endpoint sweep (§1 and the subscription heartbeat reflect the
+newer state). Line numbers refer to those snapshots. Claims marked **(inferred)** were
+not directly verified against a live controller.
 
 ---
 
@@ -181,8 +183,10 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
    - RWS 2.0 path: `RwsClient2.subscribe()` hand-rolls the POST (semicolons in the body
      must stay **literal**, `src/RwsClient2.ts:1337`), takes the WS URL from `Location`
      (real hardware) or the XHTML body (VC), authenticates the WS with the Cookie from
-     that response, sends `'PING'` every 25 s (controller closes idle sockets at 30 s)
-     (`src/RwsClient2.ts:1375-1530`).
+     that response, then stays **silent** on the subscription socket (OmniCore answers
+     any client frame - `PING` included - with a 1008 "Client cannot send data" close),
+     establishing liveness **out of band** with a cheap `GET` probe each tick
+     (`src/rws2/core.ts:1185-1216`).
 3. Success → poll every **5 s** (positions etc.); failure → subscription-less full
    polling every **1 s** (`src/RobotManager.ts:392-413`). A `fetchInFlight` single-flight
    guard prevents the request pile-up that caused 10 s timeouts during heavy motion

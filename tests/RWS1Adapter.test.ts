@@ -385,6 +385,56 @@ describe('RWS1Adapter RMMP poll/cancel (RWS 1.0)', () => {
   });
 });
 
+describe('RWS1Adapter 2026-08-11 sweep wire-forms (RWS 1.0 side)', () => {
+  const signalsXhtml = '<html><body><ul>'
+    + '<li class="ios-signal-li" title="n/d/sigA"><span class="name">sigA</span>'
+    + '<span class="type">DI</span><span class="lvalue">1</span></li></ul></body></html>';
+
+  it('searchSignalsEx builds the suffixed criteria body and POSTs ?action=signal-searchex (raw, no json=1)', async () => {
+    const { calls, client } = makeFake((m, url) =>
+      m === 'POST' && url.includes('signal-searchex') ? { status: 200, body: signalsXhtml } : undefined);
+    const a = new RWS1Adapter(client);
+    const out = await a.searchSignalsEx([{ type: 'DI', device: 'd1' }, { type: 'DO', categoryPon: 'x', blocked: false }]);
+    const post = calls.find(c => c.what.startsWith('POST') && c.what.includes('signal-searchex'));
+    expect(post).toBeTruthy();
+    // First set unsuffixed, second set carries the '2' suffix; categoryPon -> category-pon.
+    expect(post!.body).toBe('device=d1&type=DI&category-pon2=x&type2=DO&blocked2=false');
+    // Raw request: it needs the XHTML ios-signal-li list, so it must NOT use the json=1 path.
+    expect(post!.what).not.toContain('json=1');
+    expect(out.map(s => s.name)).toContain('sigA');
+  });
+
+  it('searchSignalsEx rejects 0 or >2 criteria sets with INVALID_ARGUMENT', async () => {
+    const { client } = makeFake();
+    const a = new RWS1Adapter(client);
+    await expect(a.searchSignalsEx([])).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    await expect(a.searchSignalsEx([{ type: 'DI' }, { type: 'DO' }, { type: 'AI' }]))
+      .rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+  });
+
+  it('getModuleTextRange passes startrow/startcol/endrow/endcol query params and URL-decodes the span', async () => {
+    const { calls, client } = makeFake((_m, url) => url.includes('/rw/rapid/modules/BASE') && url.includes('startrow=1')
+      ? { status: 200, body: JSON.stringify({ _embedded: { _state: [{ _type: 'rap-module-text', 'module-text': 'MODULE%20BASE' }] } }) }
+      : undefined);
+    const a = new RWS1Adapter(client);
+    expect(await a.getModuleTextRange('T_ROB1', 'BASE', 1, 1, 2, 1)).toBe('MODULE BASE');
+    const get = calls.find(c => c.what.includes('/rw/rapid/modules/BASE'));
+    expect(get!.what).toContain('task=T_ROB1');
+    expect(get!.what).toContain('startrow=1');
+    expect(get!.what).toContain('endcol=1');
+  });
+
+  it('saveEventLogRaw POSTs ?action=saveraw with the destination normalised to a /fileservice/ URI', async () => {
+    const { calls, client } = makeFake();  // 204
+    const a = new RWS1Adapter(client);
+    await a.saveEventLogRaw('HOME/elog.txt');
+    const post = calls.find(c => c.what.includes('saveraw'));
+    expect(post).toBeTruthy();
+    // Bare volume paths are rejected by the endpoint; fsPath prepends /fileservice/.
+    expect(decodeURIComponent(post!.body ?? '')).toBe('path=/fileservice/HOME/elog.txt');
+  });
+});
+
 describe('RWS1Adapter FK/IK route through the shared client', () => {
   it('calcCartesianFromJoints parses the _state envelope from client.request', async () => {
     const { calls, client } = makeFake(() => ({ status: 200, body: JSON.stringify({ _embedded: { _state: [

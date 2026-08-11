@@ -38,6 +38,12 @@ describe('IRWSAdapter shape', () => {
       'loadProgram', 'setProgramPointer', 'getEventLogMessage', 'listCurrentUserGrants',
       'getTaskStructuralChangeCount', 'getTaskMotion', 'getTaskActivationRecord',
       'listEventLogDomains',
+      // 2026-08-11 sweep: live-verified on BOTH generations, so both surfaces must
+      // carry them (they were stranded on the concrete adapters but missing from
+      // IRWSAdapter/RobotManager until the interface was completed).
+      'searchSignals', 'searchIoDevices', 'renameFile', 'getModuleText',
+      'getModuleTextRange', 'checkMotionChangeCount', 'saveEventLogRaw',
+      'decompressPath', 'getVirtualTimeTimeslice',
     ];
     const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
@@ -74,6 +80,20 @@ describe('IRWSAdapter shape', () => {
     for (const m of rws2Only) {
       expect(typeof (c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m} should exist`).toBe('function');
       expect((a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m} should be absent`).toBeUndefined();
+    }
+  });
+
+  it('the RWS-1.0-only cfg validation helpers are present on RWS 1.0 and absent on RWS 2.0', () => {
+    // Mirror of the rws2Only asymmetry, the other way: OmniCore exposes
+    // validateCfgInstances (a different endpoint) instead, so these two live-
+    // verified IRC5 helpers must NOT masquerade as present on the RWS 2.0 surface.
+    const rws1Only = ['validateCfgFile', 'validateInstanceBeforeDelete'];
+    const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
+    const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
+    const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });
+    for (const m of rws1Only) {
+      expect(typeof (a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m} should exist`).toBe('function');
+      expect((c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m} should be absent`).toBeUndefined();
     }
   });
 

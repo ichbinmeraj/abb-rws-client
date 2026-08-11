@@ -883,9 +883,16 @@ export class RWS1Adapter implements IRWSAdapter {
       if (c.blocked !== undefined) { parts.push(`blocked${sfx}=${c.blocked}`); }
     });
     // Raw request (no json=1) so the response is the XHTML ios-signal-li list
-    // that parseSignalList consumes, same as the base signal search.
-    const res = await this.client.request('POST', buildPath(IO.searchSignalsEx.rws1 as PathSpec), parts.join('&'));
-    return parseSignalList(res.body);
+    // that parseSignalList consumes, same as the base signal search. Wrap the
+    // request+parse so a parser throw surfaces as a typed RwsError, matching the
+    // base searchSignals (which routes through ResourceMapper's error-wrap).
+    try {
+      const res = await this.client.request('POST', buildPath(IO.searchSignalsEx.rws1 as PathSpec), parts.join('&'));
+      return parseSignalList(res.body);
+    } catch (e) {
+      if (e instanceof RwsError) { throw e; }
+      throw new RwsError(`searchSignalsEx failed: ${String(e)}`, 'UNKNOWN');
+    }
   }
 
   /** Save the raw event log to a controller file (async, 202). `destination` is
@@ -920,8 +927,15 @@ export class RWS1Adapter implements IRWSAdapter {
     if (criteria.lstate)  { parts.push(`lstate=${encodeURIComponent(criteria.lstate)}`); }
     if (criteria.network) { parts.push(`network=${encodeURIComponent(criteria.network)}`); }
     // Raw request (no json=1) so the response is the XHTML ios-device-li list.
-    const res = await this.client.request('POST', buildPath(IO.searchIoDevices.rws1 as PathSpec), parts.join('&'));
-    return parseDevices(res.body);
+    // Wrap request+parse for a typed RwsError on a parser throw (parity with the
+    // mapper-routed base searches; see searchSignalsEx above).
+    try {
+      const res = await this.client.request('POST', buildPath(IO.searchIoDevices.rws1 as PathSpec), parts.join('&'));
+      return parseDevices(res.body);
+    } catch (e) {
+      if (e instanceof RwsError) { throw e; }
+      throw new RwsError(`searchIoDevices failed: ${String(e)}`, 'UNKNOWN');
+    }
   }
 
   /**

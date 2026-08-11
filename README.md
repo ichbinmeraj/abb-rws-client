@@ -342,8 +342,8 @@ new RwsClient(options: RwsClientOptions)
 | `setControllerClock(y,mo,d,h,mi,s)` | `void` | Set controller date/time (UTC) |
 | `getRestartCount()` | `number` | Times the controller has restarted, RWS 2.0 |
 | `listProgress()` / `getProgress(id)` | - | Track async operations (backup, log dump) |
-| `setPanelLanguage(code)` | `void` | Panel language, RWS 2.0 (field `lang-code`) |
-| `setControllerLanguage(lang)` | `void` | Controller language, RWS 2.0 (field `lang`) |
+| `setPanelLanguage(code)` | `void` | Panel language, both generations (field `lang-code`) |
+| `setControllerLanguage(lang)` | `void` | Controller language, both generations (field `lang`) |
 | `setExternalEmergencyStop(state)` | `void` | Simulated **external** e-stop circuit, RWS 2.0 |
 | `getDiagnostics()` | `DiagnosticsInfo` | Saved diagnostics; `empty: true` when none |
 
@@ -352,11 +352,14 @@ Not available on a virtual controller (they answer 403/404 and surface as typed
 `/ctrl/env`, `/ctrl/systems` and `/ctrl/syslog` group. See
 `docs/tasks/endpoint-completion.md` for exactly what each controller answered.
 
-> **These methods are RWS 2.0 only.** Every one of their paths answers 404 on an
-> IRC5, so they are declared optional on `IRWSAdapter` and `RWS1Adapter` does not
-> implement them. Through `RobotManager` the behaviour is explicit: reads return
-> a neutral value on RobotWare 6, and **writes throw `UNSUPPORTED_OPERATION`**
-> rather than quietly doing nothing.
+> **The rows tagged `RWS 2.0` above are RWS 2.0 only** (e.g. `acknowledgeOperationMode`,
+> `getRestartCount`, `setExternalEmergencyStop`). Every one of their paths answers
+> 404 on an IRC5, so they are declared optional on `IRWSAdapter` and `RWS1Adapter`
+> does not implement them. Through `RobotManager` the behaviour is explicit: reads
+> return a neutral value on RobotWare 6, and **writes throw `UNSUPPORTED_OPERATION`**
+> rather than quietly doing nothing. Rows tagged **both generations**
+> (`setPanelLanguage`, `setControllerLanguage`) are live-verified on RWS 1.0 too and
+> work on either controller.
 
 ---
 
@@ -429,7 +432,7 @@ Not available on a virtual controller (they answer 403/404 and surface as typed
 | `deleteFile(remotePath)` | `void` | Delete file |
 | `createDirectory(parentPath, dirName)` | `void` | Create directory |
 | `copyFile(sourcePath, destPath)` | `void` | Copy file on controller |
-| `renameFile(path, newName)` | `void` | Rename a file in place, RWS 2.0 |
+| `renameFile(path, newName)` | `void` | Rename a file in place, both generations |
 | `listFileVolumes()` | `string[]` | Controller volumes/devices |
 
 ---
@@ -439,8 +442,8 @@ Not available on a virtual controller (they answer 403/404 and surface as typed
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `listAllSignals(start?, limit?)` | `Signal[]` | Paginated flat list of all signals |
-| `searchSignals(criteria)` | `Signal[]` | Server-side search (name substring, type, device, network), RWS 2.0 |
-| `searchSignalsEx(criteria[])` | `Signal[]` | Two-criteria search, RWS 2.0 - the second set **narrows** the first |
+| `searchSignals(criteria)` | `Signal[]` | Server-side search (name substring, type, device, network), both generations |
+| `searchSignalsEx(criteria[])` | `Signal[]` | Two-criteria search, both generations - the second set **narrows** the first |
 | `readSignal(network, device, name)` | `Signal` | Read a specific signal by address |
 | `getSignalConfig(network, device, name)` | `Record` | Configuration instance of a signal, RWS 2.0 |
 | `writeSignal(network, device, name, value)` | `void` | Write DO/AO/GO - value as string: `'1'`, `'0'`, `'3.14'` |
@@ -458,7 +461,7 @@ Not available on a virtual controller (they answer 403/404 and surface as typed
 | `getEventLog(domain?, lang?)` | `ElogMessage[]` | Read log messages (domain 0 = main, newest first) |
 | `clearEventLog(domain?)` | `void` | Clear messages in one domain |
 | `clearAllEventLogs()` | `void` | Clear all domains |
-| `saveEventLogRaw(destination)` | `void` | Dump the full log to a file in system-dump format, RWS 2.0 |
+| `saveEventLogRaw(destination)` | `void` | Dump the full log to a file in system-dump format, both generations |
 | `getEventLogMessage(domain, seqnum, lang?)` | `ElogMessage \| null` | One message by domain + sequence number |
 
 ---
@@ -588,6 +591,10 @@ All public methods throw `RwsError` - never a plain `Error`.
 | `'RATE_LIMITED'` | Too many requests (429) |
 | `'NETWORK_ERROR'` | TCP / timeout / WebSocket error |
 | `'PARSE_ERROR'` | Unexpected XML response format |
+| `'UNSUPPORTED_OPERATION'` | This protocol generation / controller does not have the operation |
+| `'INVALID_ARGUMENT'` | Caller passed a value the controller cannot accept - nothing was sent |
+| `'NOT_CONNECTED'` | `connect()` has not run (or the manager has no adapter yet) |
+| `'PROTOCOL_DETECT_FAILED'` | Could not determine RWS 1.0 vs 2.0 during connect |
 | `'UNKNOWN'` | Unmapped error - check `httpStatus` and `rwsDetail` |
 
 4xx responses are classified by the controller's own error body, not the HTTP

@@ -68,6 +68,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The two-generation endpoint sweep is now reachable polymorphically.** The
+  sweep added its methods to the concrete adapters but not to the shared
+  `IRWSAdapter` contract, so nine methods live-verified on *both* generations -
+  `searchSignals`, `searchIoDevices`, `renameFile`, `getModuleText`,
+  `getModuleTextRange`, `checkMotionChangeCount`, `saveEventLogRaw`,
+  `decompressPath`, `getVirtualTimeTimeslice` - plus the RWS-1.0-only
+  `validateCfgFile` / `validateInstanceBeforeDelete` were unreachable through
+  `createAdapter(): IRWSAdapter` and `RobotManager` without an unsafe cast. The
+  sharpest case: you could `setModuleText` through the interface but not
+  `getModuleText` to read it back first. All are now declared on `IRWSAdapter`
+  and forwarded by `RobotManager`, so consumers reaching the client through the
+  documented polymorphic surface (including the VS Code extension via
+  `MultiRobotManager`) can call the read/search side, not only the write side.
+- **Docs no longer deny capabilities the client ships.** The published `.d.ts`
+  and README claimed `searchSignals`/`searchSignalsEx` were "RWS 2.0 only - the
+  RWS 1.0 side has no server-side signal search at all" (false since the sweep),
+  and six README rows tagged `renameFile` / `searchSignals` / `searchSignalsEx` /
+  `saveEventLogRaw` / `setPanelLanguage` / `setControllerLanguage` "RWS 2.0" though
+  they are live-verified on IRC5 too. The README error-code table listed only 13
+  of 17 `RwsErrorCode`s (missing `INVALID_ARGUMENT`, `UNSUPPORTED_OPERATION`,
+  `NOT_CONNECTED`, `PROTOCOL_DETECT_FAILED`, all actively thrown), and
+  `COVERAGE.md` / `ARCHITECTURE.md` still described the removed RWS 2.0 PING/PONG
+  subscription heartbeat instead of the current silent-socket + out-of-band GET
+  liveness probe. All corrected.
+- **RWS 1.0 `searchSignalsEx` / `searchIoDevices` surface typed errors on a parse
+  failure.** Both hand-build the request and called the raw client directly,
+  bypassing the error-wrap their sibling `searchSignals` uses, so a parser throw
+  on an unexpected 2xx body escaped as a bare `Error` instead of a typed
+  `RwsError`. Now wrapped, matching the rest of the search surface.
 - **Secrets no longer leak into trace logs.** Every write body was traced
   verbatim (first 200 chars) into the logger's structured `data`, so a host that
   persists trace output (the RAPID Live extension writes a log file) stored
@@ -156,6 +185,9 @@ Both were found by structural cell S12 (malformed / truncated responses).
 
 ### Changed
 
+- **`package.json` declares `sideEffects: false`.** The modules are side-effect-free
+  on import (verified: no top-level I/O, timers, sockets, or global mutation), so
+  bundlers can now tree-shake unused adapters/mixins out of a downstream build.
 - **`RwsClient2` restructured into per-RWS-domain modules.** The 4,300-line class
   was organised by protocol generation while RWS is organised by domain, so an ABB
   update never landed anywhere obvious. It is now a thin composition façade over
