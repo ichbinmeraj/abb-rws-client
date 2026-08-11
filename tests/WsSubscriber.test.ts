@@ -361,7 +361,7 @@ describe('WsSubscriber - reconnect give-up', () => {
     });
 
     (instances[0] as { serverClose(): void }).serverClose();
-    await wait(200);
+    await until(() => onLost.mock.calls.length >= 1);
 
     expect(onLost).toHaveBeenCalledTimes(1);
 
@@ -408,7 +408,7 @@ describe('WsSubscriber - dead-registration recovery', () => {
     });
 
     (instances[0] as { serverClose(): void }).serverClose();
-    await wait(100);
+    await until(() => posts.count >= 2 && instances.length >= 3);
 
     expect(posts.count).toBe(2);
     expect(instances).toHaveLength(3);
@@ -439,13 +439,13 @@ describe('WsSubscriber - onRestored', () => {
 
     // First drop → reconnect succeeds → restored once
     (instances[0] as { serverClose(): void }).serverClose();
-    await wait(50);
+    await until(() => onRestored.mock.calls.length >= 1);
     expect(onRestored).toHaveBeenCalledTimes(1);
 
     // Second drop → reconnect succeeds again → restored twice.
     // Also proves the attempt budget was reset by the first successful reconnect.
     (instances[1] as { serverClose(): void }).serverClose();
-    await wait(50);
+    await until(() => onRestored.mock.calls.length >= 2);
     expect(onRestored).toHaveBeenCalledTimes(2);
     expect(onLost).not.toHaveBeenCalled();
   });
@@ -520,9 +520,9 @@ describe('WsSubscriber - heartbeat', () => {
       pingIntervalMs: 10,
     });
 
-    await wait(80);
-
     const first = instances[0] as { pings: number; terminated: boolean };
+    await until(() => first.pings >= 2);
+
     expect(first.pings).toBeGreaterThanOrEqual(2);
     expect(first.terminated).toBe(false);
     expect(instances).toHaveLength(1);
