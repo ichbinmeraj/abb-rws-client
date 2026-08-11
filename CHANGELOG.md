@@ -8,17 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`getVirtualTimeTimeslice()`, `compressPath()` and `decompressPath()` on RWS
-  1.0.** Three `/ctrl` endpoints the IRC5 advertises were wrapped only on RWS 2.0;
-  now implemented on both generations, each live-verified on IRC5 RW6.16.
-  `compressPath`/`decompressPath` required the RWS 1.0 query-action form
-  (`POST /ctrl/compress?action=comp` / `?action=dcomp`) with `/fileservice/`-prefixed
-  paths - materially different from the RWS 2.0 path-action form, and captured in
-  the path table. The conformance crawl now reports **58 implemented · 2
-  deliberate-gap · 0 unmapped · 0 orphan** across both live generations. The two
-  residual gaps are **not** missing capabilities: `/ctrl/options` (both generations)
-  is an empty verify-stub that answers **204 no-content**; the real option list is
-  `/rw/system/options`, which is implemented.
+- **RWS 1.0 coverage expansion - 20 endpoints closed via an ABB-doc + live-probe
+  sweep.** A cross-check of the client against ABB's official RWS documentation
+  (developercenter.robotstudio.com) surfaced a batch of endpoints the IRC5
+  supports through **query-action forms** that differ from the RWS 2.0 path-action
+  forms - the exact kind of generation split the path tables exist to capture.
+  Each candidate form was then live-verified against the IRC5 RW6.16 VC before
+  shipping (docs give the candidate, the controller gives the truth). Added on
+  RWS 1.0 (and on both generations where noted):
+  - **File / ctrl:** `compressPath` + `decompressPath` (`/ctrl/compress?action=comp`
+    / `?action=dcomp`, `/fileservice/` paths), `getVirtualTimeTimeslice`,
+    `renameFile` (`fs-action=rename`).
+  - **I/O:** `searchSignals` + `searchSignalsEx` (`?action=signal-search` /
+    `signal-searchex`), `searchIoDevices` (`/rw/iosystem/devices?action=search` by
+    name/lstate - distinct from `searchDevices`, which searches the hardware tree).
+  - **RAPID / motion:** `getModuleText` + `getModuleTextRange` (flat module
+    collection scoped by `?task=`, whole text via `?resource=module-text`),
+    `checkMotionChangeCount` (`?changecount=` vs the 2.0 path segment).
+  - **Elog / cfg:** `saveEventLogRaw` (`?action=saveraw`), `validateCfgFile`
+    (`?action=validate` load dry-run), `validateInstanceBeforeDelete`
+    (`?action=validate-inst-at-del`).
+  - **Panel / ctrl / users:** `setPanelLanguage` (`?action=setlang`, `lang-code`),
+    `setControllerLanguage` (`?action=set-lang`, `lang`), and `pollRmmp` +
+    `cancelRmmp` on **both** generations (RMMP grant lifecycle).
+
+  Conformance now reports **59 implemented · 1 deliberate-gap · 0 unmapped · 0
+  orphan** across both live generations. The lone residual gap is the
+  `/ctrl/options` empty verify-stub (**204 no-content**; the real option list is
+  `/rw/system/options`, which is implemented). The remaining uncovered endpoints
+  are hardware/option-gated (vision, safety commissioning, calibration) and cannot
+  be live-verified on a virtual controller.
 
 - **Path tables - the single source of RWS URLs.** Every URL the client uses is
   now declared once in `src/paths`, one table per RWS domain, keyed by operation
