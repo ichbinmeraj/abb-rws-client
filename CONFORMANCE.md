@@ -4,7 +4,7 @@ Does the client cover what the controllers actually advertise? This diffs the
 path tables in `src/paths` against a live crawl of each generation's resource
 tree. Regenerate with `npm run conformance`.
 
-**58 implemented · 2 deliberate-gap · 0 unmapped · 0 orphan** (crawled 2026-08-10)
+**59 implemented · 1 deliberate-gap · 0 unmapped · 0 orphan** (crawled 2026-08-11)
 
 - **unmapped** — the controller advertises it and nothing in the tables claims
   it. This is the drift the check exists to catch: a new endpoint after a
