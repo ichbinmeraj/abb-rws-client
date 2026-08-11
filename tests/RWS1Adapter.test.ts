@@ -305,6 +305,38 @@ describe('RWS1Adapter ctrl gap-closer (vttimeslice on RWS 1.0)', () => {
   });
 });
 
+describe('RWS1Adapter category-1 forms (web-doc discovered, RWS 1.0)', () => {
+  it('getModuleText uses ?resource=module-text&task= and decodes the module-text span', async () => {
+    const { calls, client } = makeFake((_m, url) => url.includes('resource=module-text')
+      ? { status: 200, body: JSON.stringify({ _embedded: { _state: [{ _type: 'rap-module-text', 'change-count': 42, 'module-text': 'MODULE%20m%0aENDMODULE' }] } }) }
+      : undefined);
+    const a = new RWS1Adapter(client);
+    const r = await a.getModuleText('T_ROB1', 'm');
+    expect(r).toEqual({ text: 'MODULE m\nENDMODULE', changeCount: 42 });
+    expect(calls.some(c => c.what.includes('/rw/rapid/modules/m?resource=module-text&task=T_ROB1'))).toBe(true);
+  });
+
+  it('checkMotionChangeCount passes ?changecount= and maps changestate TRUE to true', async () => {
+    const { calls, client } = makeFake((_m, url) => url.includes('checkchangecount')
+      ? { status: 200, body: JSON.stringify({ _embedded: { _state: [{ _type: 'checkchengecount', changestate: 'TRUE' }] } }) }
+      : undefined);
+    const a = new RWS1Adapter(client);
+    expect(await a.checkMotionChangeCount(7)).toBe(true);
+    expect(calls.some(c => c.what.includes('/rw/motionsystem/checkchangecount?changecount=7'))).toBe(true);
+  });
+
+  it('setPanelLanguage / setControllerLanguage use the RWS 1.0 query-actions with the right fields', async () => {
+    const { calls, client } = makeFake();  // 204
+    const a = new RWS1Adapter(client);
+    await a.setPanelLanguage('de');
+    await a.setControllerLanguage('sv');
+    const panel = calls.find(c => c.what.includes('/rw/panel?action=setlang'));
+    const ctrl = calls.find(c => c.what.includes('/ctrl?action=set-lang'));
+    expect(panel?.body).toBe('lang-code=de');
+    expect(ctrl?.body).toBe('lang=sv');
+  });
+});
+
 describe('RWS1Adapter RMMP poll/cancel (RWS 1.0)', () => {
   it('pollRmmp GETs /users/rmmp/poll and returns the status', async () => {
     const { calls, client } = makeFake((_m, url) => url.startsWith('/users/rmmp/poll')

@@ -60,7 +60,18 @@ export const IO: DomainTable = {
         'name2', 'device2', 'network2', 'category2', 'category-pon2', 'type2', 'invert2', 'blocked2',
       ],
     },
-    note: 'RWS 2.0 only. Second criteria set NARROWS (AND, not union); max 2 sets; no glob; empty body returns everything (live-verified RW8.1.1). Bespoke content-type application/x-www-form-urlencoded;v=2.0.',
+    // RWS 1.0 uses the query-action form with the SAME 16-field roster.
+    // Live-verified on IRC5 RW6.16 (2026-08-11): 200, ios-signal-li result.
+    rws1: {
+      method: 'POST',
+      path: '/rw/iosystem/signals',
+      action: 'signal-searchex',
+      fields: [
+        'name', 'device', 'network', 'category', 'category-pon', 'type', 'invert', 'blocked',
+        'name2', 'device2', 'network2', 'category2', 'category-pon2', 'type2', 'invert2', 'blocked2',
+      ],
+    },
+    note: 'Second criteria set NARROWS (AND, not union); max 2 sets; no glob; empty body returns everything. RWS 2.0 path /signal-search-ex (bespoke content-type ;v=2.0); RWS 1.0 query-action ?action=signal-searchex.',
   },
   getSignalConfig: {
     summary: 'Read the config record for one signal.',

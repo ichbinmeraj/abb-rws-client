@@ -2,13 +2,14 @@ import { RwsClient } from './RwsClient.js';
 import type {
   ExecutionCycle, JointTarget, RobTarget, RapidSymbolSearchParams,
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
-  ElogMessage, ReturnCodeInfo,
+  ElogMessage, ReturnCodeInfo, Signal, SignalSearchExCriteria,
 } from './types.js';
 import { decodeElogArgs, RwsError } from './types.js';
+import { parseSignalList } from './ResponseParser.js';
 import { classifyControllerError } from './ControllerError.js';
 import type { IRWSAdapter } from './IRWSAdapter.js';
 import {
-  RAPID, MOTION, IO, CFG_ELOG_DIPC, CTRL, SYSTEM_MASTERSHIP, USERS_UAS, FILES_VISION,
+  PANEL, RAPID, MOTION, IO, CFG_ELOG_DIPC, CTRL, SYSTEM_MASTERSHIP, USERS_UAS, FILES_VISION,
 } from './paths/index.js';
 import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
@@ -832,6 +833,76 @@ export class RWS1Adapter implements IRWSAdapter {
   async decompressPath(source: string, destination: string): Promise<void> {
     await this.rws1Post(buildPath(CTRL.decompressPath.rws1 as PathSpec),
       `srcpath=${encodeURIComponent(RWS1Adapter.fsPath(source))}&dstpath=${encodeURIComponent(RWS1Adapter.fsPath(destination))}`);
+  }
+
+  // ── RWS 1.0 forms discovered from the ABB reference + live-verified 2026-08-11 ──
+
+  /** Read a module's text directly from program memory. RWS 1.0 is a flat module
+   *  collection scoped by ?task=; whole text via ?resource=module-text. The
+   *  `module-text` span is URL-encoded on the wire. Class rap-module-text. */
+  async getModuleText(task: string, module: string): Promise<{ text: string; changeCount: number }> {
+    const base = buildPath(RAPID.getModuleText.rws1 as PathSpec, { module });
+    const r = await this.rws1Get(`${base}?resource=module-text&task=${encodeURIComponent(task)}`);
+    const s = (r.state as { 'module-text'?: string; 'change-count'?: string } | null) ?? {};
+    return { text: decodeURIComponent(s['module-text'] ?? ''), changeCount: Number(s['change-count'] ?? 0) };
+  }
+
+  /** Read a text range from a module. RWS 1.0 selects the range purely by the
+   *  startrow/startcol/endrow/endcol query params (no resource verb); endCol=-1
+   *  means end-of-line. */
+  async getModuleTextRange(task: string, module: string, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string> {
+    const base = buildPath(RAPID.getModuleTextRange.rws1 as PathSpec, { module });
+    const q = `task=${encodeURIComponent(task)}&startrow=${startRow}&startcol=${startCol}&endrow=${endRow}&endcol=${endCol}`;
+    const r = await this.rws1Get(`${base}?${q}`);
+    const s = (r.state as { 'module-text'?: string; text?: string } | null) ?? {};
+    return decodeURIComponent(s['module-text'] ?? s.text ?? '');
+  }
+
+  /** Check whether a known motion change-count is still current. RWS 1.0 passes
+   *  the count as a ?changecount= query (RWS 2.0 uses a path segment). Returns
+   *  true when still current (changestate TRUE). */
+  async checkMotionChangeCount(changecount: number): Promise<boolean> {
+    const r = await this.rws1Get(`${buildPath(MOTION.checkMotionChangeCount.rws1 as PathSpec)}?changecount=${changecount}`);
+    const s = (r.state as { changestate?: string } | null) ?? {};
+    return (s.changestate ?? '').toUpperCase() === 'TRUE';
+  }
+
+  /** Extended signal search (1-2 AND-narrowing criteria sets). RWS 1.0 query-action
+   *  form; same ios-signal-li result as the base search. */
+  async searchSignalsEx(criteria: SignalSearchExCriteria[]): Promise<Signal[]> {
+    if (criteria.length === 0 || criteria.length > 2) {
+      throw new RwsError(`signal-searchex takes 1 or 2 criteria sets, got ${criteria.length}`, 'INVALID_ARGUMENT');
+    }
+    const parts: string[] = [];
+    criteria.forEach((c, i) => {
+      const sfx = i === 0 ? '' : '2';
+      const put = (k: string, v: string | undefined): void => { if (v !== undefined && v !== '') { parts.push(`${k}${sfx}=${encodeURIComponent(v)}`); } };
+      put('name', c.name); put('device', c.device); put('network', c.network);
+      put('category', c.category); put('category-pon', c.categoryPon); put('type', c.type);
+      if (c.invert !== undefined) { parts.push(`invert${sfx}=${c.invert}`); }
+      if (c.blocked !== undefined) { parts.push(`blocked${sfx}=${c.blocked}`); }
+    });
+    // Raw request (no json=1) so the response is the XHTML ios-signal-li list
+    // that parseSignalList consumes, same as the base signal search.
+    const res = await this.client.request('POST', buildPath(IO.searchSignalsEx.rws1 as PathSpec), parts.join('&'));
+    return parseSignalList(res.body);
+  }
+
+  /** Save the raw event log to a controller file (async, 202). `destination` is
+   *  normalised to the `/fileservice/` URI the endpoint requires. */
+  async saveEventLogRaw(destination: string): Promise<void> {
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.saveEventLogRaw.rws1 as PathSpec),
+      `path=${encodeURIComponent(RWS1Adapter.fsPath(destination))}`);
+  }
+
+  /** Set the FlexPendant/panel language (field lang-code). RWS 1.0 query-action. */
+  async setPanelLanguage(langCode: string): Promise<void> {
+    await this.rws1Post(buildPath(PANEL.setPanelLanguage.rws1 as PathSpec), `lang-code=${encodeURIComponent(langCode)}`);
+  }
+
+  /** Set the controller language (field lang, NOT the panel's lang-code). */
+  async setControllerLanguage(lang: string): Promise<void> {
+    await this.rws1Post(buildPath(CTRL.setControllerLanguage.rws1 as PathSpec), `lang=${encodeURIComponent(lang)}`);
   }
 
   // ── Stage 11: Vision (5 methods) ───────────────────────────────────────
