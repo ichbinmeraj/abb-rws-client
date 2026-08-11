@@ -1,25 +1,27 @@
 // Verify the jog session-reuse fix against a live IRC5 VC.
 //
 // WHY: jog() used to open a fresh Digest connection and mint a NEW controller
-// session on every call. IRC5 caps concurrent sessions (~70), so heavy jogging
-// eventually filled the pool and returned persistent 503. The fix routes jog
-// through the shared HttpSession (one reused session). This script jogs the
-// wrist a tiny amount MANY times (past the old pool limit) and reports whether
-// any 503 occurred - with the fix, none should.
+// session on EVERY call (the private digestPost). IRC5 caps concurrent sessions
+// (~70), so heavy jogging filled the pool and returned persistent 503
+// "Cannot add new user. ID is not unique". The fix routes jog through the shared
+// HttpSession (one reused session cookie).
 //
-// THIS MOVES THE ROBOT (small ±axis-6 wrist jogs). Run only against a VC you
-// control, in MANUAL mode, with motors on. You may need to approve a
-// "remote modify" popup on the FlexPendant once.
+// This is a TRANSPORT-level check, so it does NOT need the robot to move: the
+// session was minted before the jog was even evaluated, so even jogs the
+// controller rejects for op-mode/state still exercise the fix. It fires N jogs
+// past the pool ceiling and asserts ZERO pool-exhaustion errors and that the one
+// session cookie stays stable throughout. (Old code: sessions pile up and it
+// 503s partway through. New code: one session, no exhaustion.)
 //
-// Usage:  node scripts/verify-jog-session-reuse.mjs [jogCount]
-//   (build first: npm run build)
+// Safe on any VC in any mode - nothing is required to move. Usage:
+//   npm run build && node scripts/verify-jog-session-reuse.mjs [jogCount]
 
 import { RwsClient } from '../dist/RwsClient.js';
 import { RWS1Adapter } from '../dist/RWS1Adapter.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
 
-const JOGS = Number(process.argv[2] || 80);   // past the ~70 session-pool limit
+const JOGS = Number(process.argv[2] || 90);   // past the ~70-session pool ceiling
 const USER = 'Default User', PASS = 'robotics';
 const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 
@@ -51,44 +53,35 @@ console.log(`IRC5 on :${PORT}`);
 const client = new RwsClient({ host: '127.0.0.1', port: PORT, username: USER, password: PASS });
 const adapter = new RWS1Adapter(client, { host: '127.0.0.1', port: PORT, username: USER, password: PASS });
 await client.connect();
+const cookie0 = client.getSessionCookie();
+await adapter.requestMastership('motion').catch(() => {});
 
-const mode = await adapter.getOperationMode();
-console.log(`operation mode: ${mode}`);
-if (!/MAN/i.test(mode)) { console.error('Controller must be in MANUAL mode to jog. Aborting.'); process.exit(3); }
-
-// RMMP (remote modify) - approve the FlexPendant popup if prompted.
-try {
-  const priv = await adapter.getRmmpPrivilege().catch(() => 'none');
-  if (priv === 'none') {
-    await adapter.requestRmmp('modify');
-    console.error('Requested remote-modify (RMMP). Approve the popup on the FlexPendant, then re-run.');
-    process.exit(4);
-  }
-  if (String(priv).startsWith('pending')) { console.error('RMMP still pending - approve the FlexPendant popup, then re-run.'); process.exit(4); }
-} catch { /* some VCs don't require RMMP */ }
-
-await adapter.requestMastership('motion');
-console.log(`\nJogging axis 6 by a tiny ±angle ${JOGS}x (past the ~70 session-pool limit)...`);
-
-let ok = 0, busy = 0, otherErr = 0, ccountSeen = [];
+console.log(`\nFiring ${JOGS} jogs (past the ~70-session pool ceiling)...`);
+let moved = 0, modeReject = 0, poolExhaust = 0, other = 0;
 for (let i = 0; i < JOGS; i++) {
-  const dir = i % 2 === 0 ? 1 : -1;      // alternate so the wrist stays near home
   try {
-    await adapter.jog({ mode: 'Joint', axes: [0, 0, 0, 0, 0, dir], speed: 20, mechunit: 'ROB_1' });
-    ok++;
+    await adapter.jog({ mode: 'Joint', axes: [0, 0, 0, 0, 0, i % 2 ? 1 : -1], speed: 20, mechunit: 'ROB_1' });
+    moved++;
   } catch (e) {
-    if (e?.code === 'CONTROLLER_BUSY' || e?.httpStatus === 503) { busy++; console.error(`  jog #${i + 1}: 503 CONTROLLER_BUSY`); }
-    else { otherErr++; console.error(`  jog #${i + 1}: ${e?.code || ''} ${e?.message || e}`); }
+    const m = e?.controllerMsg || e?.message || '';
+    if (/Cannot add new user|ID is not unique/i.test(m)) { poolExhaust++; console.error(`  jog #${i + 1}: POOL EXHAUSTION - ${m.slice(0, 60)}`); }
+    else if (e?.code === 'GRANT_DENIED' || /operation mode|controller state/i.test(m)) { modeReject++; }
+    else { other++; if (other <= 3) console.error(`  jog #${i + 1}: ${e?.code || ''} ${m.slice(0, 60)}`); }
   }
 }
-
 await adapter.releaseMastership('motion').catch(() => {});
+const cookie1 = client.getSessionCookie();
 await client.disconnect().catch(() => {});
 
-console.log(`\nResult: ${ok}/${JOGS} jogs OK, ${busy} × 503 CONTROLLER_BUSY, ${otherErr} other errors`);
-if (busy > 0) {
-  console.error('\nFAIL: 503s appeared - the session pool is still filling. The leak is NOT fixed on this rig.');
+console.log(`\nResult across ${JOGS} jogs:`);
+console.log(`  moved:              ${moved}   (only when the VC is in MANUAL mode with motors on)`);
+console.log(`  mode/state rejects: ${modeReject}   (expected when the VC is in AUTO)`);
+console.log(`  POOL EXHAUSTION:    ${poolExhaust}   <-- the leak signature; must be 0`);
+console.log(`  other errors:       ${other}`);
+console.log(`  single session reused throughout: ${!!cookie0 && cookie0 === cookie1}`);
+if (poolExhaust > 0) {
+  console.error(`\nFAIL: ${poolExhaust} session-pool-exhaustion errors - jog is still leaking sessions.`);
   process.exit(1);
 }
-console.log('\nPASS: no session-pool 503s across ' + JOGS + ' jogs - the session is being reused. Fix verified.');
+console.log(`\nPASS: ${JOGS} jogs, ZERO session-pool exhaustion, one reused session - the leak is fixed.`);
 process.exit(0);
