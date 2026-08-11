@@ -862,3 +862,60 @@ describe('RobotManager I/O refresh', () => {
     expect(new Set(mgr.state.ioSignals.map(s => s.name)).size).toBe(130);
   });
 });
+
+describe('RobotManager.parseListeningPorts (locale-independent listening scan)', () => {
+  // Real `netstat -ano -p TCP` shape: Proto | Local | Foreign | State | PID.
+  // A listening socket's Foreign address is the wildcard :0 regardless of locale.
+  const ENGLISH = [
+    'Active Connections',
+    '',
+    '  Proto  Local Address          Foreign Address        State           PID',
+    '  TCP    0.0.0.0:5466           0.0.0.0:0              LISTENING       20156',
+    '  TCP    0.0.0.0:14880          0.0.0.0:0              LISTENING       17280',
+    '  TCP    127.0.0.1:9403         0.0.0.0:0              LISTENING       13176',
+    '  TCP    127.0.0.1:52345        127.0.0.1:5466         ESTABLISHED     4444',  // active conn - NOT a listener
+    '  TCP    [::]:445               [::]:0                 LISTENING       4',
+  ].join('\r\n');
+
+  // Same machine, German Windows: the State column is translated ("ABHÖREN"),
+  // which is exactly what the old /LISTENING/ filter would have missed entirely.
+  const GERMAN = [
+    'Aktive Verbindungen',
+    '',
+    '  Proto  Lokale Adresse         Remoteadresse          Status          PID',
+    '  TCP    0.0.0.0:5466           0.0.0.0:0              ABHÖREN         20156',
+    '  TCP    0.0.0.0:14880          0.0.0.0:0              ABHÖREN         17280',
+    '  TCP    127.0.0.1:62214        0.0.0.0:0              ABHÖREN         99',      // high dynamic-range VC port
+    '  TCP    127.0.0.1:52345        127.0.0.1:5466         HERGESTELLT     4444',   // ESTABLISHED, translated
+  ].join('\r\n');
+
+  const SS = [
+    'State      Recv-Q Send-Q Local Address:Port  Peer Address:Port',
+    'LISTEN     0      128    0.0.0.0:5466        0.0.0.0:*',
+    'LISTEN     0      128    127.0.0.1:14880     0.0.0.0:*',
+    'LISTEN     0      128    [::]:9403           [::]:*',
+  ].join('\n');
+
+  it('reads listening ports from English Windows netstat and skips active connections', () => {
+    const ports = RobotManager.parseListeningPorts(ENGLISH, 'win32');
+    expect(ports).toEqual(expect.arrayContaining([5466, 14880, 9403, 445]));
+    expect(ports).not.toContain(52345);  // the ESTABLISHED local port must not leak in
+  });
+
+  it('reads the SAME ports from GERMAN Windows netstat (locale-independent)', () => {
+    // This is the whole point of the fix: keying on Foreign :0, not the State word.
+    const ports = RobotManager.parseListeningPorts(GERMAN, 'win32');
+    expect(ports).toEqual(expect.arrayContaining([5466, 14880, 62214]));
+    expect(ports).not.toContain(52345);
+  });
+
+  it('reads listening ports from POSIX `ss -ltn`', () => {
+    const ports = RobotManager.parseListeningPorts(SS, 'linux');
+    expect(ports.sort((a, b) => a - b)).toEqual([5466, 9403, 14880]);
+  });
+
+  it('returns nothing for empty or junk output', () => {
+    expect(RobotManager.parseListeningPorts('', 'win32')).toEqual([]);
+    expect(RobotManager.parseListeningPorts('not netstat output at all', 'win32')).toEqual([]);
+  });
+});

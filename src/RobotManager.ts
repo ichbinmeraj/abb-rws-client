@@ -383,7 +383,7 @@ export class RobotManager {
   }
 
   /**
-   * Ports the OS reports as LISTENING on this machine, best-effort.
+   * Ports the OS reports as listening on this machine, best-effort.
    *
    * This is what makes local-VC discovery both fast AND complete: instead of
    * blindly sweeping tens of thousands of ports, we ask the OS which ports are
@@ -391,6 +391,11 @@ export class RobotManager {
    * from a wide dynamic range - values of 40483 and 62214 have been observed on
    * this rig after warm restarts - so any fixed range cap silently loses a VC;
    * asking the OS has no cap. Loopback only; never widened beyond this machine.
+   *
+   * The listening signal is taken from the FOREIGN address being the wildcard
+   * `:0` (a listening socket has no peer), NOT from the "LISTENING" state word -
+   * that word is localized on non-English Windows (e.g. "ABHÖREN" on a German
+   * install), and keying on it would silently drop the fast path there.
    *
    * Returns [] if the OS query is unavailable or unparseable, so callers fall
    * back to the bounded blind scan.
@@ -408,15 +413,36 @@ export class RobotManager {
     } catch {
       return [];
     }
+    return RobotManager.parseListeningPorts(out, process.platform);
+  }
+
+  /**
+   * Pure parser for `netstat`/`ss` output → the set of local listening ports.
+   * Split out from the shell-out so its locale-independence (foreign `:0`, never
+   * the translated state word) is unit-tested against real English AND German
+   * netstat captures, not just asserted. Exported-internal for tests only.
+   */
+  static parseListeningPorts(output: string, platform: NodeJS.Platform): number[] {
     const ports = new Set<number>();
-    for (const line of out.split('\n')) {
-      // On Windows only LISTENING rows are bind points; on POSIX `ss -ltn`
-      // already lists listeners only.
-      if (process.platform === 'win32' && !/LISTENING/.test(line)) { continue; }
-      // Match a loopback or all-interfaces bind (both reachable on 127.0.0.1).
-      for (const m of line.matchAll(/(?:127\.0\.0\.1|0\.0\.0\.0|\[::1?\]|\*):(\d{2,5})\b/g)) {
-        const p = Number(m[1]);
-        if (p > 0 && p < 65536) { ports.add(p); }
+    const addLocalPort = (localAddr: string): void => {
+      const m = localAddr.match(/:(\d{1,5})$/);
+      if (!m) { return; }
+      const p = Number(m[1]);
+      if (p > 0 && p < 65536) { ports.add(p); }
+    };
+    for (const line of output.split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (platform === 'win32') {
+        // netstat -ano -p TCP columns: Proto | Local | Foreign | State | PID.
+        // Foreign `:0` = no peer = a listening socket (locale-independent, unlike
+        // the State word which is translated on a localized Windows).
+        if (cols[0] !== 'TCP' || cols.length < 3 || !cols[2].endsWith(':0')) { continue; }
+        addLocalPort(cols[1]);
+      } else {
+        // `ss -ltn` already lists listeners only; grab the bind address token.
+        for (const c of cols) {
+          if (/^(?:0\.0\.0\.0|127\.0\.0\.1|\[::1?\]|\*):\d{1,5}$/.test(c)) { addLocalPort(c); }
+        }
       }
     }
     return [...ports];
