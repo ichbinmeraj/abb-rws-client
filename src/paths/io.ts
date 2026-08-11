@@ -129,12 +129,14 @@ export const IO: DomainTable = {
   searchIoDevices: {
     summary: 'Search I/O devices by name / lstate / network (ios-device-li).',
     // Distinct from searchDevices, which searches the /rw/devices HARDWARE tree.
-    // RWS 1.0 query-action; at least one of name OR lstate is required (else 400
-    // "device name (or) device lstate is needed for search"). Live-verified on
-    // IRC5 RW6.16 (2026-08-11). Fields: name, lstate (enabled|disabled|unknown),
-    // network. The RWS 2.0 path form is not yet live-confirmed - rws1 only for now.
+    // BOTH generations use the same ?action=search query-action (unusual for RWS
+    // 2.0, which normally uses path-actions - but the /device-search and /search
+    // sub-paths both 405 on RW7.21; ?action=search answers 200). At least one of
+    // name OR lstate is required (else 400 "device name (or) device lstate is
+    // needed"). Live-verified on IRC5 RW6.16 and OmniCore RW7.21 (2026-08-11).
+    rws2: { method: 'POST', path: '/rw/iosystem/devices', action: 'search', fields: ['name', 'lstate', 'network'] },
     rws1: { method: 'POST', path: '/rw/iosystem/devices', action: 'search', fields: ['name', 'lstate', 'network'] },
-    note: 'At least one of name|lstate required. Returns ios-device-li rows. RWS 2.0 side deferred pending a live-confirmed path form.',
+    note: 'At least one of name|lstate required. Returns ios-device-li rows. Same ?action=search query-action on BOTH generations (RWS 2.0 /device-search and /search sub-paths 405).',
   },
   getIoDeviceInfo: {
     summary: 'Read one I/O device.',

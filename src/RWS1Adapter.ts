@@ -928,7 +928,9 @@ export class RWS1Adapter implements IRWSAdapter {
    * Validate a configuration file WITHOUT applying it (a load dry-run). RWS 1.0
    * collection-level query-action. Throws if the file is invalid. Live-verified on
    * IRC5 RW6.16 (2026-08-11).
-   * @param filepath   controller path to the .cfg file
+   * @param filepath   a BARE controller path to the .cfg file, e.g. `$TEMP/x.cfg`
+   *                   (with the `$VOLUME` prefix) - NOT a `/fileservice/` URI,
+   *                   which the endpoint rejects. Same convention as loadCfgFile.
    * @param actionType 'add' | 'replace' | 'add-with-reset' (how it WOULD be loaded)
    */
   async validateCfgFile(filepath: string, actionType: 'add' | 'replace' | 'add-with-reset' = 'add'): Promise<void> {
