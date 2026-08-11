@@ -284,6 +284,28 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
       );
       return this.parseSignalList(html);
     }
+
+    /**
+     * Search I/O devices by criteria. Distinct from `searchDevices`, which
+     * searches the `/rw/devices` hardware tree - this searches the I/O device
+     * collection. Uses the `?action=search` query-action (the `/device-search`
+     * and `/search` sub-paths 405 on RW7.21); at least one of `name` or `lstate`
+     * is required. Live-verified on OmniCore RW7.21 (2026-08-11).
+     */
+    async searchIoDevices(criteria: { name?: string; lstate?: 'enabled' | 'disabled' | 'unknown'; network?: string }): Promise<IoDevice[]> {
+      if (!criteria.name && !criteria.lstate) {
+        throw new RwsError('searchIoDevices: at least one of name or lstate is required', 'INVALID_ARGUMENT');
+      }
+      const body: Record<string, string> = {};
+      if (criteria.name)    { body['name'] = criteria.name; }
+      if (criteria.lstate)  { body['lstate'] = criteria.lstate; }
+      if (criteria.network) { body['network'] = criteria.network; }
+      const p = parse(await this.req('POST', buildPath(IO.searchIoDevices.rws2 as PathSpec), body));
+      return p.getAllStates('ios-device-li').map(d => {
+        const network = (d['_title'] ?? '').split('/')[0] ?? '';
+        return { name: d['name'] ?? '', network, lstate: d['lstate'] ?? '', pstate: d['pstate'] ?? '', address: d['address'] ?? '' };
+      });
+    }
   };
 }
 
@@ -316,6 +338,7 @@ export interface IoMethods {
   getDeviceTree(group: string): Promise<string>;
   listAllIoDevices(): Promise<Array<{ name: string; network: string; lstate: string; pstate: string; address: string }>>;
   searchSignalsEx(criteria: SignalSearchExCriteria[]): Promise<Signal[]>;
+  searchIoDevices(criteria: { name?: string; lstate?: 'enabled' | 'disabled' | 'unknown'; network?: string }): Promise<IoDevice[]>;
 }
 
 /** Guard: the mixin class must provide every IoMethods member (never exported). */
