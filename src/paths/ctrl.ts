@@ -89,7 +89,10 @@ export const CTRL: DomainTable = {
     summary: 'Set the controller language.',
     // Field is `lang`, NOT the panel's `lang-code` - easy to confuse.
     rws2: { method: 'POST', path: '/ctrl/lang', fields: ['lang'] },
-    note: 'RWS 2.0 only. Write-only (GET 405). Field lang, not the panel lang-code.',
+    // RWS 1.0 query-action form, same lang field. Live-verified RW6.16
+    // (2026-08-11): 204.
+    rws1: { method: 'POST', path: '/ctrl', action: 'set-lang', fields: ['lang'] },
+    note: 'Write-only (GET 405). Field lang, not the panel lang-code. RWS 2.0 path /ctrl/lang; RWS 1.0 query-action /ctrl?action=set-lang.',
   },
   saveSystemInfo: {
     summary: 'Write a system-information report to a controller file.',

@@ -97,7 +97,10 @@ export const PANEL: DomainTable = {
     summary: 'Set the panel language.',
     // Field is lang-code here; the /ctrl language sibling uses `lang`.
     rws2: { method: 'POST', path: '/rw/panel/lang', fields: ['lang-code'] },
-    note: 'RWS 2.0 only. No getter (GET -> 405). Field lang-code, unlike /ctrl/lang which uses lang.',
+    // RWS 1.0 query-action form, same lang-code field. Live-verified RW6.16
+    // (2026-08-11): 204.
+    rws1: { method: 'POST', path: '/rw/panel', action: 'setlang', fields: ['lang-code'] },
+    note: 'No getter (GET -> 405). Field lang-code, unlike /ctrl/lang which uses lang. RWS 2.0 path /rw/panel/lang; RWS 1.0 query-action /rw/panel?action=setlang.',
   },
 
   // ── Keyless / e-stop simulations ──────────────────────────────────────────

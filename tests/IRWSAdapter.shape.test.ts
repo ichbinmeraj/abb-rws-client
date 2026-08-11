@@ -53,10 +53,14 @@ describe('IRWSAdapter shape', () => {
     // them answers 404 on the IRC5 controllers. Asserting the asymmetry keeps
     // "RWS 2.0 only" an explicit decision rather than an accident: if someone
     // implements one on RWS 1.0, this test tells them to update the docs too.
+    // NOTE: setPanelLanguage, setControllerLanguage and searchSignalsEx were
+    // MOVED off this list (2026-08-11) - the ABB RWS 1.0 reference documents their
+    // query-action forms and they are now implemented + live-verified on IRC5
+    // RW6.16, so they are no longer RWS-2.0-only. The rest genuinely 404 on RW6.
     const rws2Only = [
-      'setPanelLanguage', 'setControllerLanguage', 'setExternalEmergencyStop',
+      'setExternalEmergencyStop',
       'setKeylessMotorOn', 'setModuleText', 'setModuleTextRange',
-      'searchSignalsEx', 'validateCfgInstances',
+      'validateCfgInstances',
       'getCollisionPredictionModelName', 'saveCollisionAvoidanceSnapshot',
       'loadCollisionAvoidanceConfig',
       'modifyPosition', 'resetTaskProgramPointer',

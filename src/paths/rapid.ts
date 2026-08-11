@@ -268,7 +268,11 @@ export const RAPID: DomainTable = {
   getModuleText: {
     summary: 'Read module text from program memory.',
     rws2: { method: 'GET', path: '/rw/rapid/tasks/{task}/modules/{module}/text' },
-    note: '2.0 only (program memory direct).',
+    // RWS 1.0 is a FLAT module collection scoped by ?task= query, whole text
+    // selected by ?resource=module-text (the query is added by the adapter).
+    // Live-verified on IRC5 RW6.16 (2026-08-11): 200.
+    rws1: { method: 'GET', path: '/rw/rapid/modules/{module}' },
+    note: 'RWS 2.0 task-in-path /text; RWS 1.0 flat /rw/rapid/modules/{module}?resource=module-text&task={task}.',
   },
   setModuleText: {
     summary: 'Replace module text in program memory.',
@@ -279,7 +283,11 @@ export const RAPID: DomainTable = {
   getModuleTextRange: {
     summary: 'Read a text range from a module.',
     rws2: { method: 'GET', path: '/rw/rapid/tasks/{task}/modules/{module}/text/range' },
-    note: 'read uses query params (startrow/startcol/endrow/endcol); the write below uses form fields - same resource, two encodings. 2.0 only.',
+    // RWS 1.0: same flat /rw/rapid/modules/{module} URL, range selected purely by
+    // the startrow/startcol/endrow/endcol query params (NO resource verb),
+    // scoped by task. endcol=-1 means end-of-line. Live-verified RW6.16 (2026-08-11).
+    rws1: { method: 'GET', path: '/rw/rapid/modules/{module}' },
+    note: 'read uses query params (startrow/startcol/endrow/endcol); the write below uses form fields. RWS 1.0 is the flat /rw/rapid/modules/{module}?task={task}&startrow=..&endcol=-1 form (no resource verb).',
   },
   setModuleTextRange: {
     summary: 'Replace a text range in a module.',

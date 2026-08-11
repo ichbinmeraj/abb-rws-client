@@ -51,7 +51,10 @@ export const CFG_ELOG_DIPC: DomainTable = {
   saveEventLogRaw: {
     summary: 'Save the raw event log to a file.',
     rws2: { method: 'POST', path: '/rw/elog/saveraw', fields: ['path'] },
-    note: 'RWS 2.0 only. path MUST be a fileservice URI (toFileserviceUri); bare volume paths are rejected ("Virtual root does not exist").',
+    // RWS 1.0 query-action form, same single `path` field (a /fileservice/ URI).
+    // Async: 202 ACCEPTED. Live-verified on IRC5 RW6.16 (2026-08-11).
+    rws1: { method: 'POST', path: '/rw/elog', action: 'saveraw', fields: ['path'] },
+    note: 'path MUST be a fileservice URI; bare volume paths are rejected. RWS 2.0 path /rw/elog/saveraw; RWS 1.0 query-action /rw/elog?action=saveraw (202).',
   },
   listEventLogDomains: {
     summary: 'List the event-log domains.',

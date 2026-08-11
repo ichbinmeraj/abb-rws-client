@@ -162,7 +162,10 @@ export const MOTION: DomainTable = {
   checkMotionChangeCount: {
     summary: 'Check whether a known change count is still current.',
     rws2: { method: 'GET', path: '/rw/motionsystem/checkchangecount/{changecount}' },
-    note: 'RWS 2.0 only; the count is a path segment, not a query.',
+    // RWS 1.0 uses the same static segment but the count as a ?changecount= query.
+    // Live-verified on IRC5 RW6.16 (2026-08-11): 200, span class=changestate.
+    rws1: { method: 'GET', path: '/rw/motionsystem/checkchangecount' },
+    note: 'RWS 2.0 count is a path segment /checkchangecount/{n}; RWS 1.0 is /checkchangecount?changecount={n}.',
   },
 
   // ── Error / execution state ───────────────────────────────────────────────
