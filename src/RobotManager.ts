@@ -344,6 +344,31 @@ export class RobotManager {
     return asHttps ?? asHttp;
   }
 
+  /**
+   * HTTP-probe a list of ports with BOUNDED concurrency and return the ABB
+   * controllers among them. The bound matters: `probeSpecificPort` opens two
+   * sockets per port (HTTP + HTTPS in parallel), so an unbounded fan-out over a
+   * machine with hundreds of listening ports would blow past the ~500-socket
+   * ceiling Windows silently enforces - dropped connections there read as
+   * "no controller," the one failure discovery must never have. A worker pool of
+   * `concurrency` keeps at most `concurrency × 2` sockets open at once.
+   */
+  private static async probePortsPooled(
+    host: string, ports: number[], strictTls: boolean, timeoutMs: number, concurrency = 100,
+  ): Promise<DiscoveredController[]> {
+    const found: DiscoveredController[] = [];
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < ports.length) {
+        const port = ports[next++];
+        const r = await RobotManager.probeSpecificPort(host, port, strictTls, timeoutMs);
+        if (r) { found.push({ host, port: r.port, useHttps: r.useHttps, authType: r.authType }); }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, ports.length) }, worker));
+    return found;
+  }
+
   /** Fast TCP-only check to see if a port is accepting connections. */
   private static tcpPing(host: string, port: number, timeoutMs = 100): Promise<boolean> {
     return new Promise(resolve => {
@@ -411,15 +436,9 @@ export class RobotManager {
       // netstat/ss answered, so these ARE the machine's only bind points -
       // probing them is the COMPLETE local picture (empty result = genuinely no
       // controllers, not "look harder"). Tightened timeout since most listeners
-      // are not controllers and we probe them all concurrently.
-      const probes = await Promise.all(
-        listening.map(port =>
-          RobotManager.probeSpecificPort(host, port, strictTls, 1200)
-            .then((r): DiscoveredController | null =>
-              r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null)
-        )
-      );
-      const found = probes.filter((r): r is DiscoveredController => r !== null);
+      // are not controllers; bounded concurrency keeps the socket count safe on
+      // a machine with many listeners.
+      const found = await RobotManager.probePortsPooled(host, listening, strictTls, 1200);
       Logger.info(`local scan: ${listening.length} listening port(s), ${found.length} ABB controller(s) on ${host}`);
       return found;
     }
@@ -464,16 +483,8 @@ export class RobotManager {
 
     Logger.info(`wide scan: ${tcpOpen.length} open TCP port(s) on ${host}, HTTP-probing each…`);
 
-    // HTTP-probe TCP-open ports - filter to actual ABB controllers
-    const probes = await Promise.all(
-      tcpOpen.map(port =>
-        RobotManager.probeSpecificPort(host, port, strictTls)
-          .then((r): DiscoveredController | null =>
-            r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null
-          )
-      )
-    );
-    return probes.filter((r): r is DiscoveredController => r !== null);
+    // HTTP-probe the TCP-open ports (bounded concurrency) - filter to controllers.
+    return RobotManager.probePortsPooled(host, tcpOpen, strictTls, 2000);
   }
 
   // ─── Connection ─────────────────────────────────────────────────────────────
