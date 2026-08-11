@@ -31,10 +31,13 @@ The event stream self-heals identically on RWS 1.0 (IRC5) and RWS 2.0
 (OmniCore):
 
 - **Heartbeat**: RWS 1.0 uses WebSocket protocol pings (the IRC5 answers
-  RFC6455 pings; app-level `PING` text is RWS 2.0 only). RWS 2.0 sends `PING`
-  text and treats a `PONG` still missing at the next tick as half-open; any
-  inbound frame counts as proof of life. A half-open connection (frozen NAT,
-  yanked cable) is force-closed within ~2 ping intervals and recovery runs.
+  RFC6455 pings). RWS 2.0 is deliberately **silent** on the subscription socket -
+  OmniCore rejects any client frame on it (`PING` included) with a 1008
+  "Client cannot send data" close - and instead establishes liveness **out of
+  band**: each tick marks the connection unproven and fires a cheap `GET` probe,
+  and any inbound event frame or a successful probe counts as proof of life. A
+  half-open connection (frozen NAT, yanked cable) is force-closed within ~2 ping
+  intervals and recovery runs.
 - **Backoff**: capped exponential (RWS 1.0: 1 s doubling to 30 s, 6 attempts;
   RWS 2.0: 500 ms doubling to 30 s, 6 attempts), tunable per subscription via
   `WsSubscribeOptions`. `onLost` fires exactly once when the budget is

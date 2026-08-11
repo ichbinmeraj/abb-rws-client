@@ -439,3 +439,88 @@ describe('endpoint completion - users and UAS', () => {
     } finally { server.close(); }
   });
 });
+
+describe('endpoint completion - 2026-08-11 sweep (RWS 2.0 wire-forms)', () => {
+  it('compressPath POSTs /ctrl/compress with srcpath/dstpath normalised to fileservice URIs', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      await client(port).compressPath('$TEMP/a.txt', '$TEMP/a.rzo');
+      expect(requests[0].method).toBe('POST');
+      expect(requests[0].url).toBe('/ctrl/compress');
+      const b = new URLSearchParams(requests[0].body);
+      // The spec's source/destination are wrong; the controller wants srcpath/dstpath.
+      expect(b.get('srcpath')).toBe('/fileservice/$TEMP/a.txt');
+      expect(b.get('dstpath')).toBe('/fileservice/$TEMP/a.rzo');
+    } finally { server.close(); }
+  });
+
+  it('decompressPath targets the DISTINCT /ctrl/decompress endpoint (RWS 1.0 reuses compress?action=dcomp)', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      await client(port).decompressPath('/fileservice/$TEMP/a.rzo', '$TEMP/');
+      expect(requests[0].url).toBe('/ctrl/decompress');
+      expect(requests[0].url).not.toContain('action=');
+      expect(new URLSearchParams(requests[0].body).get('srcpath')).toBe('/fileservice/$TEMP/a.rzo');
+    } finally { server.close(); }
+  });
+
+  it('searchIoDevices POSTs ?action=search and derives network from the ios-device-li title', async () => {
+    const body = '<html><body><ul><li class="ios-device-li" title="EtherNetIP/DRV_1">'
+      + '<span class="name">DRV_1</span><span class="lstate">enabled</span>'
+      + '<span class="pstate">running</span><span class="address">2</span></li></ul></body></html>';
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(body); });
+    try {
+      const devs = await client(port).searchIoDevices({ lstate: 'enabled', network: 'EtherNetIP' });
+      expect(requests[0].method).toBe('POST');
+      expect(requests[0].url).toBe('/rw/iosystem/devices?action=search');
+      const b = new URLSearchParams(requests[0].body);
+      expect(b.get('lstate')).toBe('enabled');
+      expect(b.get('network')).toBe('EtherNetIP');
+      // network is _title.split('/')[0] - the only place this derivation is exercised.
+      expect(devs[0]).toMatchObject({ name: 'DRV_1', network: 'EtherNetIP', lstate: 'enabled' });
+    } finally { server.close(); }
+  });
+
+  it('searchIoDevices rejects an empty query with INVALID_ARGUMENT before any request', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      const err = await client(port).searchIoDevices({}).then(() => null, (e: unknown) => e as RwsError);
+      expect(err).toBeInstanceOf(RwsError);
+      expect(err!.code).toBe('INVALID_ARGUMENT');
+      expect(requests).toHaveLength(0);
+    } finally { server.close(); }
+  });
+
+  it('pollRmmp GETs /users/rmmp/poll and returns the status field', async () => {
+    const body = '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"user-rmmp-poll","_title":"rmmp","status":"NO SUCH REQUEST"}]}';
+    const { server, port, requests } = await startServer((_q, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' }); res.end(body);
+    });
+    try {
+      expect(await client(port).pollRmmp()).toBe('NO SUCH REQUEST');
+      expect(requests[0].method).toBe('GET');
+      expect(requests[0].url).toBe('/users/rmmp/poll');
+    } finally { server.close(); }
+  });
+
+  it('pollRmmp maps the broken RW8.1.1 RMMP service (HTTP 500) to none rather than throwing', async () => {
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"Unspecified Error"}}');
+    });
+    try {
+      // A raw 500 must not escape to a caller that merely polls a pending request.
+      expect(await client(port).pollRmmp()).toBe('none');
+    } finally { server.close(); }
+  });
+
+  it('cancelRmmp POSTs the RWS 2.0 path-action /users/rmmp/cancel (not the 1.0 query-action)', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+    try {
+      await client(port).cancelRmmp();
+      expect(requests[0].method).toBe('POST');
+      expect(requests[0].url).toBe('/users/rmmp/cancel');
+      expect(requests[0].url).not.toContain('action=cancel');
+    } finally { server.close(); }
+  });
+});

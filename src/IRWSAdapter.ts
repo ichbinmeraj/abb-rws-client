@@ -439,16 +439,18 @@ export interface IRWSAdapter {
   ): Promise<() => Promise<void>>;
 
   // ── Endpoint-completion surface (2026-08-09) ──────────────────────────────
-  // All optional, and all RWS 2.0 only: every one of these paths answers 404 on
-  // the IRC5 controllers, so `RWS1Adapter` deliberately does not implement them
-  // and they are absent (not throwing) on a RobotWare 6 connection. Probe with
+  // All optional. Most are RWS 2.0 only: those paths answer 404 on the IRC5
+  // controllers, so `RWS1Adapter` deliberately does not implement them and they
+  // are absent (not throwing) on a RobotWare 6 connection. The EXCEPTIONS are
+  // the methods whose own doc says "both generations" - the 2026-08-11 sweep
+  // later added live-verified RWS 1.0 support for those. Probe with
   // `adapter.method?.(…)`, or go through `RobotManager`, which reports the
   // unsupported case as a typed `UNSUPPORTED_OPERATION` error for writes.
   // Evidence per endpoint: docs/tasks/endpoint-completion.md.
 
-  /** Panel language (form field `lang-code`). RWS 2.0 only. */
+  /** Panel language (form field `lang-code`). Both generations (live-verified IRC5 RW6.16, 2026-08-11). */
   setPanelLanguage?(langCode: string): Promise<void>;
-  /** Controller language (form field `lang` - note the different name). RWS 2.0 only. */
+  /** Controller language (form field `lang` - note the different name). Both generations (live-verified IRC5 RW6.16, 2026-08-11). */
   setControllerLanguage?(lang: string): Promise<void>;
   /** Simulated EXTERNAL emergency-stop circuit. RWS 2.0 only. */
   setExternalEmergencyStop?(state: 'active' | 'reset'): Promise<void>;
@@ -470,8 +472,10 @@ export interface IRWSAdapter {
 
   /**
    * Two-criteria signal search. The second criteria set NARROWS the first
-   * (logical AND), and there is no glob support. RWS 2.0 only - the RWS 1.0
-   * side has no server-side signal search at all.
+   * (logical AND), and there is no glob support. Both generations: RWS 2.0 via
+   * the `signal-search-ex` path-action, RWS 1.0 via `?action=signal-searchex`
+   * (live-verified on IRC5 RW6.16, 2026-08-11). The single-criteria
+   * `searchSignals` is likewise available on both generations.
    */
   searchSignalsEx?(criteria: SignalSearchExCriteria[]): Promise<Signal[]>;
   /** Validate CFG instances that already exist. RWS 2.0 only. */
@@ -513,5 +517,36 @@ export interface IRWSAdapter {
   updateSubscriptionGroup?(groupPath: string, resources: SubscriptionResource[]): Promise<string>;
   /** Drop ONE resource from a live subscription group. RWS 2.0 only. */
   unsubscribeResource?(groupPath: string, resource: SubscriptionResource): Promise<void>;
+
+  // ── Endpoint-completion surface (2026-08-11) - both generations ────────────
+  // Unlike the 2026-08-09 block, every method here is live-verified on BOTH
+  // IRC5/RW6 (RWS 1.0 `?action=` query-actions) and OmniCore/RW7-8 (RWS 2.0
+  // path-actions), so both concrete adapters implement them. Optional so the
+  // interface stays additive; in practice both adapters always provide them, so
+  // `RobotManager` forwards them unconditionally (throwing only NOT_CONNECTED).
+
+  /** Server-side signal search (substring name, AND-composed criteria). Both generations. */
+  searchSignals?(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]>;
+  /** Search I/O devices by name / lstate / network (`?action=search` on both). Both generations. */
+  searchIoDevices?(criteria: { name?: string; lstate?: 'enabled' | 'disabled' | 'unknown'; network?: string }): Promise<IoDevice[]>;
+  /** Rename a file/directory in place (parent dir unchanged). Both generations. */
+  renameFile?(path: string, newName: string): Promise<void>;
+  /** Read a module's full source text plus its change-count (read side of `setModuleText`). Both generations. */
+  getModuleText?(task: string, module: string): Promise<{ text: string; changeCount: number }>;
+  /** Read a row/column span of a module's source (read side of `setModuleTextRange`). Both generations. */
+  getModuleTextRange?(task: string, module: string, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string>;
+  /** Whether a previously-read motion change-count still matches the controller's. Both generations. */
+  checkMotionChangeCount?(changecount: number): Promise<boolean>;
+  /** Dump the raw event log to a controller file. Both generations. */
+  saveEventLogRaw?(destination: string): Promise<void>;
+  /** Decompress a controller archive (mirror of `compressPath`). Both generations. */
+  decompressPath?(source: string, destination: string): Promise<void>;
+  /** Virtual-time timeslice in ms (VC diagnostic). Both generations. */
+  getVirtualTimeTimeslice?(): Promise<number>;
+
+  /** Validate a `.cfg` file already on the controller without loading it. RWS 1.0 only. */
+  validateCfgFile?(filepath: string, actionType?: 'add' | 'replace' | 'add-with-reset'): Promise<void>;
+  /** Dry-run a CFG instance delete to check for references before removing it. RWS 1.0 only. */
+  validateInstanceBeforeDelete?(name: string): Promise<void>;
 }
 

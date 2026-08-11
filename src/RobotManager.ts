@@ -1450,6 +1450,49 @@ export class RobotManager {
     return this.requireOp(this.adapter?.validateCfgInstances, 'validateCfgInstances').call(this.adapter, request);
   }
 
+  // ─── Endpoint-completion surface (2026-08-11) - both generations ────────────
+  // These answer on BOTH protocols, so both concrete adapters implement them and
+  // `requireOp` only ever guards the not-connected case (its unsupported branch
+  // is unreachable here). Forwarded so consumers reaching the client through
+  // RobotManager (e.g. the VS Code extension via MultiRobotManager) can call the
+  // read/search side, not only the write side that was already wired.
+  async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
+    return this.requireOp(this.adapter?.searchSignals, 'searchSignals').call(this.adapter, criteria);
+  }
+  async searchIoDevices(criteria: { name?: string; lstate?: 'enabled' | 'disabled' | 'unknown'; network?: string }): Promise<IoDevice[]> {
+    return this.requireOp(this.adapter?.searchIoDevices, 'searchIoDevices').call(this.adapter, criteria);
+  }
+  async renameFile(path: string, newName: string): Promise<void> {
+    return this.requireOp(this.adapter?.renameFile, 'renameFile').call(this.adapter, path, newName);
+  }
+  async getModuleText(task: string, module: string): Promise<{ text: string; changeCount: number }> {
+    return this.requireOp(this.adapter?.getModuleText, 'getModuleText').call(this.adapter, task, module);
+  }
+  async getModuleTextRange(task: string, module: string, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string> {
+    return this.requireOp(this.adapter?.getModuleTextRange, 'getModuleTextRange')
+      .call(this.adapter, task, module, startRow, startCol, endRow, endCol);
+  }
+  async checkMotionChangeCount(changecount: number): Promise<boolean> {
+    return this.requireOp(this.adapter?.checkMotionChangeCount, 'checkMotionChangeCount').call(this.adapter, changecount);
+  }
+  async saveEventLogRaw(destination: string): Promise<void> {
+    return this.requireOp(this.adapter?.saveEventLogRaw, 'saveEventLogRaw').call(this.adapter, destination);
+  }
+  async decompressPath(source: string, destination: string): Promise<void> {
+    return this.requireOp(this.adapter?.decompressPath, 'decompressPath').call(this.adapter, source, destination);
+  }
+  async getVirtualTimeTimeslice(): Promise<number> {
+    return this.requireOp(this.adapter?.getVirtualTimeTimeslice, 'getVirtualTimeTimeslice').call(this.adapter);
+  }
+  /** RWS 1.0 only - throws UNSUPPORTED_OPERATION on OmniCore (use validateCfgInstances there). */
+  async validateCfgFile(filepath: string, actionType: 'add' | 'replace' | 'add-with-reset' = 'add'): Promise<void> {
+    return this.requireOp(this.adapter?.validateCfgFile, 'validateCfgFile').call(this.adapter, filepath, actionType);
+  }
+  /** RWS 1.0 only - throws UNSUPPORTED_OPERATION on OmniCore. */
+  async validateInstanceBeforeDelete(name: string): Promise<void> {
+    return this.requireOp(this.adapter?.validateInstanceBeforeDelete, 'validateInstanceBeforeDelete').call(this.adapter, name);
+  }
+
   // Motion
   async getCollisionPredictionModelName(robotNumber = 0): Promise<string> {
     return this.adapter?.getCollisionPredictionModelName?.(robotNumber) ?? '';
