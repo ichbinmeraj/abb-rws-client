@@ -335,6 +335,36 @@ describe('RWS1Adapter category-1 forms (web-doc discovered, RWS 1.0)', () => {
     expect(panel?.body).toBe('lang-code=de');
     expect(ctrl?.body).toBe('lang=sv');
   });
+
+  it('searchIoDevices POSTs ?action=search (name/lstate) and parses ios-device-li', async () => {
+    const { calls, client } = makeFake((_m, url) => url.includes('devices?action=search')
+      ? { status: 200, body: '<html><body><ul><li class="ios-device-li" title="Local/DRV_1">' +
+          '<span class="name">DRV_1</span><span class="lstate">enabled</span><span class="pstate">running</span><span class="address">2</span></li></ul></body></html>' }
+      : undefined);
+    const a = new RWS1Adapter(client);
+    const devs = await a.searchIoDevices({ lstate: 'enabled' });
+    expect(devs.map(d => d.name)).toContain('DRV_1');
+    expect(devs[0].lstate).toBe('enabled');
+    expect(calls.find(c => c.what.startsWith('POST'))?.body).toBe('lstate=enabled');
+  });
+
+  it('searchIoDevices rejects an empty query (name or lstate required)', async () => {
+    const { client } = makeFake();
+    const a = new RWS1Adapter(client);
+    await expect(a.searchIoDevices({})).rejects.toThrow(/name or lstate/i);
+  });
+
+  it('validateCfgFile / validateInstanceBeforeDelete use the RWS 1.0 collection query-actions', async () => {
+    const { calls, client } = makeFake();  // 204
+    const a = new RWS1Adapter(client);
+    await a.validateCfgFile('$TEMP/x.cfg', 'add-with-reset');
+    await a.validateInstanceBeforeDelete('MyInst');
+    const val = calls.find(c => c.what.includes('/rw/cfg?action=validate&'));
+    const del = calls.find(c => c.what.includes('/rw/cfg?action=validate-inst-at-del'));
+    expect(decodeURIComponent(val?.body ?? '')).toContain('filepath=$TEMP/x.cfg');
+    expect(val?.body).toContain('action-type=add-with-reset');
+    expect(del?.body).toBe('name=MyInst');
+  });
 });
 
 describe('RWS1Adapter RMMP poll/cancel (RWS 1.0)', () => {

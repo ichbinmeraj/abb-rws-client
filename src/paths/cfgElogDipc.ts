@@ -145,6 +145,21 @@ export const CFG_ELOG_DIPC: DomainTable = {
     },
     note: 'RWS 2.0 only; form-urlencoded;v=2.0, operation is numeric 0/1, instances repeated. 204 = valid, 200+body = problem. Validates EXISTING instances.',
   },
+  validateCfgFile: {
+    summary: 'Validate a configuration file (a load dry-run) without applying it.',
+    // The validation sibling of loadCfgFile - same fields, dry-run only.
+    // RWS 1.0 collection query-action (per-domain /rw/cfg/{domain} is rejected).
+    // Documented in the ABB RWS 1.0 reference; live-verified on IRC5 RW6.16.
+    rws1: { method: 'POST', path: '/rw/cfg', action: 'validate', fields: ['filepath', 'action-type'] },
+    note: 'Collection-level (NOT per-domain). Same fields as loadCfgFile but dry-run. RWS 2.0 has no confirmed equivalent (validateCfgInstances is a different op).',
+  },
+  validateInstanceBeforeDelete: {
+    summary: 'Check whether a configuration instance can be safely deleted (dry-run).',
+    // RWS 1.0 collection query-action; body is the instance name. 204 = deletable.
+    // Live-verified on IRC5 RW6.16 (2026-08-11). Unsupported in bootserver mode.
+    rws1: { method: 'POST', path: '/rw/cfg', action: 'validate-inst-at-del', fields: ['name'] },
+    note: 'RWS 1.0 only (delete dry-run). 204 = ok to delete; 400/404 otherwise.',
+  },
 
   // ── DIPC queues (/rw/dipc) ────────────────────────────────────────────────
   listDipcQueues: {

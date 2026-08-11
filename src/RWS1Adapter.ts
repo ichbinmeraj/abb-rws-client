@@ -2,10 +2,10 @@ import { RwsClient } from './RwsClient.js';
 import type {
   ExecutionCycle, JointTarget, RobTarget, RapidSymbolSearchParams,
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
-  ElogMessage, ReturnCodeInfo, Signal, SignalSearchExCriteria,
+  ElogMessage, ReturnCodeInfo, Signal, SignalSearchExCriteria, IoDevice,
 } from './types.js';
 import { decodeElogArgs, RwsError } from './types.js';
-import { parseSignalList } from './ResponseParser.js';
+import { parseSignalList, parseDevices } from './ResponseParser.js';
 import { classifyControllerError } from './ControllerError.js';
 import type { IRWSAdapter } from './IRWSAdapter.js';
 import {
@@ -903,6 +903,45 @@ export class RWS1Adapter implements IRWSAdapter {
   /** Set the controller language (field lang, NOT the panel's lang-code). */
   async setControllerLanguage(lang: string): Promise<void> {
     await this.rws1Post(buildPath(CTRL.setControllerLanguage.rws1 as PathSpec), `lang=${encodeURIComponent(lang)}`);
+  }
+
+  /**
+   * Search I/O devices by criteria (distinct from searchDevices, which searches
+   * the /rw/devices hardware tree). RWS 1.0 query-action; at least one of `name`
+   * or `lstate` must be given (else the controller answers 400). Live-verified on
+   * IRC5 RW6.16 (2026-08-11): returns ios-device-li rows.
+   */
+  async searchIoDevices(criteria: { name?: string; lstate?: 'enabled' | 'disabled' | 'unknown'; network?: string }): Promise<IoDevice[]> {
+    if (!criteria.name && !criteria.lstate) {
+      throw new RwsError('searchIoDevices: at least one of name or lstate is required', 'INVALID_ARGUMENT');
+    }
+    const parts: string[] = [];
+    if (criteria.name)    { parts.push(`name=${encodeURIComponent(criteria.name)}`); }
+    if (criteria.lstate)  { parts.push(`lstate=${encodeURIComponent(criteria.lstate)}`); }
+    if (criteria.network) { parts.push(`network=${encodeURIComponent(criteria.network)}`); }
+    // Raw request (no json=1) so the response is the XHTML ios-device-li list.
+    const res = await this.client.request('POST', buildPath(IO.searchIoDevices.rws1 as PathSpec), parts.join('&'));
+    return parseDevices(res.body);
+  }
+
+  /**
+   * Validate a configuration file WITHOUT applying it (a load dry-run). RWS 1.0
+   * collection-level query-action. Throws if the file is invalid. Live-verified on
+   * IRC5 RW6.16 (2026-08-11).
+   * @param filepath   controller path to the .cfg file
+   * @param actionType 'add' | 'replace' | 'add-with-reset' (how it WOULD be loaded)
+   */
+  async validateCfgFile(filepath: string, actionType: 'add' | 'replace' | 'add-with-reset' = 'add'): Promise<void> {
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.validateCfgFile.rws1 as PathSpec),
+      `filepath=${encodeURIComponent(filepath)}&action-type=${actionType}`);
+  }
+
+  /** Check whether a configuration instance can be safely deleted (a delete
+   *  dry-run). Throws if it cannot. RWS 1.0 only; unsupported in bootserver mode.
+   *  Live-verified on IRC5 RW6.16 (2026-08-11). */
+  async validateInstanceBeforeDelete(name: string): Promise<void> {
+    await this.rws1Post(buildPath(CFG_ELOG_DIPC.validateInstanceBeforeDelete.rws1 as PathSpec),
+      `name=${encodeURIComponent(name)}`);
   }
 
   // ── Stage 11: Vision (5 methods) ───────────────────────────────────────

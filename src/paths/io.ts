@@ -126,6 +126,16 @@ export const IO: DomainTable = {
     rws1: { method: 'GET', path: '/rw/iosystem/devices' },
     note: 'Same path as listDevices minus the network query. RWS 1.0 side lives in RWS1Adapter (via rws1Get, which appends ?json=1), not RwsClient/ResourceMapper.',
   },
+  searchIoDevices: {
+    summary: 'Search I/O devices by name / lstate / network (ios-device-li).',
+    // Distinct from searchDevices, which searches the /rw/devices HARDWARE tree.
+    // RWS 1.0 query-action; at least one of name OR lstate is required (else 400
+    // "device name (or) device lstate is needed for search"). Live-verified on
+    // IRC5 RW6.16 (2026-08-11). Fields: name, lstate (enabled|disabled|unknown),
+    // network. The RWS 2.0 path form is not yet live-confirmed - rws1 only for now.
+    rws1: { method: 'POST', path: '/rw/iosystem/devices', action: 'search', fields: ['name', 'lstate', 'network'] },
+    note: 'At least one of name|lstate required. Returns ios-device-li rows. RWS 2.0 side deferred pending a live-confirmed path form.',
+  },
   getIoDeviceInfo: {
     summary: 'Read one I/O device.',
     rws2: { method: 'GET', path: '/rw/iosystem/devices/{network}/{device}' },
