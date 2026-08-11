@@ -1,8 +1,8 @@
 {
- "crawledAt": "2026-08-10",
+ "crawledAt": "2026-08-11",
  "summary": {
-  "implemented": 58,
-  "deliberate-gap": 2,
+  "implemented": 59,
+  "deliberate-gap": 1,
   "unmapped": 0,
   "orphan": 0
  },
@@ -17,7 +17,7 @@
    "gen": "rws1",
    "resource": "/ctrl/backup",
    "verdict": "implemented",
-   "by": "ctrl.createBackup"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
@@ -29,7 +29,7 @@
    "gen": "rws1",
    "resource": "/ctrl/compress",
    "verdict": "implemented",
-   "by": "ctrl.compressPath"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
@@ -46,44 +46,44 @@
   {
    "gen": "rws1",
    "resource": "/ctrl/options",
-   "verdict": "deliberate-gap",
-   "by": "ctrl.ctrlOptionsVerify"
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/safety",
    "verdict": "implemented",
-   "by": "ctrl.getSafetyStatus"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime",
    "verdict": "implemented",
-   "by": "ctrl.setVirtualTimeRunning"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vtspeed",
    "verdict": "implemented",
-   "by": "ctrl.setVirtualTimeScale"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vtstate",
    "verdict": "implemented",
-   "by": "ctrl.setVirtualTimeRunning"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vttime",
    "verdict": "implemented",
-   "by": "ctrl.getVirtualTimeClock"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vttimeslice",
    "verdict": "implemented",
-   "by": "ctrl.getVirtualTimeTimeslice"
+   "by": "ctrl.setControllerLanguage"
   },
   {
    "gen": "rws1",
