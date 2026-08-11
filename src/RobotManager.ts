@@ -21,6 +21,7 @@ import { RWS2Adapter } from './RWS2Adapter.js';
 import { Logger } from './Logger.js';
 import { discoverControllersMdns } from './MdnsDiscovery.js';
 import type { MdnsController } from './MdnsDiscovery.js';
+import { KNOWN_RWS_PORTS } from './detect.js';
 
 /**
  * Listener signature for `onError`. The host (VS Code extension, CLI, etc.) can
@@ -241,13 +242,13 @@ export class RobotManager {
     });
   }
 
-  /** Common ports to check on any host. */
-  private static readonly PROBE_PORTS = [
-    { port: 80,    useHttps: false },
-    { port: 443,   useHttps: true  },
-    { port: 28447, useHttps: false },
-    { port: 9403,  useHttps: true  },
-  ] as const;
+  /**
+   * Common ports to check on any host - derived from the single shared
+   * `KNOWN_RWS_PORTS` list so the discovery layer and the protocol layer
+   * (`detect.probeHost`) can never drift apart.
+   */
+  private static readonly PROBE_PORTS: ReadonlyArray<{ port: number; useHttps: boolean }> =
+    KNOWN_RWS_PORTS.map(p => ({ port: p.port, useHttps: p.https }));
 
   /** Returns ALL responding controllers on a single host. */
   static async detectAllControllers(host: string, strictTls = false): Promise<ProbeResult[]> {
@@ -258,44 +259,48 @@ export class RobotManager {
   }
 
   /**
-   * Scan a set of standard ABB hosts for any responding RWS controller.
-   * Uses a shorter timeout (1.5 s) for snappy discovery UX.
-   * Returns every found controller with its host attached.
+   * Discover every reachable RWS controller and return each with its host.
    *
-   * If nothing is found on 127.0.0.1 via standard ports, falls back to a wide
-   * TCP scan of the local-VC port range - this catches RobotStudio VCs whose
-   * ports are randomly assigned each startup.
+   * Two paths run CONCURRENTLY so the whole call is bounded by the slower one,
+   * not their sum:
+   *   - **Localhost** - where RobotStudio VCs live, on unpredictable ports that
+   *     change each restart - is discovered by probing the OS's listening ports
+   *     (`discoverLocalControllers`). This is COMPLETE: it finds every local VC
+   *     regardless of port and no matter how many run at once, which the old
+   *     "standard ports, wide-scan only if empty" path did not (a VC on a
+   *     standard port suppressed the scan and hid the others).
+   *   - **Remote hosts** - the ABB service address plus any caller-supplied
+   *     hosts, i.e. real robots on fixed ports that can't be netstat'd - are
+   *     probed on the shared `KNOWN_RWS_PORTS`.
    */
   static async discoverControllers(extraHosts: string[] = [], strictTls = false): Promise<DiscoveredController[]> {
-    const hosts = [
-      '127.0.0.1',      // Local virtual controllers (RobotStudio)
-      '192.168.125.1',  // ABB standard service port - both IRC5 and OmniCore real robots
-      ...extraHosts,
-    ];
+    // 192.168.125.1 is the ABB standard service address for a directly-cabled
+    // IRC5 or OmniCore; extra hosts come from the caller (a robot on the LAN).
+    const remoteHosts = ['192.168.125.1', ...extraHosts];
 
-    const probes = hosts.flatMap(host =>
-      RobotManager.PROBE_PORTS.map(c =>
-        RobotManager.probePort(host, c.port, c.useHttps, 1500, strictTls)
-          .then((r): DiscoveredController | null =>
-            r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null
-          )
-      )
-    );
+    const probeRemote = (host: string): Promise<DiscoveredController[]> =>
+      Promise.all(
+        RobotManager.PROBE_PORTS.map(c =>
+          RobotManager.probePort(host, c.port, c.useHttps, 1500, strictTls)
+            .then((r): DiscoveredController | null =>
+              r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null)
+        )
+      ).then(rs => rs.filter((r): r is DiscoveredController => r !== null));
 
-    const results = await Promise.all(probes);
-    const found = results.filter((r): r is DiscoveredController => r !== null);
+    const [local, ...remotePer] = await Promise.all([
+      RobotManager.discoverLocalControllers('127.0.0.1', strictTls),
+      ...remoteHosts.map(probeRemote),
+    ]);
 
-    // Fallback: nothing on standard ports of 127.0.0.1 - try wide scan
-    // (RobotStudio assigns random high ports to VCs each restart).
-    const localHits = found.filter(c => c.host === '127.0.0.1' || c.host === 'localhost');
-    if (localHits.length === 0) {
-      Logger.info(`no controllers on standard ports of 127.0.0.1 - running wide scan…`);
-      const wide = await RobotManager.wideHostScan('127.0.0.1', strictTls);
-      Logger.info(`wide scan found ${wide.length} ABB controller(s) on 127.0.0.1`);
-      found.push(...wide);
-    }
-
-    return found;
+    // De-dupe by host:port so a caller passing a host twice (or overlap between
+    // paths) never yields the same controller twice.
+    const seen = new Set<string>();
+    return [...local, ...remotePer.flat()].filter(c => {
+      const key = `${c.host}:${c.port}`;
+      if (seen.has(key)) { return false; }
+      seen.add(key);
+      return true;
+    });
   }
 
   /**
@@ -326,11 +331,17 @@ export class RobotManager {
    * Returns null only if neither responds - protects against guessing wrong
    * (e.g. RobotStudio-assigned port 5466 is HTTPS but doesn't fit any heuristic).
    */
-  static async probeSpecificPort(host: string, port: number, strictTls = false): Promise<ProbeResult | null> {
-    return (
-      (await RobotManager.probePort(host, port, true,  2000, strictTls)) ??
-      (await RobotManager.probePort(host, port, false, 2000, strictTls))
-    );
+  static async probeSpecificPort(host: string, port: number, strictTls = false, timeoutMs = 2000): Promise<ProbeResult | null> {
+    // Probe both schemes CONCURRENTLY and take whichever answers. A port is one
+    // or the other, so this changes no result - but it halves the worst case,
+    // which matters when probing many listening ports at once: a non-ABB port
+    // that stalls the request stalls once, not once per scheme. HTTPS wins ties
+    // (OmniCore), matching the old https-first order.
+    const [asHttps, asHttp] = await Promise.all([
+      RobotManager.probePort(host, port, true,  timeoutMs, strictTls),
+      RobotManager.probePort(host, port, false, timeoutMs, strictTls),
+    ]);
+    return asHttps ?? asHttp;
   }
 
   /** Fast TCP-only check to see if a port is accepting connections. */
@@ -347,21 +358,96 @@ export class RobotManager {
   }
 
   /**
-   * Wide-range port scan for RobotStudio VCs whose ports get reassigned each restart.
-   * Two-phase: TCP probe everything fast, then HTTP-probe only ports that responded.
+   * Ports the OS reports as LISTENING on this machine, best-effort.
    *
-   * Uses a sliding-window worker pool to keep concurrency below the OS socket limit
-   * (Windows in particular drops connections silently above ~500 concurrent sockets).
+   * This is what makes local-VC discovery both fast AND complete: instead of
+   * blindly sweeping tens of thousands of ports, we ask the OS which ports are
+   * actually open and HTTP-probe only those. RobotStudio assigns VC RWS ports
+   * from a wide dynamic range - values of 40483 and 62214 have been observed on
+   * this rig after warm restarts - so any fixed range cap silently loses a VC;
+   * asking the OS has no cap. Loopback only; never widened beyond this machine.
    *
-   * Heavy operation - only call when standard-port detection finds nothing.
-   * Prefer host=127.0.0.1; scanning a remote host this aggressively is rude.
+   * Returns [] if the OS query is unavailable or unparseable, so callers fall
+   * back to the bounded blind scan.
+   */
+  private static async localListeningPorts(): Promise<number[]> {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const run = promisify(execFile);
+    const cmd = process.platform === 'win32'
+      ? { file: 'netstat', args: ['-ano', '-p', 'TCP'] }
+      : { file: 'ss', args: ['-ltn'] };
+    let out = '';
+    try {
+      out = (await run(cmd.file, cmd.args, { timeout: 8000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 })).stdout;
+    } catch {
+      return [];
+    }
+    const ports = new Set<number>();
+    for (const line of out.split('\n')) {
+      // On Windows only LISTENING rows are bind points; on POSIX `ss -ltn`
+      // already lists listeners only.
+      if (process.platform === 'win32' && !/LISTENING/.test(line)) { continue; }
+      // Match a loopback or all-interfaces bind (both reachable on 127.0.0.1).
+      for (const m of line.matchAll(/(?:127\.0\.0\.1|0\.0\.0\.0|\[::1?\]|\*):(\d{2,5})\b/g)) {
+        const p = Number(m[1]);
+        if (p > 0 && p < 65536) { ports.add(p); }
+      }
+    }
+    return [...ports];
+  }
+
+  /**
+   * Discover every RWS controller running on the local machine, fast and with no
+   * port-range cap. Asks the OS which ports are listening and HTTP-probes only
+   * those (see `localListeningPorts`), so a RobotStudio VC is found wherever its
+   * randomly-assigned port landed - including the high dynamic-range ports a
+   * blind scan would miss. Falls back to the bounded blind scan only if the OS
+   * query yields nothing (e.g. netstat/ss unavailable in a stripped-down env).
+   */
+  static async discoverLocalControllers(host = '127.0.0.1', strictTls = false): Promise<DiscoveredController[]> {
+    const listening = await RobotManager.localListeningPorts();
+    if (listening.length > 0) {
+      // netstat/ss answered, so these ARE the machine's only bind points -
+      // probing them is the COMPLETE local picture (empty result = genuinely no
+      // controllers, not "look harder"). Tightened timeout since most listeners
+      // are not controllers and we probe them all concurrently.
+      const probes = await Promise.all(
+        listening.map(port =>
+          RobotManager.probeSpecificPort(host, port, strictTls, 1200)
+            .then((r): DiscoveredController | null =>
+              r ? { host, port: r.port, useHttps: r.useHttps, authType: r.authType } : null)
+        )
+      );
+      const found = probes.filter((r): r is DiscoveredController => r !== null);
+      Logger.info(`local scan: ${listening.length} listening port(s), ${found.length} ABB controller(s) on ${host}`);
+      return found;
+    }
+    // OS query unavailable (stripped-down env) - last-resort bounded blind scan.
+    Logger.info(`OS listening-port query unavailable - falling back to a blind port scan of ${host}…`);
+    return RobotManager.wideHostScan(host, strictTls);
+  }
+
+  /**
+   * Bounded blind TCP port scan - the LAST-RESORT fallback for local VC
+   * discovery when `discoverLocalControllers`' OS query is unavailable.
+   * Two-phase: TCP-probe the range fast, then HTTP-probe only ports that
+   * responded. Prefer `discoverLocalControllers`, which is faster and has no
+   * range cap; call this directly only when you specifically need a blind sweep.
+   *
+   * Uses a sliding-window worker pool to keep concurrency below the OS socket
+   * limit (Windows in particular drops connections silently above ~500
+   * concurrent sockets). Loopback only; scanning a remote host this aggressively
+   * is rude and slow.
    */
   static async wideHostScan(host: string, strictTls = false): Promise<DiscoveredController[]> {
-    // RobotStudio assigns RWS ports across a wide range. Observed values include
-    // 5466, 9403, 11811, 15120, 16146, 28447 - covering 4000-30000 catches them all.
+    // RobotStudio assigns VC RWS ports from the dynamic range - values up to
+    // 62214 have been observed - so the ceiling covers the full 16-bit space.
+    // On loopback a closed port refuses instantly (no timeout wait), so even the
+    // full range completes in seconds; the timeout below only bites filtered ports.
     const startPort = 1024;
-    const endPort   = 30000;
-    const concurrency = 300;       // safe on Windows; ~500 is the practical ceiling
+    const endPort   = 65535;
+    const concurrency = 400;       // safe on Windows; ~500 is the practical ceiling
     const tcpTimeoutMs = 250;      // generous to avoid false negatives
 
     const tcpOpen: number[] = [];
@@ -510,12 +596,14 @@ export class RobotManager {
         // Phase 1: quick scan of the standard ports
         let candidates = await RobotManager.detectAllControllers(host, this.strictTls);
 
-        // Phase 2: if nothing on standard ports and we're scanning localhost, do a wide scan
+        // Phase 2: if nothing on standard ports and we're scanning localhost,
+        // probe the OS's listening ports (fast, no range cap - finds a VC on any
+        // reassigned port; blind scan only if the OS query is unavailable).
         if (candidates.length === 0 && (host === '127.0.0.1' || host === 'localhost')) {
-          Logger.info(`standard ports empty - running wide scan 1024-30000 (this takes ~3 s)…`);
-          const wide = await RobotManager.wideHostScan(host, this.strictTls);
-          candidates = wide.map(c => ({ port: c.port, useHttps: c.useHttps, authType: c.authType }));
-          Logger.info(`wide scan found ${candidates.length} ABB controller(s) on ${host}`);
+          Logger.info(`standard ports empty - scanning ${host} listening ports for the reassigned VC…`);
+          const local = await RobotManager.discoverLocalControllers(host, this.strictTls);
+          candidates = local.map(c => ({ port: c.port, useHttps: c.useHttps, authType: c.authType }));
+          Logger.info(`local scan found ${candidates.length} ABB controller(s) on ${host}`);
         }
 
         const match = candidates.find(c => c.authType === expectedAuth) ?? candidates[0];

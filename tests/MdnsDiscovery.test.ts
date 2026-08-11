@@ -351,4 +351,19 @@ describe('MdnsDiscovery', () => {
     // 2 queries × (1 default send + 2 interface sends) = 6
     expect(fake.sent).toHaveLength(6);
   });
+
+  it('re-queries within the window so a dropped/late first burst still gets an answer', async () => {
+    const fake = new FakeSocket();
+    // A window past both re-query delays (250 ms, 750 ms) → 3 bursts, each of the
+    // 2 PTR queries on the default egress = 6 sends. A one-shot browse would send 2.
+    await discoverControllersMdns({ timeoutMs: 1000, socketFactory: () => fake, interfaceAddrs: [] });
+    expect(fake.sent.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('does not re-query when the window closes before the first re-query delay', async () => {
+    const fake = new FakeSocket();
+    // 30 ms window < the 250 ms first re-query, so only the initial burst fires.
+    await discoverControllersMdns({ timeoutMs: 30, socketFactory: () => fake, interfaceAddrs: [] });
+    expect(fake.sent).toHaveLength(2);
+  });
 });

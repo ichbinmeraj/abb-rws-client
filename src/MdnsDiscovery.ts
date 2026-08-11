@@ -249,6 +249,11 @@ function buildControllers(store: RecordStore): MdnsController[] {
     const robApiPort = positiveInt(txt?.['robapip']);
     if (robApiPort !== undefined) { controller.robApiPort = robApiPort; }
 
+    // Dedup by INSTANCE NAME, not SysGuid: mDNS enforces unique instance names
+    // on a link (a real unit heard on several interfaces answers with the same
+    // one, so it collapses correctly), whereas RobotStudio VCs cloned from one
+    // template frequently SHARE a SysGuid - deduping on that would hide a second
+    // VC, the exact opposite of what discovery is for.
     if (!byInstance.has(controller.instanceName)) {
       byInstance.set(controller.instanceName, controller);
     }
@@ -291,10 +296,12 @@ export function discoverControllersMdns(opts: MdnsDiscoveryOptions = {}): Promis
     }
 
     let settled = false;
+    const burstTimers: ReturnType<typeof setTimeout>[] = [];
     const finish = (): void => {
       if (settled) { return; }
       settled = true;
       clearTimeout(timer);
+      for (const t of burstTimers) { clearTimeout(t); }
       try { socket.close(); } catch { /* already closed */ }
       resolve(buildControllers(store));
     };
@@ -312,21 +319,30 @@ export function discoverControllersMdns(opts: MdnsDiscoveryOptions = {}): Promis
     try {
       socket.bind(0, '0.0.0.0', () => {
         const queries = QUERY_NAMES.map((name, i) => buildPtrQuery(name, i + 1));
-        const sendAll = (): void => {
-          for (const q of queries) {
-            try { socket.send(q, MDNS_PORT, MDNS_ADDR, () => { /* send errors are non-fatal */ }); } catch { /* ditto */ }
+        // `undefined` = OS default-route egress; the rest are explicit interfaces.
+        // Windows picks ONE egress interface per send, so re-sending through each
+        // IPv4 interface is what lets controllers on a non-default-route network
+        // (very common with a robot on a dedicated NIC) answer at all.
+        const egress: Array<string | undefined> = [undefined, ...(opts.interfaceAddrs ?? ipv4InterfaceAddrs())];
+        const queryOnce = (): void => {
+          for (const addr of egress) {
+            try {
+              if (addr !== undefined) { socket.setMulticastInterface(addr); }
+              for (const q of queries) {
+                try { socket.send(q, MDNS_PORT, MDNS_ADDR, () => { /* send errors are non-fatal */ }); } catch { /* ditto */ }
+              }
+            } catch {
+              // interface can't multicast (VPN/virtual adapters) - skip
+            }
           }
         };
-        sendAll(); // OS default multicast egress
-        // Windows picks ONE egress interface per send - retry through each
-        // IPv4 interface so controllers on non-default-route networks answer.
-        for (const addr of opts.interfaceAddrs ?? ipv4InterfaceAddrs()) {
-          try {
-            socket.setMulticastInterface(addr);
-            sendAll();
-          } catch {
-            // interface can't multicast (VPN/virtual adapters) - skip
-          }
+        queryOnce();
+        // mDNS runs over lossy UDP and some responders (RobotStudio's bundled
+        // mDNSResponder among them) answer a beat late. Re-ask within the window
+        // so a dropped first burst or a slow responder still lands - the reason a
+        // one-shot browse intermittently "misses" a controller that is right there.
+        for (const delay of [250, 750]) {
+          if (delay < timeoutMs) { burstTimers.push(setTimeout(queryOnce, delay)); }
         }
       });
     } catch {

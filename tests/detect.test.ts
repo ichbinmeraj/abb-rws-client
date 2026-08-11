@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import * as http from 'node:http';
 import * as https from 'node:https';
-import { probeProtocol, createClient, createAdapter } from '../src/detect.js';
+import { probeProtocol, createClient, createAdapter, KNOWN_RWS_PORTS } from '../src/detect.js';
 import { RwsClient2 } from '../src/RwsClient2.js';
 import { RWS1Adapter } from '../src/RWS1Adapter.js';
 
@@ -346,5 +346,34 @@ describe('createAdapter returns the matching adapter type', () => {
 describe('RwsClient2 instanceof check (used by createClient consumers)', () => {
   it('is a class (function in JS)', () => {
     expect(typeof RwsClient2).toBe('function');
+  });
+});
+
+describe('KNOWN_RWS_PORTS (single source shared with RobotManager.PROBE_PORTS)', () => {
+  const ports = KNOWN_RWS_PORTS.map(p => p.port);
+
+  it('covers real-hardware defaults and the common VC ports', () => {
+    // A regression that drops one of these silently loses a whole class of
+    // controller from the fast discovery pass.
+    for (const p of [443, 80, 5466, 9403, 11811, 28447]) {
+      expect(ports, `port ${p} must stay in the known set`).toContain(p);
+    }
+  });
+
+  it('tries real-hardware defaults (443/80) before the VC ports', () => {
+    // Closed ports refuse instantly, so real-first costs a VC nothing but makes a
+    // physical robot answer on the first probe.
+    expect(ports.indexOf(443)).toBeLessThan(ports.indexOf(5466));
+    expect(ports.indexOf(80)).toBeLessThan(ports.indexOf(11811));
+  });
+
+  it('pins the https/plain scheme per port (443/5466/9403 TLS, 80/11811/28447 plain)', () => {
+    const scheme = new Map(KNOWN_RWS_PORTS.map(p => [p.port, p.https]));
+    expect(scheme.get(443)).toBe(true);
+    expect(scheme.get(5466)).toBe(true);
+    expect(scheme.get(9403)).toBe(true);
+    expect(scheme.get(80)).toBe(false);
+    expect(scheme.get(11811)).toBe(false);
+    expect(scheme.get(28447)).toBe(false);
   });
 });

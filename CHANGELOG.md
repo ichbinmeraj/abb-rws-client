@@ -68,6 +68,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Controller discovery is now fast AND complete - the first thing a user sees.**
+  Three problems fixed, all live-verified against the rig (found all three VCs,
+  incl. the IRC5 on a non-standard port, in ~1.5 s):
+  - `discoverControllers` used to run the local port scan *only if the standard
+    ports found nothing*, so with two VCs running - one on a standard port
+    (5466), one not (14880) - it returned the first and **silently hid the
+    second**. Localhost is now always discovered by probing the ports the OS
+    reports as **listening** (`netstat`/`ss`), which is complete regardless of
+    how many VCs run or where their ports landed.
+  - The blind fallback scan capped at port **30000**, but RobotStudio assigns VC
+    ports from the dynamic range (values of **40483** and **62214** observed on
+    this rig) - so a drifted VC was undiscoverable. The OS-listening scan has no
+    cap; the blind scan (now ceilinged at 65535) is a last resort only when the
+    OS query is unavailable.
+  - The protocol layer (`detect.probeHost`) and the discovery layer
+    (`RobotManager.PROBE_PORTS`) kept **two divergent port lists** (one missing
+    5466/11811, the other missing 28447). Both now derive from one shared
+    `KNOWN_RWS_PORTS`, so they can't drift again.
+  Discovery also got faster: `probeSpecificPort` probes HTTP/HTTPS concurrently
+  instead of sequentially (halving the per-port worst case), which cut a full
+  local scan from ~4.2 s to ~1.4 s. And mDNS now **re-queries within its window**
+  (bursts at 0/250/750 ms) so a dropped UDP packet or a slow responder no longer
+  makes a browse intermittently miss a controller that is right there.
 - **The two-generation endpoint sweep is now reachable polymorphically.** The
   sweep added its methods to the concrete adapters but not to the shared
   `IRWSAdapter` contract, so nine methods live-verified on *both* generations -
