@@ -3,7 +3,7 @@
 A typed TypeScript/Node.js client for **ABB Robot Web Services** - both protocols ABB ships:
 
 - **RWS 1.0** - IRC5 / RobotWare 6.x → `RwsClient`
-- **RWS 2.0** - OmniCore / RobotWare 7.x → `RwsClient2`
+- **RWS 2.0** - OmniCore / RobotWare 7.x & 8.x → `RwsClient2`
 
 > **Compatibility:** dual-protocol since v0.7.0. Single-line auto-detection via `createClient()` if you don't know which one your controller speaks.
 
@@ -13,7 +13,7 @@ A typed TypeScript/Node.js client for **ABB Robot Web Services** - both protocol
 
 Prefer a GUI? The companion VS Code extension gives you live status, motion data, RAPID control, I/O signals, event log, file management, and CFG database editing directly from the sidebar - no code required. Works against both IRC5 and OmniCore.
 
-**[ABB Robot (RWS) - VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)**
+**[RAPID Live - ABB Robotics for VS Code](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)**
 
 ---
 
@@ -22,6 +22,7 @@ Prefer a GUI? The companion VS Code extension gives you live status, motion data
 - **Dual-protocol** - RWS 1.0 (Digest, JSON) and RWS 2.0 (Basic, XHTML;v=2.0)
 - **Auto-detection** - `createClient(host)` probes the auth challenge and returns the right client
 - **Multi-robot** - `MultiRobotManager` for orchestrating several controllers in one process
+- **Controller discovery** - `RobotManager.discoverControllers()` finds every reachable controller: local RobotStudio VCs on their randomly-assigned ports (OS listening-port scan, no port-range cap, ~1.5 s) plus real robots on the standard ports; `discoverControllersMdns()` adds mDNS/Bonjour with RobotWare metadata
 - **Connection lifecycle** - `RobotManager` handles port discovery, polling, WebSocket subscriptions with polling fallback, reconnect-on-failure
 - **Typed adapter pattern** - `IRWSAdapter` lets you write code that works across both protocols
 - **WebSocket subscriptions** for real-time events (panel state, RAPID exec, signals, persvar, elog, jointtarget, …)
@@ -68,6 +69,28 @@ If you only target one protocol, skip the helper and instantiate the client dire
 
 ---
 
+## Finding controllers
+
+Don't know the host or port? Discovery finds every reachable controller - including RobotStudio virtual controllers, whose RWS ports are randomly reassigned on every restart:
+
+```ts
+import { RobotManager } from 'abb-rws-client';
+
+// TCP probe: local VCs (via the OS's listening ports - any port, ~1.5 s)
+// plus real robots on the standard service address/ports.
+const found = await RobotManager.discoverControllers();
+// [{ host: '127.0.0.1', port: 14880, useHttps: false, authType: 'digest' }, ...]
+// authType tells you the generation: 'digest' = RWS 1.0, 'basic' = RWS 2.0
+
+// mDNS/Bonjour: controllers announcing on the local network, with metadata.
+const announced = await RobotManager.discoverControllersMdns();
+// [{ systemName, host, port, rwVersion?, sysGuid?, probableProtocol }, ...]
+```
+
+Run both and merge for the widest net (the VS Code extension does exactly that). Then hand any hit to `createClient({ host, port })`.
+
+---
+
 ## Choosing a client
 
 | Controller | Protocol | Class | Auth | Default port |
@@ -75,7 +98,7 @@ If you only target one protocol, skip the helper and instantiate the client dire
 | **IRC5** (RobotWare 6.x) | RWS 1.0 | `RwsClient` | HTTP Digest | 80 (real), 80 / 11811 (VC) |
 | **OmniCore** (RobotWare 7.x) | RWS 2.0 | `RwsClient2` | HTTP Basic | 443 (real), 5466 (VC HTTPS) |
 
-Both classes expose **the same method names** for ~140 endpoints (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, etc.). The protocol differences (URL shapes, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally - your code looks the same.
+The two generations expose one API: `RwsClient2` carries **280+ endpoint methods**, the RWS 1.0 side covers its generation's full advertised surface (verified by `npm run conformance` against live controllers), and the shared cross-protocol contract - **`IRWSAdapter`, ~190 methods** (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, search, …) - has the same names and signatures on both. The protocol differences (URL shapes, query-action vs path-action forms, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally - your code looks the same.
 
 If you need a single typed reference that holds either:
 
@@ -236,7 +259,7 @@ You can also create a `RobotManager` directly if you only have one robot.
 
 `RobotManager` wraps either client with operational helpers that handle mastership, polling, and protocol differences for you. In addition to delegating every protocol method to the underlying client, it exposes:
 
-- **`getRmmpPrivilege()`**, **`requestRmmp(level)`** - Remote Mastership Privilege management. Required on OmniCore in AUTO mode for any modify op.
+- **`getRmmpPrivilege()`**, **`requestRmmp(level)`**, **`pollRmmp()`**, **`cancelRmmp()`** - the full Remote Mastership Privilege lifecycle (request → poll the pending FlexPendant approval → cancel), on both generations. Required on OmniCore in AUTO mode for any modify op.
 - **`getMastershipStatus(domain?)`** - read who currently holds rapid/cfg/motion mastership (uid + application name).
 - **`setOperationMode('AUTO' | 'MANR' | 'MANF')`** - VC-only switch with auto-routing through MANR for AUTO ↔ MANF (the controller rejects direct transitions). Acquires `edit` mastership for the higher-privilege direction.
 - **`setSpeedRatio(0..100)`** - wraps `edit` mastership; uses the live-verified `?action=setspeedratio&speed-ratio=N` form on RWS 2.0 (the bare endpoint returns 400).
@@ -248,8 +271,13 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **DIPC** - `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients.
 - **`listFileVolumes()`** - every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
 - **`getModuleSource(task, name)`** - pull a module's RAPID text in one call. Works even when the module has no backing file in `HOME` (loaded from `.pgf`/RobotStudio/pendant): the client saves it to the controller's TEMP volume, reads it, and deletes it.
-- **`compressPath(source, dest)`** - controller-side compression.
+- **`compressPath(source, dest)`** / **`decompressPath(source, dest)`** - controller-side archive compression, both generations (RWS 1.0 uses the `?action=comp`/`dcomp` query-actions internally).
+- **`searchSignals(criteria)`** / **`searchSignalsEx(criteriaSets)`** / **`searchIoDevices(criteria)`** - server-side I/O search on **both** generations: substring name matching, AND-composed criteria, device search by name/lstate/network. No more paging the full signal list client-side.
+- **`getModuleText(task, module)`** / **`getModuleTextRange(task, module, …)`** - read a module's source (or a row/col span) straight from the RAPID domain, with the change-count for optimistic concurrency against `setModuleText`/`setModuleTextRange`.
+- **`checkMotionChangeCount(count)`**, **`saveEventLogRaw(dest)`**, **`renameFile(path, newName)`**, **`getVirtualTimeTimeslice()`** - motion-config freshness check, raw event-log export, in-place rename, VC timeslice - all on both generations.
+- **`validateCfgFile(path, actionType?)`** / **`validateInstanceBeforeDelete(name)`** - dry-run a CFG load / a CFG instance delete on RWS 1.0 before committing (OmniCore uses `validateCfgInstances`).
 - **`validateRapidValue(task, value, datatype)`** - pre-flight a literal before writing.
+- **`RobotManager.discoverControllers(extraHosts?)`** *(static)* - find every reachable controller: local VCs on any port (OS listening-port scan, complete and ~1.5 s) plus real robots on the standard ports. See [Finding controllers](#finding-controllers).
 - **`RobotManager.discoverControllersMdns(opts?)`** *(static)* - find every ABB controller (real or virtual) announcing on the local network via mDNS/Bonjour. Returns system name, host, RWS port, RobotWare version, system GUID, and a `'rws1' | 'rws2'` classification - no port scanning needed.
 - **Simulation panel** *(RWS 2.0 virtual controllers only)* - `simEmergencyStop()`, `simResetEmergencyStop()`, `simGeneralStop(engage?)`, `simAutoStop(engage?)`, `simEnableSwitch(on)`, `teleportMechunit(mechunit, joints, extJoints?)`. Drive the E-stop / guard-stop chain and reposition the simulated robot from the API. Throw `RwsError` on real hardware and RW6 (VC-only endpoints).
 
@@ -669,7 +697,7 @@ and routes write access automatically, so the same code runs on all three
 generations. The full Control Station Service is also exposed directly
 (`requestWriteAccess`, `getWriteAccessStatus`, `setAllowMotionControl`, ...).
 
-**Live-tested matrix**: RobotWare 8.1 (OmniCore VC), RobotWare 7.21 (OmniCore VC), RobotWare 6.16 (IRC5 VC). 460+ unit tests + live protocol-coverage tests + chaos-proxy resilience suites.
+**Live-tested matrix**: RobotWare 8.1 (OmniCore VC), RobotWare 7.21 (OmniCore VC), RobotWare 6.16 (IRC5 VC). 630+ unit tests + live protocol-coverage tests + chaos-proxy resilience suites. Endpoint conformance against what the live controllers actually advertise: 59 implemented / 0 unmapped / 0 orphan (`npm run conformance`).
 
 ---
 
@@ -698,7 +726,7 @@ That is the single source of truth an ABB update lands in - and what
 **External**
 
 - [ABB Developer Center - RWS API](https://developercenter.robotstudio.com/api/rwsApi/)
-- [Companion VS Code Extension](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)
+- [RAPID Live - the companion VS Code extension](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)
 
 ---
 
