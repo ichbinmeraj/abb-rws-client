@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WebSocketServer } from 'ws';
 import type { AddressInfo } from 'node:net';
 import { WsSubscriber } from '../src/WsSubscriber.js';
-import { RwsError } from '../src/types.js';
+import { RwsError, type SubscriptionResource } from '../src/types.js';
 import type { HttpSession } from '../src/HttpSession.js';
 
 // ─── Fakes ───────────────────────────────────────────────────────────────────
@@ -159,6 +159,23 @@ function makeScriptedWs(script: Array<'open' | 'fail'>, opts: { autoPong?: boole
 
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
+/**
+ * Poll until a condition holds, instead of sleeping a fixed span and hoping.
+ *
+ * The heartbeat tests drive a chain of short timers (ping -> pong timeout ->
+ * terminate -> reconnect). A fixed sleep has to be longer than the worst-case
+ * scheduling delay of that whole chain, and under parallel-suite CPU load it
+ * is not - the assertions then fail for a late timer rather than a real bug.
+ * Polling costs nothing when things are fast and simply waits when they are not.
+ */
+async function until(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > timeoutMs) { throw new Error('condition not met in time'); }
+    await wait(5);
+  }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('WsSubscriber - transport selection', () => {
@@ -245,6 +262,54 @@ describe('WsSubscriber - transport selection', () => {
   });
 });
 
+describe('WsSubscriber - subscription resource paths', () => {
+  /** Fake session that records the form body posted to /subscription. */
+  function makeBodyCapturingSession() {
+    const bodies: string[] = [];
+    const session = {
+      post: async (_url: string, body: string) => {
+        bodies.push(body);
+        return {
+          status: 201,
+          body: '',
+          headers: new Headers({ location: 'http://127.0.0.1:1/subscription/42' }),
+        };
+      },
+      delete: async () => ({ status: 200, body: '', headers: new Headers() }),
+      getCookieHeader: () => COOKIE,
+    } as unknown as HttpSession;
+    return { session, bodies };
+  }
+
+  async function pathFor(resource: SubscriptionResource): Promise<string> {
+    const { session, bodies } = makeBodyCapturingSession();
+    const { FakeWs } = makeFakeWs('open');
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const unsubscribe = await subscriber.subscribe([resource], () => undefined);
+    await unsubscribe();
+    return decodeURIComponent(bodies[0].match(/&1=([^&]*)/)![1]);
+  }
+
+  it('subscribes signals on ;state', async () => {
+    expect(await pathFor({ type: 'signal', name: 'NET/DEV/di_1' }))
+      .toBe('/rw/iosystem/signals/NET/DEV/di_1;state');
+  });
+
+  it('prefixes persistent variables with the RAPID domain', async () => {
+    // Without RAPID/ the controller answers 400 "Resource does not exist on the
+    // controller" (live-verified on RW6.16).
+    expect(await pathFor({ type: 'persvar', name: 'T_ROB1/BASE/tool0' }))
+      .toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/BASE/tool0;value');
+  });
+
+  it('does not double the RAPID prefix when the caller already supplied it', async () => {
+    // The RWS 2.0 builder takes the bare form, so the same resource object has
+    // to survive both adapters.
+    expect(await pathFor({ type: 'persvar', name: 'RAPID/T_ROB1/BASE/tool0' }))
+      .toBe('/rw/rapid/symbol/data/RAPID/T_ROB1/BASE/tool0;value');
+  });
+});
+
 describe('WsSubscriber - subscribe awaits the WebSocket open', () => {
   it('does not resolve before the WebSocket has opened', async () => {
     const { session } = makeFakeSession();
@@ -296,7 +361,7 @@ describe('WsSubscriber - reconnect give-up', () => {
     });
 
     (instances[0] as { serverClose(): void }).serverClose();
-    await wait(200);
+    await until(() => onLost.mock.calls.length >= 1);
 
     expect(onLost).toHaveBeenCalledTimes(1);
 
@@ -343,7 +408,7 @@ describe('WsSubscriber - dead-registration recovery', () => {
     });
 
     (instances[0] as { serverClose(): void }).serverClose();
-    await wait(100);
+    await until(() => posts.count >= 2 && instances.length >= 3);
 
     expect(posts.count).toBe(2);
     expect(instances).toHaveLength(3);
@@ -374,13 +439,13 @@ describe('WsSubscriber - onRestored', () => {
 
     // First drop → reconnect succeeds → restored once
     (instances[0] as { serverClose(): void }).serverClose();
-    await wait(50);
+    await until(() => onRestored.mock.calls.length >= 1);
     expect(onRestored).toHaveBeenCalledTimes(1);
 
     // Second drop → reconnect succeeds again → restored twice.
     // Also proves the attempt budget was reset by the first successful reconnect.
     (instances[1] as { serverClose(): void }).serverClose();
-    await wait(50);
+    await until(() => onRestored.mock.calls.length >= 2);
     expect(onRestored).toHaveBeenCalledTimes(2);
     expect(onLost).not.toHaveBeenCalled();
   });
@@ -432,9 +497,13 @@ describe('WsSubscriber - heartbeat', () => {
       reconnectBaseMs: 5,
     });
 
-    await wait(120);
-
+    // Wait for the whole chain to land rather than for a fixed span: ping ->
+    // pong timeout -> terminate -> reconnect -> onRestored.
     const first = instances[0] as { pings: number; terminated: boolean };
+    await until(() =>
+      first.pings > 0 && first.terminated
+      && instances.length > 1 && onRestored.mock.calls.length > 0);
+
     expect(first.pings).toBeGreaterThan(0);
     expect(first.terminated).toBe(true);       // heartbeat killed the frozen socket
     expect(instances.length).toBeGreaterThan(1); // and the reconnect path ran
@@ -451,9 +520,9 @@ describe('WsSubscriber - heartbeat', () => {
       pingIntervalMs: 10,
     });
 
-    await wait(80);
-
     const first = instances[0] as { pings: number; terminated: boolean };
+    await until(() => first.pings >= 2);
+
     expect(first.pings).toBeGreaterThanOrEqual(2);
     expect(first.terminated).toBe(false);
     expect(instances).toHaveLength(1);

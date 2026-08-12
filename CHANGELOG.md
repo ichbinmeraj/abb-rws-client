@@ -6,8 +6,663 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-12
+
+### Added
+
+- **RWS 1.0 coverage expansion - 20 endpoints closed via an ABB-doc + live-probe
+  sweep.** A cross-check of the client against ABB's official RWS documentation
+  (developercenter.robotstudio.com) surfaced a batch of endpoints the IRC5
+  supports through **query-action forms** that differ from the RWS 2.0 path-action
+  forms - the exact kind of generation split the path tables exist to capture.
+  Each candidate form was then live-verified against the IRC5 RW6.16 VC before
+  shipping (docs give the candidate, the controller gives the truth). Added on
+  RWS 1.0 (and on both generations where noted):
+  - **File / ctrl:** `compressPath` + `decompressPath` (`/ctrl/compress?action=comp`
+    / `?action=dcomp`, `/fileservice/` paths), `getVirtualTimeTimeslice`,
+    `renameFile` (`fs-action=rename`).
+  - **I/O:** `searchSignals` + `searchSignalsEx` (`?action=signal-search` /
+    `signal-searchex`), `searchIoDevices` (`/rw/iosystem/devices?action=search` by
+    name/lstate - distinct from `searchDevices`, which searches the hardware tree).
+  - **RAPID / motion:** `getModuleText` + `getModuleTextRange` (flat module
+    collection scoped by `?task=`, whole text via `?resource=module-text`),
+    `checkMotionChangeCount` (`?changecount=` vs the 2.0 path segment).
+  - **Elog / cfg:** `saveEventLogRaw` (`?action=saveraw`), `validateCfgFile`
+    (`?action=validate` load dry-run), `validateInstanceBeforeDelete`
+    (`?action=validate-inst-at-del`).
+  - **Panel / ctrl / users:** `setPanelLanguage` (`?action=setlang`, `lang-code`),
+    `setControllerLanguage` (`?action=set-lang`, `lang`), and `pollRmmp` +
+    `cancelRmmp` on **both** generations (RMMP grant lifecycle).
+
+  Conformance now reports **59 implemented · 1 deliberate-gap · 0 unmapped · 0
+  orphan** across both live generations. The lone residual gap is the
+  `/ctrl/options` empty verify-stub (**204 no-content**; the real option list is
+  `/rw/system/options`, which is implemented). The remaining uncovered endpoints
+  are hardware/option-gated (vision, safety commissioning, calibration) and cannot
+  be live-verified on a virtual controller.
+
+- **Path tables - the single source of RWS URLs.** Every URL the client uses is
+  now declared once in `src/paths`, one table per RWS domain, keyed by operation
+  and split by protocol generation (269 operations, 398 path specs). Previously
+  ~233 URL literals were scattered across eight files, most inline in method
+  bodies, so an ABB endpoint change meant hunting six files and the two
+  generations drifted with nothing forcing the difference to be intentional. The
+  tables capture the anomalies that made updates expensive - symbol suffix/prefix
+  inversion, inverted-polarity stop simulations, field-name-vs-path-segment
+  mismatches, query-action vs plain-POST splits - as data. **The clients now READ
+  the tables** (~356 `buildPath` call sites across both mappers, both clients and
+  the adapter), so a path change means editing one table row, not a row plus a
+  hidden literal. Additive: no public API change, and the migration is
+  behaviour-preserving - every single-path RWS operation produces the exact URL
+  it did before (locked by `tests/paths.test.ts`'s exact-URL assertions and the
+  endpoint tests). The only literals that remain are genuine exceptions: the
+  fileservice paths and multi-segment cert-store paths (custom per-segment
+  encoding buildPath would break), the unmodelled hardware Devices Service, the
+  non-resource endpoints (`/logout`, `/progress`, the `/rw/retcode` dictionary),
+  and composite fan-outs with dynamic sub-paths.
+- **`npm run conformance` - the drift check.** Crawls each live controller's
+  resource tree and diffs it against the path tables, classifying every
+  advertised resource as implemented / deliberate-gap / unmapped / orphan. After
+  a RobotWare upgrade, new endpoints show up as `unmapped` in one run rather than
+  as an investigation. Its first run already caught a genuine table omission
+  (`/ctrl/virtualtime` atomic reads) and a deliberate divergence (`/ctrl/options`
+  vs `/rw/system/options`). Report in `CONFORMANCE.md`.
+
+### Fixed
+
+- **Controller discovery is now fast AND complete - the first thing a user sees.**
+  Three problems fixed, all live-verified against the rig (found all three VCs,
+  incl. the IRC5 on a non-standard port, in ~1.5 s):
+  - `discoverControllers` used to run the local port scan *only if the standard
+    ports found nothing*, so with two VCs running - one on a standard port
+    (5466), one not (14880) - it returned the first and **silently hid the
+    second**. Localhost is now always discovered by probing the ports the OS
+    reports as **listening** (`netstat`/`ss`), which is complete regardless of
+    how many VCs run or where their ports landed.
+  - The blind fallback scan capped at port **30000**, but RobotStudio assigns VC
+    ports from the dynamic range (values of **40483** and **62214** observed on
+    this rig) - so a drifted VC was undiscoverable. The OS-listening scan has no
+    cap; the blind scan (now ceilinged at 65535) is a last resort only when the
+    OS query is unavailable.
+  - The protocol layer (`detect.probeHost`) and the discovery layer
+    (`RobotManager.PROBE_PORTS`) kept **two divergent port lists** (one missing
+    5466/11811, the other missing 28447). Both now derive from one shared
+    `KNOWN_RWS_PORTS`, so they can't drift again.
+  Discovery also got faster: `probeSpecificPort` probes HTTP/HTTPS concurrently
+  instead of sequentially (halving the per-port worst case), which cut a full
+  local scan from ~4.2 s to ~1.4 s. And mDNS now **re-queries within its window**
+  (bursts at 0/250/750 ms) so a dropped UDP packet or a slow responder no longer
+  makes a browse intermittently miss a controller that is right there.
+- **The two-generation endpoint sweep is now reachable polymorphically.** The
+  sweep added its methods to the concrete adapters but not to the shared
+  `IRWSAdapter` contract, so nine methods live-verified on *both* generations -
+  `searchSignals`, `searchIoDevices`, `renameFile`, `getModuleText`,
+  `getModuleTextRange`, `checkMotionChangeCount`, `saveEventLogRaw`,
+  `decompressPath`, `getVirtualTimeTimeslice` - plus the RWS-1.0-only
+  `validateCfgFile` / `validateInstanceBeforeDelete` were unreachable through
+  `createAdapter(): IRWSAdapter` and `RobotManager` without an unsafe cast. The
+  sharpest case: you could `setModuleText` through the interface but not
+  `getModuleText` to read it back first. All are now declared on `IRWSAdapter`
+  and forwarded by `RobotManager`, so consumers reaching the client through the
+  documented polymorphic surface (including the VS Code extension via
+  `MultiRobotManager`) can call the read/search side, not only the write side.
+- **Docs no longer deny capabilities the client ships.** The published `.d.ts`
+  and README claimed `searchSignals`/`searchSignalsEx` were "RWS 2.0 only - the
+  RWS 1.0 side has no server-side signal search at all" (false since the sweep),
+  and six README rows tagged `renameFile` / `searchSignals` / `searchSignalsEx` /
+  `saveEventLogRaw` / `setPanelLanguage` / `setControllerLanguage` "RWS 2.0" though
+  they are live-verified on IRC5 too. The README error-code table listed only 13
+  of 17 `RwsErrorCode`s (missing `INVALID_ARGUMENT`, `UNSUPPORTED_OPERATION`,
+  `NOT_CONNECTED`, `PROTOCOL_DETECT_FAILED`, all actively thrown), and
+  `COVERAGE.md` / `ARCHITECTURE.md` still described the removed RWS 2.0 PING/PONG
+  subscription heartbeat instead of the current silent-socket + out-of-band GET
+  liveness probe. All corrected.
+- **RWS 1.0 `searchSignalsEx` / `searchIoDevices` surface typed errors on a parse
+  failure.** Both hand-build the request and called the raw client directly,
+  bypassing the error-wrap their sibling `searchSignals` uses, so a parser throw
+  on an unexpected 2xx body escaped as a bare `Error` instead of a typed
+  `RwsError`. Now wrapped, matching the rest of the search surface.
+- **Secrets no longer leak into trace logs.** Every write body was traced
+  verbatim (first 200 chars) into the logger's structured `data`, so a host that
+  persists trace output (the RAPID Live extension writes a log file) stored
+  `changePassword`'s old/new passwords, the control-station pincode, and the
+  operation-mode-lock PIN in cleartext at rest. Secret-named form fields are now
+  redacted before logging on both generations; non-secret fields are untouched.
+- **RWS 1.0 `startRapid()` honours the execution cycle.** It hardcoded
+  `cycle=forever`, overriding a prior `setExecutionCycle('once')`, so a program
+  the caller wanted to run once looped continuously and single-cycle mode was
+  unreachable. Now sends `cycle=asis` (as RWS 2.0 already did) - the controller's
+  default is `forever`, so a caller who never sets a cycle is unaffected.
+- **RWS 1.0 `setControllerClock()` actually sets the clock.** Its form body was
+  sent as `application/octet-stream`, so the controller's form parser ignored the
+  `sys-clock-*` fields and the clock was silently unchanged. Now sent as
+  `application/x-www-form-urlencoded`.
+- **`copyFile()` no longer silently copies to the wrong place.** RWS fileservice
+  copy is same-directory-only; a cross-directory destination had its directory
+  dropped and the file was copied next to the source. Both generations now throw
+  `INVALID_ARGUMENT` for a cross-directory destination instead.
+- **`getActiveUiInstruction()` returns `null` when idle, as documented.** On IRC5
+  the idle case answers HTTP 404; the method threw `RESOURCE_NOT_FOUND` on every
+  idle poll instead of resolving to the documented `null`.
+- **`RobotManager` no longer resurrects state after an intentional disconnect.**
+  `refresh()` (and the async event-log subscription callback) kept operating on
+  the torn-down adapter, so a refresh after disconnect could repopulate a
+  "disconnected" state or re-fire the auto-disconnect "Reconnect" prompt.
+  `refresh()` is now a no-op unless connected, the elog callback drops a
+  late-arriving result across a disconnect/reconnect, and the failure counter is
+  reset on disconnect.
+- **RWS 2.0 survives the keep-alive race.** A controller that closes an idle
+  pooled connection leaves a dead socket in the agent, and the next request
+  adopts it and fails with `socket hang up` before anything is sent. RWS 1.0
+  never showed this because undici retries a reused connection itself; the raw
+  agent used by RWS 2.0 did not. Idempotent requests (`GET`, `OPTIONS`, `HEAD`)
+  are now retried once on a fresh connection. Writes are deliberately **never**
+  retried - re-sending a POST could start RAPID or toggle an output twice, and no
+  reliability gain justifies that. Found by structural cell S09.
+- **RWS 2.0 subscriptions no longer destroy themselves every 25 seconds.** The
+  client sent an app-level `PING` frame on the subscription WebSocket as a
+  keep-alive, on the premise that the controller closes an idle socket at 30 s,
+  and terminated the stream if no `PONG` came back. Every part of that premise is
+  false on OmniCore RW7.21, and all three were verified live:
+  - the controller **rejects client data on that socket entirely**, answering any
+    frame - `PING` included - with a `1008 "Client cannot send data."` close. The
+    keep-alive was itself killing the subscription roughly every 25 s; the
+    reconnect logic then rebuilt it, which is why this looked like it worked
+    rather than looking broken. Each cycle re-POSTs `/subscription`, mints a
+    session, and drops events in the gap;
+  - the socket needs no keep-alive at all - with the client silent it stayed open
+    well past 75 s;
+  - and the controller answers neither app-level `PING` nor a protocol-level ws
+    ping, so the `PONG` deadline could never have been a liveness signal. On a
+    quiet resource the only thing that could satisfy it was an event that never
+    came, so a healthy idle stream was torn down every two intervals regardless.
+
+  The client is now **silent on the subscription socket**, and establishes
+  liveness out of band with a cheap GET on the same session each interval.
+  Inbound frames still count as proof of life, so a busy stream never pays for
+  the probe; two consecutive intervals with neither terminates and reconnects,
+  keeping detection at the same two-interval bound as before. Found by structural
+  cell S02.
+
+  **Known limit:** because the client may not send on that socket and an idle
+  subscription sends nothing back, a half-open state affecting *only* the
+  WebSocket while HTTP still works cannot be detected in band. Detection covers
+  link-level failure, which is the case that occurs in practice.
+
+- **A stalled response body no longer hangs an RWS 1.0 request forever.** `fetch()`
+  resolves as soon as response HEADERS arrive and streams the body afterwards, but
+  the abort timer was cleared at that moment - so the body read had no deadline at
+  all. A controller that sent headers and then stalled mid-body left the request
+  pending indefinitely, and because this client serialises every request through a
+  single paced queue, that one hung read stalled every request behind it while no
+  configured timeout ever fired. The timeout now covers the whole exchange.
+- **Unparseable RWS 2.0 responses are rejected instead of being answered with a
+  plausible default.** `getState()` returns an empty map both for "block absent"
+  and "block empty", so `getControllerState()` answered `init`, and
+  `getOperationMode()` answered **`MANR`**, for a garbled or truncated response -
+  reporting a specific, safety-relevant state the controller never sent. Those
+  readers (plus speed ratio and RAPID execution state) now throw `PARSE_ERROR`
+  when the state block is missing entirely, matching what RWS 1.0's parser already
+  did for the same input. Field-level defaults are unchanged: a block that IS
+  present but omits one span is a different situation.
+
+Both were found by structural cell S12 (malformed / truncated responses).
+
 ### Changed
 
+- **`package.json` declares `sideEffects: false`.** The modules are side-effect-free
+  on import (verified: no top-level I/O, timers, sockets, or global mutation), so
+  bundlers can now tree-shake unused adapters/mixins out of a downstream build.
+- **`RwsClient2` restructured into per-RWS-domain modules.** The 4,300-line class
+  was organised by protocol generation while RWS is organised by domain, so an ABB
+  update never landed anywhere obvious. It is now a thin composition façade over
+  `Rws2Core` (the shared machinery - transport, connection, subscriptions,
+  mastership / control-station, RMMP) with the 236 endpoint methods split into
+  nine domain mixins under `src/rws2/` (`panel`, `rapid`, `motion`, `io`,
+  `cfgElogDipc`, `ctrl`, `system`, `users`, `files`). Each domain now has one
+  obvious home - the mixin file beside its `src/paths` table - so a protocol
+  change is a diff in one place, not archaeology across a monolith. `core.ts`
+  drops from 4,333 to 1,583 lines. **No public API change:** the import path, the
+  class name and every method are unchanged; each mixin publishes a named
+  public-methods interface so the emitted `RwsClient2.d.ts` stays identical in
+  surface. The move is behaviour-preserving - an AST diff against the pre-split
+  class shows 275 of 283 method bodies byte-identical and the other eight only the
+  mechanical edits the split required (four `private`→`protected` promotions, two
+  constant dereferences, two type-only casts); 0 methods lost, added or
+  duplicated. Verified by tsc, 585 unit tests, a leak-free declaration, a
+  read-only live smoke against OmniCore RW7.21 and RW8.1.1, and structural cell
+  S12 under fault injection.
+
+## [1.2.0] - 2026-08-09
+
+Everything below accumulated after the 1.1.0 entry was written on 2026-08-02.
+1.1.0 was version-bumped and changelogged but never tagged or published, so npm
+goes 1.0.0 → 1.2.0; the 1.1.0 section is kept as the record of what was true on
+its date rather than being back-filled.
+
+### Fixed
+
+- **The flaky RWS 2.0 reconnect test is fixed at its cause.** The subscription
+  tests addressed server sockets by index (`sockets[0]`, `sockets[1]`), which
+  assumes every socket the server accepts is one the client kept. It is not: if
+  the client's WS open timeout expires while the handshake is still settling —
+  ordinary under parallel-suite CPU load — the client discards that connection
+  and reconnects, leaving the server holding a dead entry. The test then sent
+  its event to a closed socket and waited, which no timeout could rescue. This
+  was reproduced deliberately (a 5 ms open timeout leaves the server holding one
+  socket, state DEAD, while the client has moved on), so the diagnosis is
+  demonstrated rather than inferred. Events are now delivered over the newest
+  *open* socket and re-sent until the handler sees them, and drops terminate
+  every current socket instead of index 0. Ten full-suite runs under doubled CPU
+  contention pass, against roughly one failure in two before this work.
+
+- **RobotWare 8 no longer throws when releasing write access.** Any write clears
+  control-station write access as a side effect on RW8 — the status resource
+  reports `held=false` immediately after a write while the session keeps writing
+  successfully — so the release that followed was refused with
+  `403 "The control station does not have SPoC."` and `releaseMastership`
+  propagated it. Because the documented pattern is acquire → try →
+  release-in-finally, that surfaced from the `finally` and masked the caller's
+  real result: a write that had actually succeeded looked like a failure.
+  Nothing ever leaked (`held` reads false throughout, and a fresh acquire always
+  succeeds), so this specific refusal is now treated as "already released".
+  Every other 403 from release still throws. RobotWare 7 was never affected.
+
+### Added
+
+- **In-place RAPID module source editing**: `setModuleText` replaces a module's
+  source directly in program memory (the write side of the existing
+  `getModuleText`, with no TEMP round trip), and `setModuleTextRange` replaces a
+  row/column range. Both are RWS 2.0 only. Note the controller's own form for the
+  ranged variant advertises `action=".../textrange"`, which 404s — the real path
+  is `/text/range`, the one its OPTIONS is served at.
+- `setKeylessMotorOn` — motors on without the key switch, for controllers with
+  the Keyless Mode Switch option. The resource lives at
+  `/rw/panel/ctrl-state/keyless-motoron`; the widely-recorded
+  `/rw/panel/keyless-motoron` 404s on every generation.
+- **The endpoint-completion surface is reachable from every layer**, not just
+  `RwsClient2`: the 19 methods are declared on `IRWSAdapter` (optional, since
+  all of them answer 404 on IRC5) and wrapped by `RobotManager`. Reads degrade
+  to a neutral value on RobotWare 6; **writes throw a typed
+  `UNSUPPORTED_OPERATION`** rather than silently doing nothing. A shape test
+  asserts the RWS 2.0-only asymmetry so it stays a deliberate decision.
+- `RobotManager.subscriptionGroupPath` exposes the manager's own live
+  subscription group, so `updateSubscriptionGroup` / `unsubscribeResource` can
+  add or drop resources on the manager's stream without tearing it down.
+- Endpoint-completion sweep. Every remaining endpoint the controllers advertise
+  is now either implemented and live-verified or documented as unreachable with
+  the controller's own refusal as the evidence; `docs/tasks/endpoint-completion.md`
+  carries the per-endpoint record. New methods: `setPanelLanguage`,
+  `setControllerLanguage`, `setExternalEmergencyStop`, `searchSignalsEx`,
+  `validateCfgInstances`, `getCollisionPredictionModelName`,
+  `saveCollisionAvoidanceSnapshot`, `loadCollisionAvoidanceConfig`,
+  `modifyPosition` (ModPos), `resetTaskProgramPointer`, `getDiagnostics`,
+  `saveDiagnostics`, `saveSystemInfo`, `registerUser`, `impersonateUser`,
+  `isPasswordChangeAllowed` and `changePassword`.
+- **Subscription groups can be edited in place.** `updateSubscriptionGroup` adds
+  resources to a live group (the controller answers with the added resource's
+  initial value event, so there is no wait for the first change) and
+  `unsubscribeResource` drops a single resource without tearing the group down.
+  Both clients previously rebuilt the entire group on any change. The group's
+  path is exposed as `groupPath` on the handle `subscribe()` returns — the
+  handle is still callable exactly as before.
+- Several endpoints behave differently from what the specification implies, all
+  live-verified on RobotWare 7.21 and 8.1.1: `signal-search-ex`'s second criteria
+  set **narrows** rather than unions, and it does not glob; `validate-instances`
+  takes a **numeric** `operation` (only 0 or 1) and validates instances that
+  **already exist** rather than proposed ones; `collisionprediction/modelname`
+  numbers robots from **zero**; and `/ctrl/system/info` is a POST that writes a
+  file, not a getter. Each is recorded in the method's doc comment.
+- `listCurrentUserGrants` now works on RobotWare 6 as well: RWS 1.0 serves the
+  logged-in user's grants at `/users/grants` (26 grants on a live IRC5), so the
+  method name is the same on both protocols. Only the `/uas/*` tree is genuinely
+  RWS 2.0 only. `listNetworkInterfaces` added for the full interface list.
+- Resource-tree crawl batch. Crawling what the controllers advertise about
+  themselves surfaced resources no documentation lists: `listEventLogDomains`
+  (a live controller carries events in six domains, while `getEventLog`
+  defaults to domain 0 alone), `getCyclicBrakeCheckStatus` (the resource
+  requires a `drivenum` query parameter, which is why the old call never
+  worked), `listInstructionCategories` and `listInstructions` (the pendant's
+  RAPID instruction catalog, 20 categories - useful for editors),
+  `getRegistryFile` (the eleven controller registry files, content inline),
+  and `getTaskChangeCount`.
+- `RestartMode` now includes `shutdown` and `xstart`, which RobotWare 7/8
+  accept; calling either against an IRC5 throws `UNSUPPORTED_OPERATION` (a new
+  error code) rather than failing at the controller.
+- `describeReturnCode` translates a controller status code through the
+  controller's own dictionary, returning ABB's symbolic name
+  (`SYS_CTRL_E_NO_SUCH_SYMBOL`), a severity and a sentence of prose. Every
+  `RwsError` already carries a `controllerCode`; this turns it into something
+  worth showing a person, including for codes this client has never seen. It
+  works on all three generations, and the dictionary is per-generation, so a
+  RobotWare 8 code comes back null on RobotWare 7.
+- Certificate store, backup state and controller device inventory, found by
+  crawling what the controllers advertise and diffing it against every path
+  the client references. `getBackupState` closes a real hole: `createBackup`
+  answers 202 and finishes asynchronously, and there was no way to tell when.
+  `listCertificateStores` and `getCertificates` read the PEM the controller
+  presents for RWS and the CA store it trusts. `listDeviceGroups` and
+  `listControllerDevices` list the drive links, mechanical units and
+  FlexPendant, and the software resources. `listLdapResources` and
+  `getLdapResource` reach the last advertised resource left, the latter as a
+  deliberate pass-through returning whatever fields the controller sends,
+  because both VCs refuse every LDAP read and carry no LDAP option, so the
+  field names cannot be learned here and are not guessed. RobotWare 6 serves the same
+  inventory in a different body shape and one level deeper (HW_DEVICES holds
+  CONTROLLER, which holds COMPUTER_SYSTEM), so it has its own walker and a
+  nested path reads any level. After this the only advertised
+  resource the client does not touch is `/uas/ldap`, whose sub-resources
+  answer 403 for a normal user, so its success shape cannot be verified here
+  and it is deliberately not implemented blind.
+- `getEventLog` can list newest-first: pass `'newest'` as the fourth argument.
+  Paging from the oldest end meant a controller with a long log handed back
+  boot messages instead of what just happened, which is backwards for
+  diagnostics. This needs the `v=2.1` media type, which is not in the
+  published API reference and which the event log is the only resource to
+  accept; under `v=2.0` the controller refuses `order=lifo` and names 2.1 in
+  the error. Live-verified on RW7.21 and RW8.1.1.
+- `ElogMessage.args` carries the substituted values of an event-log message.
+  The controller stores the text as a template and sends the values
+  separately, so "The speed has been adjusted to 100% by Default User" arrived
+  as a generic title with the two values dropped on the floor. On the live
+  controllers 58 of 153 messages (RW7) and 48 of 83 (RW8) carry arguments, so
+  a large share of the log was losing the detail that says which task, which
+  value, which user. Read on both protocols and both representations.
+
+### Fixed
+
+- **The RWS 2.0 rate limit did not hold under concurrency.** Pacing read the
+  last-request timestamp, awaited a timer, then wrote it back, so callers that
+  arrived together all saw the same stale value and all fired at once: five
+  concurrent reads went out in 81 ms against the controller's documented
+  ceiling of 20 per second. Exceeding that ceiling is exactly what makes a
+  controller start answering 503. Request starts are now chained, so the gap
+  holds however calls arrive; the requests themselves still overlap, so a call
+  that blocks server-side cannot stall the ones behind it. RWS 1.0 had a
+  proper queue all along.
+- **About a hundred public methods threw a plain `Error`,** so
+  `catch (e) { if (e.code === ...) }` silently matched nothing on those paths
+  even though every method is documented to throw `RwsError`. The worst of it
+  was `RWS1Adapter`'s two generic `?json=1` helpers, which back roughly fifty
+  endpoints and turned every controller failure into an untyped error. They
+  now classify through the same taxonomy as the rest. `RobotManager` and
+  `MultiRobotManager` guards carry codes too: `NOT_CONNECTED` (new),
+  `UNSUPPORTED_OPERATION`, and, where the manager already knew the reason,
+  `MOTORS_OFF`, `WRONG_MODE` and `GRANT_DENIED`. Messages are unchanged, so
+  anything matching on text still works. A test now fails the build if a plain
+  `Error` reappears on a public path.
+- `XhtmlParser` dropped every `<span>` that carried attributes beyond `class`.
+  The pattern required `>` immediately after the class, and event-log
+  arguments are served as `<span class="arg1" type="long">100</span>`, so they
+  never parsed. A test had pinned this as intended behavior; it was a bug.
+  The RWS 1.0 parser already tolerated extra attributes.
+- **The client leaked RobotWare 8 write access on disconnect.** RW8 does not
+  drop control-station write access when the session ends, unlike the
+  mastership service it replaces, so logging out while holding it left the
+  controller believing a station that no longer existed still owned write
+  access. Every later client, ours or anyone's, was then refused with 403
+  "Remote Control Station cannot take SPoC when it is taken" until someone
+  released it by hand. `disconnect()` now releases first, and only if this
+  session actually took it. Found by hitting the leak on a live RW8.
+- `setSpeedRatio` rejects a ratio outside 0-100 instead of silently clamping
+  it. Clamping meant a caller who passed 500, or 0.85 intending 85%, got a
+  different robot speed than they asked for with no error. Speed is a motion
+  parameter, so it now throws `INVALID_ARGUMENT` (a new error code) and sends
+  nothing. Validation also moved ahead of the write-access acquire, so a bad
+  argument costs no controller round trip and its error is not masked by an
+  unrelated write-access failure on RW8.
+- Seven controller error codes were unmapped, so callers got `UNKNOWN`. Found
+  by triggering safe rejected operations on all three generations and recording
+  every native code each returns. `unloadModule` on a module that is not loaded
+  now reports `MODULE_NOT_FOUND` instead of `UNKNOWN`, and a bad volume in a
+  file path reports `RESOURCE_NOT_FOUND` on RWS 2.0 as it already did on RWS
+  1.0 (same call, two different codes, because the controller answers 400 on
+  one protocol and 404 on the other).
+- Classification no longer trusts the controller code alone where the
+  controller overloads it. `-1073442816` covers at least three distinct
+  conditions with different wording and HTTP status: "Unknown module name",
+  "Symbol not found", and an untranslated "org_code: -517". Mapping the number
+  straight to `MODULE_NOT_FOUND` made every missing *symbol* look like a
+  missing *module*, so the message decides where it is specific. Both meanings
+  are pinned by live-captured fixtures.
+- **Signal subscriptions never worked on RWS 2.0.** The builder asked for
+  `/rw/iosystem/signals/{sig};lvalue`, which OmniCore rejects with HTTP 400
+  "Invalid resource URI in Create Subscription request", so every attempt to
+  watch an I/O signal in real time failed at subscribe time on RobotWare 7 and
+  8. The suffix is `;state` (`lvalue` is the field the event carries, not the
+  resource to subscribe on). RWS 1.0 had it right all along. Verified against
+  RW7.21 and RW8.1.1.
+- **Persistent-variable subscriptions never worked on RWS 2.0 either.** The
+  builder used the RWS 1.0 shape `/rw/rapid/symbol/data/RAPID/{sym};value`.
+  RobotWare 7 answers that with HTTP 500 "RW-Subscription service is down" (a
+  misleading message - the service is fine) and RobotWare 8 with HTTP 400. The
+  RWS 2.0 shape puts `data` after the symbol path:
+  `/rw/rapid/symbol/RAPID/{task}/{module}/{symbol}/data;value`.
+- **The same `{ type: 'persvar' }` resource no longer behaves differently per
+  adapter.** RWS 1.0 requires the leading `RAPID/` domain and rejects the bare
+  path with HTTP 400; RWS 2.0 wants it bare. Both builders now normalize, so
+  one resource object works on either protocol with or without the prefix -
+  which matters because `MultiRobotManager` switches adapters underneath a
+  single contract. The full 12-resource subscription surface is now accepted on
+  RW6.16, RW7.21 and RW8.1.1 alike.
+- `RobotManager` no longer pages over `listAllSignals` itself. That loop was
+  correct while the adapter returned a single page, but once the adapter began
+  following the controller's pagination it re-fetched from an offset and
+  appended duplicates. Verified live: 130 and 141 signals on the two OmniCore
+  controllers with no duplicates.
+- `listAllGrants` returned an empty list whenever a controller served XHTML.
+  The two representations of that one resource use different class and field
+  names (`grant-info`/`grant-description` in JSON, `uas-grant`/`description` in
+  XHTML), and only the JSON spelling was handled. Both are accepted now. Every
+  other read was checked the same way: 80 of 81 parse identically in both
+  representations, so this was the only gap.
+- **`listAllSignals` and `getEventLog` were silently truncating.** The
+  controller caps a page (100 signals, 50 log messages) and ignores a larger
+  `limit`, advertising a `next` link instead. Both read a single page, so
+  callers saw 100 of 130 signals and 50 of 148 messages without any indication
+  that more existed. Both now follow `next` to the end, with a page bound and a
+  guard against a controller that points `next` at the current page. Verified
+  live: 130 and 141 signals on the two OmniCore controllers, and event-log
+  counts that match what the controller reports for the domain.
+- **`copyFile` never worked on RWS 2.0.** It sent a `destination` field, which
+  the controller rejects with HTTP 400; the copy endpoint takes `fs-newname`
+  (a bare target name) plus an optional `fs-overwrite`. Copying now works on
+  RobotWare 7.21 and 8.1.1, verified by reading the copy back. A directory part
+  in the destination is dropped, matching the RWS 1.0 behavior, and an
+  `overwrite` argument was added.
+- `setProgramPointer` no longer sends row and column fields that the endpoint's
+  form does not accept (a source position is set through the cursor endpoint);
+  `userlevel`, which the form does accept, can now be passed.
+- **RWS 1.0 symbol properties threw for every persistent.** The parser required
+  the VAR list class, but the class encodes the symbol kind, so reading the
+  properties of `tool0`, `wobj0` or any PERS raised `PARSE_ERROR` on RobotWare 6.
+  All symbol kinds are now accepted (a test that had been marked as a known
+  failure now passes).
+- RWS 1.0 `listControllerOptions` returned nothing: `/ctrl/options` answers 204
+  No Content on RobotWare 6 too. It now reads `/rw/system/options` and returns
+  the installed options.
+- RWS 1.0 resources that reply in the RobotWare 7 shape (a top-level `state`
+  array rather than `_embedded._state`) are now read correctly - `listProducts`
+  was empty for this reason.
+- **RAPID symbol search silently dropped every persistent.** The PERS result
+  class was spelled `rap-syproppers-li` (missing an "m"), so `tool0`, `wobj0`,
+  `load0` and every other PERS never appeared in `searchRapidSymbols` or
+  `listModuleSymbols` results. Searching the BASE module now returns all three
+  on both RobotWare 7.21 and 8.1.1 where it returned nothing.
+- **Ten methods were parsing classes the controllers never send, so they
+  returned empty or wrong data on every controller.** Found by harvesting every
+  class the three controllers actually emit and diffing it against what the
+  client expects. Each is now read from the real response and verified live on
+  RobotWare 7.21 and 8.1.1:
+  `getReturnCode` (the class is `err-desc` with name/description - it returned
+  null for every code), `listControllerOptions` (the installed-option list is
+  `/rw/system/options`, not `/ctrl/options`, which serves no list at all - 24
+  options now returned), `listFileVolumes` (volumes are `fs-dir` entries; it
+  silently fell back to a hardcoded list every time), `listCertificates`,
+  `getRegistry`, `getSafetyStatus` (`/ctrl/safety` is only a directory of links,
+  so the status is now composed from the mode, violation and load resources),
+  `getMechunitPjoints`, `getMechunitAxes` (each axis carries a status and a
+  logical-axis entry), `getTaskProgramInfo`, `getTaskMotion`, and
+  `getRapidSymbolProperties` (persistents and constants use their own classes,
+  so only plain variables ever parsed).
+- `listSafetyZones` documented as unavailable: `/ctrl/safety/zones` does not
+  exist on RobotWare 7 or 8.
+- **RobotWare 8.1.1 ships with its RMMP service broken** - every verb answers
+  HTTP 500 (verified back to back against a working RobotWare 7.21). The client
+  no longer surfaces a bare 500: `getRmmpPrivilege` reports no privilege held,
+  and `requestRmmp` explains the situation with `UNSUPPORTED_OPERATION`.
+- `listVisionSystems` parsed a class the controller never sends, so it always
+  returned an empty list. It now reads the real camera entries, with
+  `getVisionCameraCount` for the camera count.
+- `getTaskStructuralChangeCount` returned the wrong number: the resource
+  carries both a structural and an any-edit counter, and it read the latter
+  (215 instead of 6966 on a live controller). It now returns the structural
+  count, with `getTaskChangeCount` for the other one.
+- `getTaskSelection` parsed a class the controller never sends, so it always
+  returned empty lists. It now reads the real entries, including which tasks
+  are ON.
+- `runCyclicBrakeCheck` documented as unavailable on virtual controllers
+  (the resource answers 404 there, and the status resource is read-only).
+
+### Added (continued)
+
+- Deep-coverage read batch, shapes captured live and identical on RW7.21 and
+  RW8.1: `getModuleText` (full source straight from program memory, no TEMP
+  round trip), `getModuleTextRange`, `searchModuleText` (query param is `text`;
+  hits are Row/Column positions), `getModuleChangeCount`,
+  `getModuleSyncPersStatus`, `getModuleExtension`, `getProgramPointerSyncState`,
+  `getMotionPointerSyncState`, `getSpyStatus`, `getSafetyMode`,
+  `getSafetyViolationInfo`, `getSafetyLoadStatus`, `getSafetyStartupStatus`
+  (the controller misspells the class as `...-load-satus` on both generations;
+  read as-is with the corrected spelling as fallback), and
+  `getVirtualTimeTimeslice`.
+- `decompressPath` added, and `compressPath` fixed: the controller fields are
+  `srcpath`/`dstpath` as fileservice URIs (the documented `source`/`destination`
+  are rejected). Compress verified creating the archive on the VC; note the VC's
+  compression backend leaves the archive empty (controller-side limitation).
+- RWS 1.0 `createBackup`/`restoreBackup` fixed: the backup value must be a
+  fileservice URI (`/fileservice/$BACKUP/name`); the previous bare form answered
+  400 "Invalid File Service path". Verified 202 + backup created on RW6.16.
+  RWS 1.0 `holdToRun` marked unverified: its wire form answers 400 on RW6.16.
+- Niche coverage batch, forms taken from each endpoint's own `OPTIONS` response
+  and cross-checked live on RW7.21: motion supervision (`setMotionSupervisionMode`,
+  `setMotionSupervisionSensitivity`, where the controller field is `sensitivity`,
+  not `level`; `setPathSupervisionMode`, all gated behind the Collision Detection
+  option), IO (`setSignalSimulated`, `unblockSignals`, `setNetworkLState`,
+  `setIoDeviceLState`), `searchDevices` (the field is `property`, not the
+  OPTIONS-advertised `properties`), program-pointer navigation (`ppPrevInst`,
+  `ppNextInst`, `setPPToRoutineFromUrl`), and `setVirtualTimeTimeslice`,
+  `refreshVisionCameras`, `resetEnergy`. Verified live: `setVirtualTimeTimeslice`
+  and `unblockSignals` (204); `setSignalSimulated` correctly refused (403) on a
+  protected safety signal.
+- **RobotWare 8 support.** RW8 removes the mastership service (HTTP 410) and
+  requires a registered control station for write access. The client now detects
+  the RobotWare version on connect and routes write access automatically:
+  mastership on RW7, Control Station write access on RW8 (register once per
+  session, then request/release). Every existing write method works unchanged on
+  both. The full Control Station Service is also exposed directly:
+  `registerControlStationRemote/Local`, `requestWriteAccess`, `releaseWriteAccess`,
+  `getWriteAccessStatus`, `appealWriteAccessRelease` (+ change count),
+  `getControlStationType/Id`, `isLocalControlStationConnected`,
+  `getAllowMotionControl`, `setAllowMotionControl`, `disableExternalControl`,
+  `getTpuSafetyProtocolStatus`, plus `getRobotWareVersion`. Wire forms
+  discovered and verified end to end on an OmniCore VC RW8.1.1 (the register
+  id must be a braced GUID; registration is session-scoped).
+
+- RWS 2.0 coverage additions (verified against an OmniCore VC RW7.21): start RAPID
+  from the production entry (`startProductionEntry`), load/save a full RAPID program
+  (`loadProgram` / `saveProgram`), acknowledge a pending operation-mode switch
+  (`acknowledgeOperationMode`), and dump the event log to file (`saveEventLogRaw`).
+  First batch of a coverage pass driven by a full audit of the client against the
+  documented RWS surface on both protocols.
+- RWS 2.0 read additions, all live-verified on the VC: `getRestartCount`
+  (controller restart counter), `getDipcQueueInfo` (queue depth, max message size,
+  slot id), and `getRobTarget` (Cartesian pose relative to a chosen tool and work
+  object, complementing `getCartesianFull`).
+- RWS 2.0 parity with the RWS 1.0 adapter, live-verified on the VC: `saveModule`
+  (save a module's source to a controller volume; the controller always writes
+  `{name}.modx` into the volume root, subdirectories are rejected), `listProgress`
+  and `getProgress` (track asynchronous operations such as backups and event-log
+  dumps).
+- Motion niche reads, live-verified on the RW7.21 VC: `getMotionSupervision`,
+  `getPathSupervision`, `getCollisionPredictionModel`, `getAxisPose`, and
+  `checkMotionChangeCount`. On the RWS 1.0 side `getEventLogMessage` (the only
+  one of these RW6.16 serves; supervision, UAS and lock-state reads are
+  protocol-absent there).
+- Niche read batch, all live-verified on the RW7.21 VC: `getOperationModeLockState`,
+  `getEventLogMessage` and `getEventLogMessageBySeqnum` (single-message lookup),
+  `getLoginInfo`, `checkGrantExists`, `listAllGrants`, `listCurrentUserGrants`
+  (UAS reads; `/uas/users` and `/uas/roles` need the UAS administration grant),
+  `getIoNetwork`, `getIoNetworkConfig`, `getIoDeviceInfo`, `getIoDeviceConfig`,
+  and `listCfgTypeAttributes` (attribute schema of a configuration type).
+- RWS 1.0 debugger and program parity, live-verified on the RW6.16 VC:
+  `setProgramPointer` (pcp `?action=set-pp-routine`; the controller requires
+  BOTH module and routine) and `loadProgram` (`?action=loadprog`, body
+  `progpath`). Breakpoint endpoints turned out to be protocol-absent on RW6.16
+  (`/program/breakpoints` is 404), so `listBreakpoints` returning empty there
+  is controller behavior, not a client gap.
+- IO and file additions, live-verified on the RW7.21 VC: `searchSignals`
+  (server-side signal search; the name criterion is a substring match, filters
+  compose as AND, and hits feed the same coordinate cache `writeSignal` uses),
+  `getSignalConfig` (EIO_SIGNAL configuration of one signal), and `renameFile`
+  (the wire field is `fs-newname`; the published spec's `new-filename` is
+  rejected by the controller).
+- Cross-protocol parity batch, live-verified on RW6.16, RW7.21 and RW8.1 VCs:
+  `listServiceRoutines` (all three generations; the controller spells the field
+  `routine-name` on RWS 1.0 and `routine_name` on RWS 2.0, both handled), and on
+  the RWS 1.0 side `getModuleInfo`, `getTaskProgramInfo` (XML representation:
+  the RW6.16 JSON template for this resource is broken and returns unrendered
+  template source), `listFileVolumes`, `saveProgram`, `loadCfgFile`,
+  `saveCfgFile`, `setActiveTool` and `setActiveWobj` (mechunit `?action=set`
+  under motion mastership).
+
+### Fixed
+
+- **RAPID debugger endpoints were wrong (never live-verified); fixed on RW7.21.**
+  `stepRapid` posted to /rw/rapid/tasks/{task}/step, which does not exist (404) -
+  stepping is the execution START endpoint with a step `execmode`
+  (stepin/stepover/stepout/...). `holdToRun` posted `action` to a non-existent
+  task path - the real resource is /rw/rapid/execution/holdtorun with field
+  `state`. `setBreakpoint` sent `begin-position-row/col`, which the controller
+  rejects ("row parameter invalid or missing"); the form fields are
+  `module`/`row`/`column`. All three now reach the correct resource (verified:
+  stepRapid returns WRONG_MODE instead of 404 - these are manual-mode functions,
+  so full happy-path exercise needs the pendant in MANR). `removeBreakpoint` is
+  marked best-effort until it can be set-then-removed in manual mode.
+- **File-target writes were broken on both protocols; all fixed by one discovery.**
+  cfg saveas, elog saveraw and backup create/restore reject every bare volume
+  path ('TEMP/x', '$TEMP/x', 'BACKUP/x') - the value must be a fileservice URI
+  ('/fileservice/TEMP/x'). Found during live finishing tests on RW7.21 and
+  confirmed on RW6.16; the client now normalizes automatically, so
+  `saveCfgFile('SYS', 'TEMP/sys.cfg')` and `createBackup('name')` just work.
+  Full round trips verified: cfg file created and read back on both protocols,
+  elog dump created, backup created and validated with the new `checkRestore`.
+- `resetRapid` and `startProductionEntry` (RWS 2.0) now acquire edit mastership
+  internally like `setSpeedRatio` does - without it the controller answers
+  MASTERSHIP_REQUIRED (live-verified). `stopRapid` stays unwrapped on purpose:
+  a stop must never be blocked by mastership contention.
+- The RWS 1.0 production-start action is `startprodentry`, not `start-prod`
+  (which answers 400 "Invalid argument" on RW6.16 - the old form never worked).
+  Verified with a full start/stop/reset cycle on the live VC.
+- **RWS 2.0 DIPC was fully broken; now works end to end.** Verified against an
+  OmniCore VC RW7.21 by round-tripping create, send, and read.
+  - `createDipcQueue` sent `dipc-max-size` / `dipc-max-number-of-messages`, which
+    the controller rejects (HTTP 400). The accepted fields are `dipc-queue-size`
+    (max message count) and `dipc-max-msg-size` (max bytes per message).
+  - `sendDipcMessage` omitted the required `dipc-userdef` field, so every send
+    returned HTTP 400. It is now included.
+  - `readDipcMessage` parsed the wrong element class (`dipc-message`), so it
+    always returned null. The message arrives as `dipc-read`; the payload is now
+    returned and the message is consumed on read as expected.
+
+### Changed
+
+- RWS 2.0 control and write endpoints (panel, RAPID execution, mastership, IO
+  set, event log, CFG load/save, DIPC, backup) are now centralized in
+  `ResourceMapper2`, mirroring the RWS 1.0 `ResourceMapper`. Behavior is
+  unchanged for the endpoints that already worked; the map documents the wire
+  forms the controller actually accepts (verified via OPTIONS), which differ
+  from the published spec in a few places.
 - Minimum supported Node.js is now 20 (was 18). Node 18 reached end-of-life in
   April 2025 and the build toolchain already requires Node 20.19+. CI runs on
   Node 20, 22, and 24.

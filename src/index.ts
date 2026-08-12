@@ -72,6 +72,8 @@ export type {
   ControllerIdentity,
   ControllerClock,
   ElogMessage,
+  ElogArg,
+  ReturnCodeInfo,
   FileEntry,
   MastershipDomain,
   CollisionDetectionState,
@@ -82,4 +84,11 @@ export type {
   RestartMode,
   SubscriptionResource,
   SubscriptionEvent,
+  // Endpoint-completion additions (2026-08-09)
+  SubscriptionHandle,
+  SignalSearchExCriteria,
+  CfgValidateRequest,
+  ModifyPositionOptions,
+  DiagnosticsInfo,
+  UserRegistration,
 } from './types.js';

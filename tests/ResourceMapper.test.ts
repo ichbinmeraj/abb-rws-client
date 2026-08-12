@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { RwsError } from '../src/types.js';
 import {
   controllerState,
   setControllerState,
@@ -88,7 +89,10 @@ describe('ResourceMapper', () => {
       const { body } = startRapid();
       expect(body).toContain('regain=continue');
       expect(body).toContain('execmode=continue');
-      expect(body).toContain('cycle=forever');
+      // cycle=asis keeps the configured cycle mode (matching RWS 2.0) instead of
+      // hardcoding forever, which used to override a prior setExecutionCycle('once').
+      expect(body).toContain('cycle=asis');
+      expect(body).not.toContain('cycle=forever');
       expect(body).toContain('condition=none');
       expect(body).toContain('stopatbp=disabled');
       expect(body).toContain('alltaskbytsp=false');
@@ -333,9 +337,20 @@ describe('setSpeedRatio', () => {
     });
   });
 
-  it('clamps to 0-100', () => {
-    expect(setSpeedRatio(150).body).toBe('speed-ratio=100');
-    expect(setSpeedRatio(-10).body).toBe('speed-ratio=0');
+  it('rejects out-of-range ratios instead of clamping them', () => {
+    // Clamping silently gave the caller a different robot speed than they
+    // asked for. 0.85 meaning "85%" used to become 1%.
+    for (const bad of [150, -10, 101, -0.5, NaN, Infinity]) {
+      expect(() => setSpeedRatio(bad)).toThrow(RwsError);
+      try { setSpeedRatio(bad); } catch (e) {
+        expect((e as RwsError).code).toBe('INVALID_ARGUMENT');
+      }
+    }
+  });
+
+  it('accepts the boundaries', () => {
+    expect(setSpeedRatio(0).body).toBe('speed-ratio=0');
+    expect(setSpeedRatio(100).body).toBe('speed-ratio=100');
   });
 
   it('rounds fractional ratios to integers', () => {
@@ -448,9 +463,15 @@ describe('copyFile', () => {
     });
   });
 
-  it('strips directory components from the destination (same-directory-only copy)', () => {
-    expect(copyFile('$HOME/A.mod', '$HOME/Backup/A.mod').body).toBe('fs-action=copy&fs-newname=A.mod');
-    expect(copyFile('$HOME/A.mod', 'C:\\temp\\B.mod').body).toBe('fs-action=copy&fs-newname=B.mod');
+  it('accepts a bare-filename destination as the same directory', () => {
+    expect(copyFile('$HOME/A.mod', 'B.mod').body).toBe('fs-action=copy&fs-newname=B.mod');
+  });
+
+  it('throws INVALID_ARGUMENT for a cross-directory destination instead of silently copying same-dir', () => {
+    // RWS 1.0 fileservice copy is same-directory-only; a destination in another
+    // directory cannot be honoured, so reject it rather than copy next to source.
+    expect(() => copyFile('$HOME/A.mod', '$HOME/Backup/A.mod')).toThrow(/same.?directory|INVALID/i);
+    expect(() => copyFile('$HOME/A.mod', 'C:\\temp\\B.mod')).toThrow(/same.?directory|INVALID/i);
   });
 
   it('percent-encodes the new filename', () => {

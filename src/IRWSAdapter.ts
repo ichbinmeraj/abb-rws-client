@@ -5,7 +5,9 @@ import type {
   ElogMessage, Signal, IoNetwork, IoDevice, FileEntry,
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
   UiInstruction, RestartMode, MastershipDomain,
-  SubscriptionResource, SubscriptionEvent,
+  SubscriptionResource, SubscriptionEvent, ReturnCodeInfo,
+  SignalSearchExCriteria, CfgValidateRequest, ModifyPositionOptions,
+  DiagnosticsInfo, UserRegistration,
 } from './types.js';
 
 /** Common interface for both RWS1Adapter (IRC5 / RW6) and RWS2Adapter (OmniCore / RW7). */
@@ -120,6 +122,12 @@ export interface IRWSAdapter {
   /** Request 'modify' RMMP. Triggers a FlexPendant approval popup. Returns immediately. */
   requestRmmp?(level?: 'modify' | 'exclusive'): Promise<void>;
 
+  /** Poll a pending RMMP request - keeps the approval window alive and reports status. */
+  pollRmmp?(): Promise<string>;
+
+  /** Cancel this session's pending/held RMMP request. */
+  cancelRmmp?(): Promise<void>;
+
   // ── System info ──────────────────────────────────────────────────────────
   getSystemInfo(): Promise<SystemInfo>;
   getControllerIdentity(): Promise<ControllerIdentity>;
@@ -170,6 +178,12 @@ export interface IRWSAdapter {
   getTaskSelection?(): Promise<{ selected: string[]; available: string[] }>;
   setTaskSelection?(tasks: string[]): Promise<void>;
   /** Program-pointer position for a task. */
+  /** Controller device groups (HW_DEVICES, SW_RESOURCES). Both protocols. */
+  listDeviceGroups?(): Promise<string[]>;
+  /** Devices in one controller device group. Not the same as listDevices, which is I/O. */
+  listControllerDevices?(group: string): Promise<Array<{ id: string; name: string }>>;
+  /** Translate a controller status code via GET /rw/retcode. Both protocols. */
+  describeReturnCode?(code: number): Promise<ReturnCodeInfo | null>;
   getProgramPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;
   /** Motion-pointer (ahead of PP - what the motion planner is executing). */
   getMotionPointer?(task: string): Promise<{ module?: string; routine?: string; row?: number; col?: number }>;
@@ -423,5 +437,116 @@ export interface IRWSAdapter {
     onLost?: () => void,
     onRestored?: () => void,
   ): Promise<() => Promise<void>>;
+
+  // ── Endpoint-completion surface (2026-08-09) ──────────────────────────────
+  // All optional. Most are RWS 2.0 only: those paths answer 404 on the IRC5
+  // controllers, so `RWS1Adapter` deliberately does not implement them and they
+  // are absent (not throwing) on a RobotWare 6 connection. The EXCEPTIONS are
+  // the methods whose own doc says "both generations" - the 2026-08-11 sweep
+  // later added live-verified RWS 1.0 support for those. Probe with
+  // `adapter.method?.(…)`, or go through `RobotManager`, which reports the
+  // unsupported case as a typed `UNSUPPORTED_OPERATION` error for writes.
+  // Evidence per endpoint: docs/tasks/endpoint-completion.md.
+
+  /** Panel language (form field `lang-code`). Both generations (live-verified IRC5 RW6.16, 2026-08-11). */
+  setPanelLanguage?(langCode: string): Promise<void>;
+  /** Controller language (form field `lang` - note the different name). Both generations (live-verified IRC5 RW6.16, 2026-08-11). */
+  setControllerLanguage?(lang: string): Promise<void>;
+  /** Simulated EXTERNAL emergency-stop circuit. RWS 2.0 only. */
+  setExternalEmergencyStop?(state: 'active' | 'reset'): Promise<void>;
+  /**
+   * Motors on without the key switch (Keyless Mode Switch option).
+   * Note the resource lives under `ctrl-state`. RWS 2.0 only.
+   */
+  setKeylessMotorOn?(): Promise<void>;
+
+  /** Replace a module's source in place (write side of `getModuleText`). RWS 2.0 only. */
+  setModuleText?(task: string, module: string, text: string, path?: string): Promise<void>;
+  /** Replace a row/column range of a module's source in place. RWS 2.0 only. */
+  setModuleTextRange?(
+    task: string, module: string,
+    range: { startRow: number; startCol: number; endRow: number; endCol: number },
+    text: string,
+    opts?: { replaceMode?: string; queryMode?: string },
+  ): Promise<void>;
+
+  /**
+   * Two-criteria signal search. The second criteria set NARROWS the first
+   * (logical AND), and there is no glob support. Both generations: RWS 2.0 via
+   * the `signal-search-ex` path-action, RWS 1.0 via `?action=signal-searchex`
+   * (live-verified on IRC5 RW6.16, 2026-08-11). The single-criteria
+   * `searchSignals` is likewise available on both generations.
+   */
+  searchSignalsEx?(criteria: SignalSearchExCriteria[]): Promise<Signal[]>;
+  /** Validate CFG instances that already exist. RWS 2.0 only. */
+  validateCfgInstances?(request: CfgValidateRequest): Promise<boolean>;
+
+  /** Collision-prediction model name; robot numbering is zero-based. RWS 2.0 only. */
+  getCollisionPredictionModelName?(robotNumber?: number): Promise<string>;
+  /** Write a collision-avoidance snapshot to a controller file. RWS 2.0 only. */
+  saveCollisionAvoidanceSnapshot?(filePath: string, motionGroup: string): Promise<void>;
+  /** Reload the collision-avoidance configuration. RWS 2.0 only, option-gated. */
+  loadCollisionAvoidanceConfig?(): Promise<void>;
+
+  /** ModPos - rewrite a robtarget in place. Requires RAPID mastership. RWS 2.0 only. */
+  modifyPosition?(task: string, module: string, opts: ModifyPositionOptions): Promise<void>;
+  /** Reset ONE task's program pointer (not the global resetpp). RWS 2.0 only. */
+  resetTaskProgramPointer?(task: string): Promise<void>;
+
+  /** Saved controller diagnostics; `empty` when the controller has none. RWS 2.0 only. */
+  getDiagnostics?(): Promise<DiagnosticsInfo>;
+  /** Ask the controller to save a diagnostics bundle. RWS 2.0 only. */
+  saveDiagnostics?(destination?: string): Promise<void>;
+  /** Write a system-information report to a controller file. RWS 2.0 only. */
+  saveSystemInfo?(path: string, fileType: string): Promise<void>;
+
+  /** Register this application as an RWS user session. RWS 2.0 only. */
+  registerUser?(reg: UserRegistration): Promise<void>;
+  /** Impersonate another UAS user. RWS 2.0 only. */
+  impersonateUser?(uid: string): Promise<void>;
+  /** Whether the current user may change their own password. RWS 2.0 only. */
+  isPasswordChangeAllowed?(): Promise<boolean>;
+  /** Change the current user's password. RWS 2.0 only. */
+  changePassword?(oldPassword: string, newPassword: string): Promise<void>;
+
+  /**
+   * Add resources to a live subscription group, or change their priorities,
+   * without tearing the group down. Returns the initial-event payload for the
+   * added resources. RWS 2.0 only.
+   */
+  updateSubscriptionGroup?(groupPath: string, resources: SubscriptionResource[]): Promise<string>;
+  /** Drop ONE resource from a live subscription group. RWS 2.0 only. */
+  unsubscribeResource?(groupPath: string, resource: SubscriptionResource): Promise<void>;
+
+  // ── Endpoint-completion surface (2026-08-11) - both generations ────────────
+  // Unlike the 2026-08-09 block, every method here is live-verified on BOTH
+  // IRC5/RW6 (RWS 1.0 `?action=` query-actions) and OmniCore/RW7-8 (RWS 2.0
+  // path-actions), so both concrete adapters implement them. Optional so the
+  // interface stays additive; in practice both adapters always provide them, so
+  // `RobotManager` forwards them unconditionally (throwing only NOT_CONNECTED).
+
+  /** Server-side signal search (substring name, AND-composed criteria). Both generations. */
+  searchSignals?(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]>;
+  /** Search I/O devices by name / lstate / network (`?action=search` on both). Both generations. */
+  searchIoDevices?(criteria: { name?: string; lstate?: 'enabled' | 'disabled' | 'unknown'; network?: string }): Promise<IoDevice[]>;
+  /** Rename a file/directory in place (parent dir unchanged). Both generations. */
+  renameFile?(path: string, newName: string): Promise<void>;
+  /** Read a module's full source text plus its change-count (read side of `setModuleText`). Both generations. */
+  getModuleText?(task: string, module: string): Promise<{ text: string; changeCount: number }>;
+  /** Read a row/column span of a module's source (read side of `setModuleTextRange`). Both generations. */
+  getModuleTextRange?(task: string, module: string, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string>;
+  /** Whether a previously-read motion change-count still matches the controller's. Both generations. */
+  checkMotionChangeCount?(changecount: number): Promise<boolean>;
+  /** Dump the raw event log to a controller file. Both generations. */
+  saveEventLogRaw?(destination: string): Promise<void>;
+  /** Decompress a controller archive (mirror of `compressPath`). Both generations. */
+  decompressPath?(source: string, destination: string): Promise<void>;
+  /** Virtual-time timeslice in ms (VC diagnostic). Both generations. */
+  getVirtualTimeTimeslice?(): Promise<number>;
+
+  /** Validate a `.cfg` file already on the controller without loading it. RWS 1.0 only. */
+  validateCfgFile?(filepath: string, actionType?: 'add' | 'replace' | 'add-with-reset'): Promise<void>;
+  /** Dry-run a CFG instance delete to check for references before removing it. RWS 1.0 only. */
+  validateInstanceBeforeDelete?(name: string): Promise<void>;
 }
 

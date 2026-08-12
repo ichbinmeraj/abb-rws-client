@@ -124,10 +124,13 @@ describe('XhtmlParser', () => {
       expect(new XhtmlParser('<span class="dim"></span>').get('dim')).toBe('');
     });
 
-    it('getAllStates skips spans that carry extra attributes (value capture is attribute-free)', () => {
+    it('getAllStates reads spans that carry extra attributes', () => {
+      // This is the real shape of an event-log argument. The pattern used to
+      // demand '>' right after class="...", so every such span was dropped and
+      // the substituted detail of a log message went missing without a trace.
       const xml = '<li class="elog-message-li"><span class="arg1" type="string">SYS</span><span class="code">10205</span></li>';
       const state = new XhtmlParser(xml).getState('elog-message-li');
-      expect(state.arg1).toBeUndefined();
+      expect(state.arg1).toBe('SYS');
       expect(state.code).toBe('10205');
     });
   });

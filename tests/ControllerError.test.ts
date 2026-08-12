@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseControllerStatus, classifyControllerError } from '../src/ControllerError.js';
+import { decodeElogArgs } from '../src/types.js';
 import type { RwsErrorCode } from '../src/types.js';
 
 interface Fixture {
@@ -40,6 +41,10 @@ const EXPECTED: Record<string, { code: RwsErrorCode; controllerCode: number }> =
   'rws1/400-cfg-write-invalid-json':      { code: 'UNKNOWN',             controllerCode: -1073445879 },
   'rws1/400-cfg-write-invalid-xhtml':     { code: 'UNKNOWN',             controllerCode: -1073445879 },
   'rws1/400-jog-invalid-input-json':      { code: 'UNKNOWN',             controllerCode: -1073445879 },
+  // Codes the map used to miss, so a 400 fell through to UNKNOWN and callers
+  // lost their error branch. Captured 2026-08-06 on RW6.16 and RW7.21.
+  'rws1/400-unload-unknown-module':       { code: 'MODULE_NOT_FOUND',    controllerCode: -1073442816 },
+  'rws1/400-loadmod-missing-path':        { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073438708 },
   // RWS 2.0
   'rws2/403-speedratio-no-mastership-haljson': { code: 'MASTERSHIP_REQUIRED', controllerCode: -1073445859 },
   'rws2/403-speedratio-no-mastership-xhtml':   { code: 'MASTERSHIP_REQUIRED', controllerCode: -1073445859 },
@@ -53,6 +58,17 @@ const EXPECTED: Record<string, { code: RwsErrorCode; controllerCode: number }> =
   'rws2/400-module-missing-xhtml':             { code: 'MODULE_NOT_FOUND',    controllerCode: -1073442813 },
   'rws2/404-signal-haljson':                   { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073445866 },
   'rws2/404-file-haljson':                     { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073438713 },
+  // A bad volume answers 400 on RWS 2.0 and 404 on RWS 1.0, so the same
+  // listDirectory call reported RESOURCE_NOT_FOUND on RW6 and UNKNOWN on
+  // RW7/RW8 until this code was mapped.
+  'rws2/400-bad-volume-haljson':               { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073438716 },
+  'rws2/400-bad-volume-xhtml':                 { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073438716 },
+  // Same controller code as rws1/400-unload-unknown-module, different meaning.
+  // Pinning both proves the number alone is not classified on.
+  'rws2/404-symbol-overloaded-code-haljson':   { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073442816 },
+  // A UAS-gated resource. Without this code mapped a 403 fell to UNKNOWN,
+  // because the HTTP fallback only promotes 404.
+  'rws2/403-uas-not-allowed-haljson':          { code: 'GRANT_DENIED',        controllerCode: -1073445867 },
 };
 
 describe('classifyControllerError - fixture-driven (live-captured payloads)', () => {
@@ -158,5 +174,34 @@ describe('classifyControllerError - fallbacks', () => {
     });
     expect(info.code).toBe('CONTROLLER_BUSY');
     expect(info.controllerCode).toBeNull();
+  });
+});
+
+describe('decodeElogArgs', () => {
+  it('reads the hal+json argv array kept as a string by the parser', () => {
+    expect(decodeElogArgs({
+      argc: '2',
+      argv: '[{"type":"long","value":100},{"type":"string","value":"Default User"}]',
+    })).toEqual([
+      { type: 'long', value: '100' },
+      { type: 'string', value: 'Default User' },
+    ]);
+  });
+
+  it('reads an argv array handed over already parsed (RWS 1.0 ?json=1)', () => {
+    expect(decodeElogArgs({
+      argc: '1',
+      argv: [{ type: 'float', value: 1.5 }],
+    })).toEqual([{ type: 'float', value: '1.5' }]);
+  });
+
+  it('falls back to the arg1..argN span form', () => {
+    expect(decodeElogArgs({ argc: '2', arg1: 'SYS', arg2: 'Default User' }))
+      .toEqual([{ type: '', value: 'SYS' }, { type: '', value: 'Default User' }]);
+  });
+
+  it('returns an empty array when there are no arguments', () => {
+    expect(decodeElogArgs({ argc: '0' })).toEqual([]);
+    expect(decodeElogArgs({})).toEqual([]);
   });
 });

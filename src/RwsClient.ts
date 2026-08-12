@@ -97,6 +97,8 @@ import {
   fileServicePath,
   deleteFile as pathDeleteFile,
   copyFile as mapCopyFile,
+  renameFile as mapRenameFile,
+  searchSignals as mapSearchSignals,
   requestMastership as mapRequestMastership,
   releaseMastership as mapReleaseMastership,
 } from './ResourceMapper.js';
@@ -125,6 +127,8 @@ import {
   parseDirectory,
   parseCollisionDetectionState,
 } from './ResponseParser.js';
+import { RAPID } from './paths/index.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
 export class RwsClient {
   private readonly session: HttpSession;
@@ -290,6 +294,14 @@ export class RwsClient {
    * @param mode - Restart mode; default 'restart'
    */
   async restartController(mode: RestartMode = 'restart'): Promise<void> {
+    // 'shutdown' and 'xstart' exist only on the RWS 2.0 restart form; the RWS 1.0
+    // panel form advertises restart/istart/pstart/bstart (live-verified 2026-08).
+    if (mode === 'shutdown' || mode === 'xstart') {
+      throw new RwsError(
+        `restartController: '${mode}' is a RobotWare 7/8 (RWS 2.0) restart mode and is not available on this IRC5 controller`,
+        'UNSUPPORTED_OPERATION',
+      );
+    }
     try {
       const { path, body } = mapRestartController(mode);
       await this.session.post(path, body);
@@ -336,7 +348,9 @@ export class RwsClient {
   async setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
     const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manfs';
     try {
-      await this.session.post('/rw/panel/opmode', `opmode=${wire}`);
+      // Path from the table via the shared mapper (setOperationMode has no query
+      // action on 1.0, so it POSTs to the same resource the read uses).
+      await this.session.post(pathOperationMode(), `opmode=${wire}`);
     } catch (e) {
       if (e instanceof RwsError) { throw e; }
       throw new RwsError(`setOperationMode failed: ${String(e)}`, 'UNKNOWN');
@@ -584,6 +598,13 @@ export class RwsClient {
       const { body } = await this.session.get(pathActiveUiInstruction());
       return parseActiveUiInstruction(body);
     } catch (e) {
+      // The common idle case - no UI instruction waiting - answers HTTP 404 on
+      // IRC5, which the session surfaces as RESOURCE_NOT_FOUND. That is the
+      // documented "returns null" state, not an error: a caller polling for
+      // TPReadNum/TPReadFK prompts must not have to try/catch every idle poll.
+      if (e instanceof RwsError && (e.httpStatus === 404 || e.code === 'RESOURCE_NOT_FOUND')) {
+        return null;
+      }
       if (e instanceof RwsError) throw e;
       throw new RwsError(`getActiveUiInstruction failed: ${String(e)}`, 'UNKNOWN');
     }
@@ -623,6 +644,15 @@ export class RwsClient {
    * // Find all persistent variables in T_ROB1
    * const persistents = await client.searchRapidSymbols({ task: 'T_ROB1', symtyp: 'per' });
    * ```
+   *
+   * CAUTION (RobotWare 6.16, live-probed 2026-08): this controller rejects the
+   * documented `POST /rw/rapid/symbols?action=search-symbol` with HTTP 400
+   * "Invalid argument" for every body tried, including an empty one and each
+   * documented parameter combination; the resource advertises only
+   * `action=show` in its own listing. The wire form for symbol search on this
+   * RobotWare 6 release is therefore unresolved and the call is expected to
+   * throw there. The RWS 2.0 side (`RwsClient2.searchRapidSymbols`) is verified
+   * working, and `getRapidSymbolProperties` works on both.
    */
   async searchRapidSymbols(params: RapidSymbolSearchParams): Promise<RapidSymbolInfo[]> {
     try {
@@ -781,7 +811,7 @@ export class RwsClient {
   async unloadModule(taskName: string, moduleName: string): Promise<void> {
     try {
       await this.session.post(
-        `/rw/rapid/tasks/${encodeURIComponent(taskName)}?action=unloadmod`,
+        buildPath(RAPID.unloadModule.rws1 as PathSpec, { task: taskName }),
         `module=${encodeURIComponent(moduleName)}`,
       );
     } catch (e) {
@@ -883,8 +913,14 @@ export class RwsClient {
 
   /**
    * Copy a file on the controller filesystem.
+   *
+   * RWS 1.0 fileservice copy is **same-directory only** - the destination must
+   * name a file in the source's own directory. A destination in a different
+   * directory throws `INVALID_ARGUMENT` (it cannot be honoured by the endpoint);
+   * to move across directories, copy within the source dir then move.
    * @param sourcePath - Source file path, e.g. '$HOME/MyMod.mod'
-   * @param destPath   - Destination path (full path including filename), e.g. '$HOME/Backup/MyMod.mod'
+   * @param destPath   - Destination file in the SAME directory, e.g.
+   *                     '$HOME/MyMod.bak' or a bare 'MyMod.bak'.
    */
   async copyFile(sourcePath: string, destPath: string): Promise<void> {
     try {
@@ -893,6 +929,23 @@ export class RwsClient {
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`copyFile failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
+  /**
+   * Rename a file in place on the controller filesystem (same directory).
+   * Live-verified on IRC5 RW6.16 (2026-08-11): POST to the file's fileservice
+   * path with `fs-action=rename` answers 204.
+   * @param sourcePath - Existing file path, e.g. '$HOME/A.mod'.
+   * @param newName    - New bare filename in the same directory.
+   */
+  async renameFile(sourcePath: string, newName: string): Promise<void> {
+    try {
+      const { path, body } = mapRenameFile(sourcePath, newName);
+      await this.session.post(path, body);
+    } catch (e) {
+      if (e instanceof RwsError) throw e;
+      throw new RwsError(`renameFile failed: ${String(e)}`, 'UNKNOWN');
     }
   }
 
@@ -948,6 +1001,23 @@ export class RwsClient {
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`listAllSignals failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
+  /**
+   * Search signals by criteria instead of paging the whole list. `name` is a
+   * SUBSTRING match; criteria AND-compose. RWS 1.0 query-action form
+   * (`POST /rw/iosystem/signals?action=signal-search`), live-verified on IRC5
+   * RW6.16 (2026-08-11): returns the same `ios-signal-li` shape as listAllSignals.
+   */
+  async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
+    try {
+      const { path, body } = mapSearchSignals(criteria);
+      const res = await this.session.post(path, body);
+      return parseSignalList(res.body);
+    } catch (e) {
+      if (e instanceof RwsError) throw e;
+      throw new RwsError(`searchSignals failed: ${String(e)}`, 'UNKNOWN');
     }
   }
 
@@ -1032,7 +1102,12 @@ export class RwsClient {
   async setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
     try {
       const { path, body } = mapSetControllerClock(year, month, day, hour, min, sec);
-      await this.session.put(path, new TextEncoder().encode(body));
+      // Pass the form body as a STRING so HttpSession stamps
+      // Content-Type: application/x-www-form-urlencoded. TextEncoder-wrapping it
+      // made the body a Uint8Array, which the session labels octet-stream - the
+      // controller's form parser then never reads the sys-clock-* fields and the
+      // clock is not set. (RWS 2.0 sends this same PUT as x-www-form-urlencoded.)
+      await this.session.put(path, body);
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`setControllerClock failed: ${String(e)}`, 'UNKNOWN');

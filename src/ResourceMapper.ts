@@ -6,36 +6,77 @@
  * Targets RWS 1.0 (RobotWare 6.x). Not compatible with RWS 2.0 / RobotWare 7.x.
  */
 
+import { RwsError } from './types.js';
+import { PANEL } from './paths/panel.js';
+import { RAPID } from './paths/rapid.js';
+import { MOTION } from './paths/motion.js';
+import { IO } from './paths/io.js';
+import { CFG_ELOG_DIPC } from './paths/cfgElogDipc.js';
+import { CTRL } from './paths/ctrl.js';
+import { SYSTEM_MASTERSHIP } from './paths/systemMastership.js';
+import { FILES_VISION } from './paths/filesVision.js';
+import { buildPath, type PathSpec } from './paths/PathSpec.js';
+
+/**
+ * RWS 1.0 path for a panel operation, from the path table (src/paths/panel.ts).
+ * The tables are the single source of RWS URLs; this domain reads them rather
+ * than repeating the literal. Body-building stays here. buildPath renders the
+ * `?action=` query the RWS 1.0 panel writes use. Fidelity is proven by
+ * tests/paths.test.ts.
+ */
+const p1 = (op: keyof typeof PANEL, params?: Record<string, string | number>): string =>
+  buildPath(PANEL[op].rws1 as PathSpec, params);
+
 // ─── Controller ──────────────────────────────────────────────────────────────
 
 /** Path to read the current controller state (motoron, motoroff, etc.) */
 export function controllerState(): string {
-  return '/rw/panel/ctrlstate';
+  return p1('getControllerState');
 }
 
 /** Path + body to set the controller motor state (motoron / motoroff). Requires mastership. */
 export function setControllerState(state: 'motoron' | 'motoroff'): { path: string; body: string } {
   return {
-    path: '/rw/panel/ctrlstate?action=setctrlstate',
+    path: p1('setControllerState'),
     body: `ctrl-state=${state}`,
   };
 }
 
 /** Path to read the current operation mode (AUTO, MANR, MANF) */
 export function operationMode(): string {
-  return '/rw/panel/opmode';
+  return p1('getOperationMode');
 }
 
 /** Path to read the current speed ratio (0-100) */
 export function speedRatio(): string {
-  return '/rw/panel/speedratio';
+  return p1('getSpeedRatio');
+}
+
+/**
+ * Validate a speed ratio and return it as the integer percent the controller
+ * wants. Shared by both protocol builders.
+ *
+ * This used to clamp with Math.min/Math.max, which meant a caller who passed
+ * 500, or 0.85 meaning "85%", silently got a different robot speed than they
+ * asked for and no indication anything was wrong. Speed is a motion parameter,
+ * so guessing at the caller's intent is the wrong default: reject instead, and
+ * reject before anything reaches the controller.
+ */
+export function assertSpeedRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 100) {
+    throw new RwsError(
+      `Speed ratio must be between 0 and 100, got ${ratio}`,
+      'INVALID_ARGUMENT',
+    );
+  }
+  return Math.round(ratio);
 }
 
 /** Path + body to set the speed ratio. Only valid in AUTO mode. @param ratio 0-100 */
 export function setSpeedRatio(ratio: number): { path: string; body: string } {
   return {
-    path: '/rw/panel/speedratio?action=setspeedratio',
-    body: `speed-ratio=${Math.round(Math.max(0, Math.min(100, ratio)))}`,
+    path: p1('setSpeedRatio'),
+    body: `speed-ratio=${assertSpeedRatio(ratio)}`,
   };
 }
 
@@ -43,26 +84,35 @@ export function setSpeedRatio(ratio: number): { path: string; body: string } {
 
 /** Path to list all RAPID tasks */
 export function rapidTasks(): string {
-  return '/rw/rapid/tasks';
+  return buildPath(RAPID.getRapidTasks.rws1 as PathSpec);
 }
 
 /** Path to read the RAPID execution state (running / stopped) */
 export function rapidExecutionState(): string {
-  return '/rw/rapid/execution';
+  return buildPath(RAPID.getRapidExecutionState.rws1 as PathSpec);
 }
 
-/** Path + body to start RAPID program execution */
+/**
+ * Path + body to start RAPID program execution.
+ *
+ * `cycle=asis` keeps the currently configured cycle mode, matching RWS 2.0
+ * (ResourceMapper2.startRapid). Hardcoding `cycle=forever` here previously
+ * OVERRODE a prior setExecutionCycle('once'), so a program the caller wanted to
+ * run once looped continuously. `asis` is documented for both generations, and
+ * the controller's default cycle is `forever`, so a caller who never set a cycle
+ * sees no change - only an explicit setExecutionCycle is now honoured.
+ */
 export function startRapid(): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=start',
-    body: 'regain=continue&execmode=continue&cycle=forever&condition=none&stopatbp=disabled&alltaskbytsp=false',
+    path: buildPath(RAPID.startRapid.rws1 as PathSpec),
+    body: 'regain=continue&execmode=continue&cycle=asis&condition=none&stopatbp=disabled&alltaskbytsp=false',
   };
 }
 
 /** Path + body to stop RAPID program execution */
 export function stopRapid(): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=stop',
+    path: buildPath(RAPID.stopRapid.rws1 as PathSpec),
     body: 'stopmode=stop',
   };
 }
@@ -73,7 +123,7 @@ export function stopRapid(): { path: string; body: string } {
  */
 export function resetRapid(): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=resetpp',
+    path: buildPath(RAPID.resetRapid.rws1 as PathSpec),
     body: '',
   };
 }
@@ -84,7 +134,7 @@ export function resetRapid(): { path: string; body: string } {
  */
 export function setExecutionCycle(cycle: 'once' | 'forever' | 'asis'): { path: string; body: string } {
   return {
-    path: '/rw/rapid/execution?action=setcycle',
+    path: buildPath(RAPID.setExecutionCycle.rws1 as PathSpec),
     body: `cycle=${cycle}`,
   };
 }
@@ -93,7 +143,7 @@ export function setExecutionCycle(cycle: 'once' | 'forever' | 'asis'): { path: s
 
 /** Path to read the collision detection state (INIT/TRIGGERED/CONFIRMED/TRIGGERED_ACK). */
 export function collisionDetectionState(): string {
-  return '/rw/panel/coldetstate';
+  return p1('getCollisionDetectionState');
 }
 
 /**
@@ -102,7 +152,7 @@ export function collisionDetectionState(): string {
  */
 export function restartController(mode: 'restart' | 'istart' | 'pstart' | 'bstart'): { path: string; body: string } {
   return {
-    path: '/rw/panel?action=restart',
+    path: p1('restartController'),
     body: `restart-mode=${mode}`,
   };
 }
@@ -114,21 +164,21 @@ export function restartController(mode: 'restart' | 'istart' | 'pstart' | 'bstar
  */
 export function lockOperationMode(pin: string, permanent: boolean): { path: string; body: string } {
   return {
-    path: '/rw/panel/opmode?action=lock',
+    path: p1('lockOperationMode'),
     body: `pin=${encodeURIComponent(pin)}&permanent=${permanent ? 1 : 0}`,
   };
 }
 
 /** Path + body to unlock the operation mode selector. */
 export function unlockOperationMode(): { path: string; body: string } {
-  return { path: '/rw/panel/opmode?action=unlock', body: '' };
+  return { path: p1('unlockOperationMode'), body: '' };
 }
 
 // ─── RAPID UI instructions ───────────────────────────────────────────────────
 
 /** Path to GET the currently active RAPID UI instruction (if any). */
 export function activeUiInstruction(): string {
-  return '/rw/rapid/uiinstr/active';
+  return buildPath(RAPID.getActiveUiInstruction.rws1 as PathSpec);
 }
 
 /**
@@ -143,7 +193,7 @@ export function setUiInstructionParam(
   stackurl: string, uiparam: string, value: string,
 ): { path: string; body: string } {
   return {
-    path: `/rw/rapid/uiinstr/active/param/${encodeURIComponent(stackurl)}/${encodeURIComponent(uiparam)}?action=set`,
+    path: buildPath(RAPID.setUiInstructionParam.rws1 as PathSpec, { stackurl, uiparam }),
     body: `value=${encodeURIComponent(value)}`,
   };
 }
@@ -152,22 +202,22 @@ export function setUiInstructionParam(
 
 /** Path + body to activate a single RAPID task (multitasking). */
 export function activateRapidTask(task: string): { path: string; body: string } {
-  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}?action=activate`, body: '' };
+  return { path: buildPath(RAPID.activateRapidTask.rws1 as PathSpec, { task }), body: '' };
 }
 
 /** Path + body to deactivate a single RAPID task (multitasking). */
 export function deactivateRapidTask(task: string): { path: string; body: string } {
-  return { path: `/rw/rapid/tasks/${encodeURIComponent(task)}?action=deactivate`, body: '' };
+  return { path: buildPath(RAPID.deactivateRapidTask.rws1 as PathSpec, { task }), body: '' };
 }
 
 /** Path + body to activate ALL RAPID tasks. */
 export function activateAllRapidTasks(): { path: string; body: string } {
-  return { path: '/rw/rapid/tasks?action=activate', body: '' };
+  return { path: buildPath(RAPID.activateAllRapidTasks.rws1 as PathSpec), body: '' };
 }
 
 /** Path + body to deactivate ALL RAPID tasks. */
 export function deactivateAllRapidTasks(): { path: string; body: string } {
-  return { path: '/rw/rapid/tasks?action=deactivate', body: '' };
+  return { path: buildPath(RAPID.deactivateAllRapidTasks.rws1 as PathSpec), body: '' };
 }
 
 // ─── RAPID symbol search / validate ─────────────────────────────────────────
@@ -196,7 +246,7 @@ export function searchRapidSymbols(params: {
   if (params.blockurl)  parts.push(`blockurl=${encodeURIComponent(params.blockurl)}`);
   if (params.recursive !== undefined) parts.push(`recursive=${params.recursive}`);
   return {
-    path: '/rw/rapid/symbols?action=search-symbol',
+    path: buildPath(RAPID.searchRapidSymbols.rws1 as PathSpec),
     body: parts.join('&'),
   };
 }
@@ -208,7 +258,7 @@ export function searchRapidSymbols(params: {
  */
 export function validateRapidValue(task: string, value: string, datatype: string): { path: string; body: string } {
   return {
-    path: '/rw/rapid/symbol/data?action=validate',
+    path: buildPath(RAPID.validateRapidValue.rws1 as PathSpec),
     body: `task=${encodeURIComponent(task)}&value=${encodeURIComponent(value)}&datatype=${encodeURIComponent(datatype)}`,
   };
 }
@@ -222,7 +272,7 @@ export function validateRapidValue(task: string, value: string, datatype: string
  * @param symbolName - Symbol name, e.g. 'reg1'
  */
 export function rapidSymbolProperties(taskName: string, moduleName: string, symbolName: string): string {
-  return `/rw/rapid/symbol/properties/RAPID/${encodeURIComponent(taskName)}/${encodeURIComponent(moduleName)}/${encodeURIComponent(symbolName)}`;
+  return buildPath(RAPID.getRapidSymbolProperties.rws1 as PathSpec, { task: taskName, module: moduleName, symbol: symbolName });
 }
 
 /**
@@ -232,7 +282,7 @@ export function rapidSymbolProperties(taskName: string, moduleName: string, symb
  * @param symbolName - Symbol name, e.g. 'reg1'
  */
 export function rapidSymbol(taskName: string, moduleName: string, symbolName: string): string {
-  return `/rw/rapid/symbol/data/RAPID/${encodeURIComponent(taskName)}/${encodeURIComponent(moduleName)}/${encodeURIComponent(symbolName)}`;
+  return buildPath(RAPID.getRapidVariable.rws1 as PathSpec, { task: taskName, module: moduleName, symbol: symbolName });
 }
 
 /**
@@ -249,7 +299,7 @@ export function setRapidSymbol(
   value: string,
 ): { path: string; body: string } {
   return {
-    path: `${rapidSymbol(taskName, moduleName, symbolName)}?action=set`,
+    path: buildPath(RAPID.setRapidVariable.rws1 as PathSpec, { task: taskName, module: moduleName, symbol: symbolName }),
     body: `value=${encodeURIComponent(value)}`,
   };
 }
@@ -261,7 +311,7 @@ export function setRapidSymbol(
  * @param mechunit - Default 'ROB_1' (the primary robot mechanical unit)
  */
 export function jointTarget(mechunit = 'ROB_1'): string {
-  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/jointtarget`;
+  return buildPath(MOTION.getJointPositions.rws1 as PathSpec, { mechunit });
 }
 
 /**
@@ -271,7 +321,7 @@ export function jointTarget(mechunit = 'ROB_1'): string {
  * @param wobj     - Active work object frame; default 'wobj0'
  */
 export function robTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): string {
-  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/robtarget?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`;
+  return `${buildPath(MOTION.getRobTarget.rws1 as PathSpec, { mechunit })}?tool=${encodeURIComponent(tool)}&wobj=${encodeURIComponent(wobj)}`;
 }
 
 /**
@@ -280,7 +330,7 @@ export function robTarget(mechunit = 'ROB_1', tool = 'tool0', wobj = 'wobj0'): s
  * @param mechunit - Default 'ROB_1'
  */
 export function cartesianFull(mechunit = 'ROB_1'): string {
-  return `/rw/motionsystem/mechunits/${encodeURIComponent(mechunit)}/cartesian`;
+  return buildPath(MOTION.getCartesianFull.rws1 as PathSpec, { mechunit });
 }
 
 // ─── Modules ─────────────────────────────────────────────────────────────────
@@ -293,7 +343,7 @@ export function cartesianFull(mechunit = 'ROB_1'): string {
  */
 export function loadModule(taskName: string, modulePath: string, replace = false): { path: string; body: string } {
   return {
-    path: `/rw/rapid/tasks/${encodeURIComponent(taskName)}?action=loadmod`,
+    path: buildPath(RAPID.loadModule.rws1 as PathSpec, { task: taskName }),
     body: `modulepath=${encodeURIComponent(modulePath)}&replace=${replace}`,
   };
 }
@@ -312,7 +362,7 @@ export function getModule(taskName: string, moduleName: string): string {
  * @param taskName - RAPID task name
  */
 export function listModules(taskName: string): string {
-  return `/rw/rapid/modules?task=${encodeURIComponent(taskName)}`;
+  return `${buildPath(RAPID.listModules.rws1 as PathSpec)}?task=${encodeURIComponent(taskName)}`;
 }
 
 // ─── File system ─────────────────────────────────────────────────────────────
@@ -330,17 +380,17 @@ export function uploadFile(remotePath: string): string {
 
 /** Path to get RobotWare system information (version, options, sysid) */
 export function systemInfo(): string {
-  return '/rw/system';
+  return buildPath(SYSTEM_MASTERSHIP.getSystemInfo.rws1 as PathSpec);
 }
 
 /** Path to get controller hardware identity (name, id, type, mac) */
 export function controllerIdentity(): string {
-  return '/ctrl/identity';
+  return buildPath(CTRL.getControllerIdentity.rws1 as PathSpec);
 }
 
 /** Path to GET the controller clock datetime. */
 export function clockInfo(): string {
-  return '/ctrl/clock';
+  return buildPath(CTRL.getControllerClock.rws1 as PathSpec);
 }
 
 /**
@@ -352,7 +402,7 @@ export function setControllerClock(
   hour: number, min: number, sec: number,
 ): { path: string; body: string; method: 'PUT' } {
   return {
-    path: '/ctrl/clock',
+    path: buildPath(CTRL.setControllerClock.rws1 as PathSpec),
     body: `sys-clock-year=${year}&sys-clock-month=${month}&sys-clock-day=${day}&sys-clock-hour=${hour}&sys-clock-min=${min}&sys-clock-sec=${sec}`,
     method: 'PUT',
   };
@@ -367,17 +417,17 @@ export function setControllerClock(
  * @param lang    - Language for message text; default 'en'
  */
 export function elogMessages(domain = 0, lang = 'en'): string {
-  return `/rw/elog/${domain}?lang=${encodeURIComponent(lang)}`;
+  return `${buildPath(CFG_ELOG_DIPC.getEventLog.rws1 as PathSpec, { domain })}?lang=${encodeURIComponent(lang)}`;
 }
 
 /** Path + body to clear all messages in a specific elog domain. */
 export function clearElogDomain(domain = 0): { path: string; body: string } {
-  return { path: `/rw/elog/${domain}?action=clear`, body: '' };
+  return { path: buildPath(CFG_ELOG_DIPC.clearEventLog.rws1 as PathSpec, { domain }), body: '' };
 }
 
 /** Path + body to clear ALL elog messages across all domains. */
 export function clearAllElogs(): { path: string; body: string } {
-  return { path: '/rw/elog?action=clearall', body: '' };
+  return { path: buildPath(CFG_ELOG_DIPC.clearAllEventLogs.rws1 as PathSpec), body: '' };
 }
 
 // ─── File system ─────────────────────────────────────────────────────────────
@@ -413,24 +463,61 @@ export function createDirectory(parentPath: string): { path: string } {
   return { path: fileServicePath(parentPath) };
 }
 
+/** Directory portion of a controller path (`$HOME/Backup/a.mod` -> `$HOME/Backup`),
+ *  normalised without a leading slash. Treats both `/` and `\` as separators (to
+ *  match the basename extraction below). A bare filename yields ''. */
+function dirOf(remotePath: string): string {
+  const norm = remotePath.replace(/^\//, '');
+  const idx = Math.max(norm.lastIndexOf('/'), norm.lastIndexOf('\\'));
+  return idx === -1 ? '' : norm.slice(0, idx);
+}
+
 /**
  * Path to copy a file on the controller filesystem.
  * POST to this path with body 'fs-action=copy&fs-newname={filename}'.
  *
  * RWS 1.0 fileservice copy operates *within the source's directory only*:
- * fs-newname must be a bare filename, not a path. Passing a full path
- * returns 400 "Invalid". To copy across directories, copy first then move
- * (or upload to the new path directly).
+ * fs-newname must be a bare filename, not a path. So `destPath` must name a file
+ * in the SAME directory as the source. A destination in a different directory
+ * cannot be honoured by this endpoint - rather than silently copying next to the
+ * source (which the old basename-only behaviour did), a cross-directory
+ * destination throws INVALID_ARGUMENT. To copy across directories, copy within
+ * the source dir then move, or upload to the new path directly.
  *
  * @param sourcePath - Source file path, e.g. '$HOME/Source.mod'
- * @param destPath   - Destination path. The basename is extracted and used
- *                     as fs-newname; any directory component is ignored.
+ * @param destPath   - Destination file, e.g. '$HOME/Copy.mod' or a bare
+ *                     'Copy.mod'. Must resolve to the source's directory.
  */
 export function copyFile(sourcePath: string, destPath: string): { path: string; body: string } {
+  const destDir = dirOf(destPath);
+  // '' means the caller gave a bare filename => implicitly the source directory.
+  if (destDir !== '' && destDir !== dirOf(sourcePath)) {
+    throw new RwsError(
+      `copyFile: RWS 1.0 can only copy within the source directory. Source dir '${dirOf(sourcePath)}' ` +
+      `!= destination dir '${destDir}'. Pass a same-directory destination, or copy-then-move.`,
+      'INVALID_ARGUMENT',
+    );
+  }
   const destBasename = destPath.replace(/^.*[\\/]/, '');
   return {
     path: fileServicePath(sourcePath),
     body: `fs-action=copy&fs-newname=${encodeURIComponent(destBasename)}`,
+  };
+}
+
+/**
+ * Path + body to rename a file in place. RWS 1.0 renames via a POST to the file's
+ * fileservice path with `fs-action=rename` and a bare-filename `fs-newname` (the
+ * same in-directory form as copy). Live-verified on IRC5 RW6.16 (2026-08-11): 204.
+ * @param sourcePath - Existing file path, e.g. '$HOME/A.mod'.
+ * @param newName    - New bare filename in the same directory (a directory
+ *                     component is stripped).
+ */
+export function renameFile(sourcePath: string, newName: string): { path: string; body: string } {
+  const bare = newName.replace(/^.*[\\/]/, '');
+  return {
+    path: fileServicePath(sourcePath),
+    body: `fs-action=rename&fs-newname=${encodeURIComponent(bare)}`,
   };
 }
 
@@ -441,12 +528,12 @@ export function copyFile(sourcePath: string, destPath: string): { path: string; 
  * Must be released after use. Domains: 'cfg' | 'motion' | 'rapid'.
  */
 export function requestMastership(domain: 'cfg' | 'motion' | 'rapid'): { path: string; body: string } {
-  return { path: `/rw/mastership/${domain}?action=request`, body: '' };
+  return { path: buildPath(SYSTEM_MASTERSHIP.requestMastership.rws1 as PathSpec, { domain }), body: '' };
 }
 
 /** Path + body to release mastership on a domain. */
 export function releaseMastership(domain: 'cfg' | 'motion' | 'rapid'): { path: string; body: string } {
-  return { path: `/rw/mastership/${domain}?action=release`, body: '' };
+  return { path: buildPath(SYSTEM_MASTERSHIP.releaseMastership.rws1 as PathSpec, { domain }), body: '' };
 }
 
 // ─── I/O ─────────────────────────────────────────────────────────────────────
@@ -457,9 +544,25 @@ export function releaseMastership(domain: 'cfg' | 'motion' | 'rapid'): { path: s
  */
 function signalPath(network: string, device: string, name: string): string {
   if (network && device) {
-    return `/rw/iosystem/signals/${encodeURIComponent(network)}/${encodeURIComponent(device)}/${encodeURIComponent(name)}`;
+    return buildPath(IO.readSignal.rws1 as PathSpec, { network, device, name });
   }
   return `/rw/iosystem/signals/${encodeURIComponent(name)}`;
+}
+
+/**
+ * Path + body to search signals by criteria on RWS 1.0. Uses the query-action
+ * form `POST /rw/iosystem/signals?action=signal-search`; criteria AND-compose and
+ * `name` is a substring match, same semantics as RWS 2.0. Live-verified on IRC5
+ * RW6.16 (2026-08-11): returns the same `ios-signal-li` list as listAllSignals.
+ */
+export function searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): { path: string; body: string } {
+  const parts: string[] = [];
+  if (criteria.name)     { parts.push(`name=${encodeURIComponent(criteria.name)}`); }
+  if (criteria.device)   { parts.push(`device=${encodeURIComponent(criteria.device)}`); }
+  if (criteria.network)  { parts.push(`network=${encodeURIComponent(criteria.network)}`); }
+  if (criteria.category) { parts.push(`category=${encodeURIComponent(criteria.category)}`); }
+  if (criteria.type)     { parts.push(`type=${encodeURIComponent(criteria.type)}`); }
+  return { path: buildPath(IO.searchSignals.rws1 as PathSpec), body: parts.join('&') };
 }
 
 /**
@@ -468,12 +571,12 @@ function signalPath(network: string, device: string, name: string): string {
  * @param limit  - Max results per page (default 100)
  */
 export function allSignals(start = 0, limit = 100): string {
-  return `/rw/iosystem/signals?start=${start}&limit=${limit}`;
+  return `${buildPath(IO.listAllSignals.rws1 as PathSpec)}?start=${start}&limit=${limit}`;
 }
 
 /** Path to list all configured I/O networks */
 export function networks(): string {
-  return '/rw/iosystem/networks';
+  return buildPath(IO.listNetworks.rws1 as PathSpec);
 }
 
 /**
@@ -481,7 +584,7 @@ export function networks(): string {
  * @param network - Network name, e.g. 'Local'
  */
 export function devices(network: string): string {
-  return `/rw/iosystem/devices?network=${encodeURIComponent(network)}`;
+  return `${buildPath(IO.listDevices.rws1 as PathSpec)}?network=${encodeURIComponent(network)}`;
 }
 
 /**
@@ -513,5 +616,5 @@ export function setSignal(network: string, device: string, name: string): { path
 
 /** Path to create a new WebSocket subscription (POST /subscription) */
 export function subscriptions(): string {
-  return '/subscription';
+  return buildPath(FILES_VISION.createSubscription.rws1 as PathSpec);
 }

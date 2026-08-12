@@ -110,7 +110,18 @@ describe('RwsClient2 HAL JSON primary path', () => {
 
   it('listAllSignals parses signals and caches network/device for writeSignal', async () => {
     const { server, port, requests } = await startServer((req, res) => {
-      if (req.method === 'GET') { json200(res, FIX.signals); return; }
+      if (req.method === 'GET') {
+        // The signals fixture carries a `next` link, as the live controller
+        // does (it caps a page at 100 and ignores a larger limit). Serve the
+        // page once and then an empty page, so the client's pagination walk
+        // terminates the way it does against a real controller.
+        if ((req.url ?? '').includes('start=3')) {
+          json200(res, JSON.stringify({ _links: { base: { href: 'http://x/rw/iosystem/' } }, _embedded: { resources: [] } }));
+          return;
+        }
+        json200(res, FIX.signals);
+        return;
+      }
       res.writeHead(204); res.end();
     });
     try {

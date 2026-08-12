@@ -28,6 +28,75 @@ describe('IRWSAdapter shape', () => {
     expect(a).toBeInstanceOf(RWS1Adapter);
   });
 
+  it('parity methods exist on BOTH protocol surfaces under the same canonical name', () => {
+    // Methods added by the coverage loop must not fork names between protocols:
+    // one API, any controller. Guard the canonical names on both sides.
+    const parity = [
+      'startProductionEntry', 'getRobTarget', 'saveModule', 'listProgress', 'getProgress',
+      'listServiceRoutines', 'getModuleInfo', 'getTaskProgramInfo', 'listFileVolumes',
+      'saveProgram', 'loadCfgFile', 'saveCfgFile', 'setActiveTool', 'setActiveWobj',
+      'loadProgram', 'setProgramPointer', 'getEventLogMessage', 'listCurrentUserGrants',
+      'getTaskStructuralChangeCount', 'getTaskMotion', 'getTaskActivationRecord',
+      'listEventLogDomains',
+      // 2026-08-11 sweep: live-verified on BOTH generations, so both surfaces must
+      // carry them (they were stranded on the concrete adapters but missing from
+      // IRWSAdapter/RobotManager until the interface was completed).
+      'searchSignals', 'searchIoDevices', 'renameFile', 'getModuleText',
+      'getModuleTextRange', 'checkMotionChangeCount', 'saveEventLogRaw',
+      'decompressPath', 'getVirtualTimeTimeslice',
+    ];
+    const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
+    const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
+    const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });
+    for (const m of parity) {
+      expect(typeof (c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m}`).toBe('function');
+      expect(typeof (a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m}`).toBe('function');
+    }
+  });
+
+  it('the endpoint-completion surface is present on RWS 2.0 and absent on RWS 1.0', () => {
+    // These are declared optional on IRWSAdapter precisely because every one of
+    // them answers 404 on the IRC5 controllers. Asserting the asymmetry keeps
+    // "RWS 2.0 only" an explicit decision rather than an accident: if someone
+    // implements one on RWS 1.0, this test tells them to update the docs too.
+    // NOTE: setPanelLanguage, setControllerLanguage and searchSignalsEx were
+    // MOVED off this list (2026-08-11) - the ABB RWS 1.0 reference documents their
+    // query-action forms and they are now implemented + live-verified on IRC5
+    // RW6.16, so they are no longer RWS-2.0-only. The rest genuinely 404 on RW6.
+    const rws2Only = [
+      'setExternalEmergencyStop',
+      'setKeylessMotorOn', 'setModuleText', 'setModuleTextRange',
+      'validateCfgInstances',
+      'getCollisionPredictionModelName', 'saveCollisionAvoidanceSnapshot',
+      'loadCollisionAvoidanceConfig',
+      'modifyPosition', 'resetTaskProgramPointer',
+      'getDiagnostics', 'saveDiagnostics', 'saveSystemInfo',
+      'registerUser', 'impersonateUser', 'isPasswordChangeAllowed', 'changePassword',
+      'updateSubscriptionGroup', 'unsubscribeResource',
+    ];
+    const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
+    const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
+    const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });
+    for (const m of rws2Only) {
+      expect(typeof (c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m} should exist`).toBe('function');
+      expect((a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m} should be absent`).toBeUndefined();
+    }
+  });
+
+  it('the RWS-1.0-only cfg validation helpers are present on RWS 1.0 and absent on RWS 2.0', () => {
+    // Mirror of the rws2Only asymmetry, the other way: OmniCore exposes
+    // validateCfgInstances (a different endpoint) instead, so these two live-
+    // verified IRC5 helpers must NOT masquerade as present on the RWS 2.0 surface.
+    const rws1Only = ['validateCfgFile', 'validateInstanceBeforeDelete'];
+    const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
+    const inner = new RwsClient({ host: '127.0.0.1', port: 80 });
+    const a1 = new RWS1Adapter(inner, { host: '127.0.0.1', port: 80, username: 'u', password: 'p' });
+    for (const m of rws1Only) {
+      expect(typeof (a1 as unknown as Record<string, unknown>)[m], `RWS1Adapter.${m} should exist`).toBe('function');
+      expect((c2 as unknown as Record<string, unknown>)[m], `RwsClient2.${m} should be absent`).toBeUndefined();
+    }
+  });
+
   it('RwsClient2 has the public surface IRWSAdapter requires (basic methods present)', () => {
     const c = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     // Spot-check a representative slice of required methods.

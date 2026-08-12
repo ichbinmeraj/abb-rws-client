@@ -1,0 +1,13 @@
+{
+  "protocol": "rws1",
+  "scenario": "400-unload-unknown-module",
+  "request": {
+    "method": "POST",
+    "path": "/rw/rapid/tasks/T_ROB1"
+  },
+  "response": {
+    "status": 400,
+    "contentType": "application/xhtml+xml",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>rw</title><base href=\"http://127.0.0.1:40483/\"/></head><body><div class=\"status\"><span class=\"code\">-1073442816</span><span class=\"msg\">C:\\BUILDAGENTS\\SEABB-IS-13906.1\\_work\\76\\s\\RW\\Areas\\RobApi2\\Components\\rws_rapid\\rws_resource_rapid_task.cpp[1777] Unknown module name code:-1073442816 icode:-1</span></div></body></html>"
+  }
+}

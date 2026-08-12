@@ -78,7 +78,9 @@ describe('getModuleSource (RWS 2.0)', () => {
       const src = await client.getModuleSource('T_ROB1', 'PgfMod');
       expect(src).toBe('MODULE PgfMod\r\nENDMODULE\r\n'); // program memory, not the stale disk copy
       // Extensionless collision-safe name - the controller always appends '.modx'.
-      expect(saveBody).toMatch(/^name=PgfMod_[a-z0-9]+&path=TEMP:$/i);
+      // Both literal 'TEMP:' and encoded 'TEMP%3A' are accepted by the controller
+      // (live-verified 2026-08-04), so accept either encoding here.
+      expect(saveBody).toMatch(/^name=PgfMod_[a-z0-9]+&path=TEMP(:|%3A)$/i);
       expect(deletes.length).toBe(1);
       expect(files.size).toBe(0);
     } finally { server.close(); }

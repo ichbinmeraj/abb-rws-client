@@ -13,7 +13,7 @@ export type Protocol = 'rws1' | 'rws2';
 export interface ConnectOptions {
   /** Hostname or IP, e.g. '192.168.125.1' or '127.0.0.1'. */
   host: string;
-  /** TCP port. If omitted, common ports are probed (5466, 9403, 443 https; 80, 11811 http). */
+  /** TCP port. If omitted, the `KNOWN_RWS_PORTS` set is probed (443/5466/9403 https; 80/11811/28447 http). */
   port?: number;
   /** Force the transport scheme. If omitted, inferred from port (443, 5466, 9403 → https). */
   https?: boolean;
@@ -92,19 +92,34 @@ export async function probeProtocol(
 }
 
 /**
- * Probe common RWS ports on a host and return the first one that answers.
- * Order favors known defaults: 5466 (OmniCore VC HTTPS), 9403 (alt OmniCore),
- * 443 (real OmniCore), 80 (real IRC5 HTTP), 11811 (legacy IRC5 VC).
+ * The single source of truth for the ports an ABB RWS controller is known to
+ * answer on, in the order worth trying. Real-hardware defaults come first (a
+ * physical robot is reachable at its fixed port immediately), then the ports
+ * RobotStudio virtual controllers commonly bind. This is deliberately SHORT,
+ * not exhaustive: a VC on a randomly-assigned port outside this list is found
+ * by the OS-listening-port scan in `RobotManager.discoverControllers`, so this
+ * list stays fast rather than trying to enumerate every possibility.
+ *
+ * Kept here so `probeHost` (protocol layer) and `RobotManager.PROBE_PORTS`
+ * (discovery layer) can never drift apart again.
+ */
+export const KNOWN_RWS_PORTS: ReadonlyArray<{ port: number; https: boolean }> = [
+  { port: 443,   https: true  },  // real OmniCore (RW7/RW8), HTTPS
+  { port: 80,    https: false },  // real IRC5 (RW6), HTTP
+  { port: 5466,  https: true  },  // OmniCore VC (common RobotStudio default)
+  { port: 9403,  https: true  },  // OmniCore VC (alternate)
+  { port: 11811, https: false },  // legacy IRC5 VC
+  { port: 28447, https: false },  // IRC5 VC (observed on this rig)
+];
+
+/**
+ * Probe the known RWS ports on a host and return the first one that answers.
+ * Ports and order come from `KNOWN_RWS_PORTS`. Closed ports fail fast
+ * (connection refused is immediate), so trying real-hardware defaults first
+ * costs nothing when the target is a VC.
  */
 export async function probeHost(host: string, timeoutMs = 1500, strictTls = false): Promise<ProbeResult | null> {
-  const candidates: Array<[number, boolean]> = [
-    [5466,  true ],
-    [9403,  true ],
-    [443,   true ],
-    [80,    false],
-    [11811, false],
-  ];
-  for (const [port, https] of candidates) {
+  for (const { port, https } of KNOWN_RWS_PORTS) {
     const proto = await probeProtocol(host, port, https, timeoutMs, strictTls);
     if (proto) { return { protocol: proto, port, https }; }
   }

@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket as ServerWebSocket } from 'ws';
 import { RwsClient2 } from '../src/RwsClient2.js';
+import { Rws2Core } from '../src/rws2/core.js';
 import type { SubscriptionEvent } from '../src/types.js';
 import { TEST_TLS_KEY, TEST_TLS_CERT } from './TlsFixture.js';
 
@@ -18,7 +19,7 @@ function collectBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-interface RecordedRequest { method: string; url: string; body: string; cookie: string }
+interface RecordedRequest { method: string; url: string; body: string; cookie: string; at: number }
 
 /**
  * HTTP(S) + WebSocket server mimicking the RWS 2.0 subscription flow:
@@ -42,6 +43,16 @@ async function startSubscriptionServer(opts: {
    * rejected 401 - matches live RW7.21 behavior across a warm restart.
    */
   rotateCookies?: boolean;
+  /**
+   * When it returns true, accept GETs and never answer them - a frozen link.
+   *
+   * Note a real limitation this makes explicit: on OmniCore the client cannot
+   * send anything on the subscription socket, and an idle subscription sends
+   * nothing back, so a half-open state affecting ONLY that socket while HTTP
+   * still works is undetectable in band. Detection covers a link-level freeze,
+   * which is what this models.
+   */
+  hangRequests?: () => boolean;
 } = {}): Promise<{
   close: () => void;
   port: number;
@@ -49,11 +60,16 @@ async function startSubscriptionServer(opts: {
   posts: string[];
   sockets: ServerWebSocket[];
   protocolsSeen: string[][];
+  /** Frames the CLIENT sent on the subscription socket - must stay 0. */
+  readonly framesFromClient: number;
 }> {
   const requests: RecordedRequest[] = [];
   const posts: string[] = [];
   const sockets: ServerWebSocket[] = [];
   const protocolsSeen: string[][] = [];
+  let framesFromClient = 0;
+  /** Responses deliberately left unanswered; destroyed on close so the server can exit. */
+  const hung: http.ServerResponse[] = [];
   let port = 0;
   let groupId = 0;
   const wsScheme = opts.tls ? 'wss' : 'ws';
@@ -62,6 +78,7 @@ async function startSubscriptionServer(opts: {
       requests.push({
         method: req.method ?? '', url: req.url ?? '', body,
         cookie: (req.headers['cookie'] ?? '') as string,
+        at: Date.now(),
       });
       if (req.method === 'POST' && req.url === '/subscription') {
         if (opts.failSubscribes?.()) { res.writeHead(500); res.end(); return; }
@@ -79,6 +96,23 @@ async function startSubscriptionServer(opts: {
         return;
       }
       if (req.method === 'DELETE') { res.writeHead(200); res.end(); return; }
+      // Liveness probe. The client no longer sends anything on the subscription
+      // socket - OmniCore closes it with 1008 "Client cannot send data." - so it
+      // establishes liveness with a cheap GET on the same session instead. A mock
+      // that 404s every GET tells the client the controller is unreachable, and
+      // it will (correctly) tear the healthy stream down.
+      if (req.method === 'GET') {
+        // Half-open simulation: accept the probe and never answer it, the way a
+        // frozen link does. Only GETs stall - the re-POST is left working so the
+        // reconnect path is observable; the full freeze-then-heal sequence is
+        // covered live by structural cell S02.
+        if (opts.hangRequests?.()) { hung.push(res); return; }
+        res.writeHead(200, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end('<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml">'
+          + '<body><div class="state"><ul><li class="pnl-ctrlstate">'
+          + '<span class="ctrlstate">motoron</span></li></ul></div></body></html>');
+        return;
+      }
       res.writeHead(404); res.end();
     });
   };
@@ -107,20 +141,34 @@ async function startSubscriptionServer(opts: {
     });
     wss.on('connection', ws => {
       sockets.push(ws);
-      if (opts.answerPings !== false) {
-        ws.on('message', d => { if (d.toString() === 'PING') { ws.send('PONG'); } });
-      }
+      // Count EVERY inbound frame, answered or not. A real OmniCore rejects
+      // client data on this socket with a 1008 close, so "did the client send
+      // anything at all" is the property worth asserting - not "was it a PING".
+      ws.on('message', d => {
+        framesFromClient++;
+        if (opts.answerPings !== false && d.toString() === 'PING') { ws.send('PONG'); }
+      });
     });
   }
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   port = (server.address() as AddressInfo).port;
   return {
-    close: () => { wss?.close(); server.close(); },
+    close: () => {
+      for (const r of hung) { r.destroy(); }
+      wss?.close(); server.close();
+    },
     port, requests, posts, sockets, protocolsSeen,
+    get framesFromClient() { return framesFromClient; },
   };
 }
 
-function until(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+/**
+ * Poll until a condition holds. The budget is deliberately generous: these
+ * tests assert that something eventually happens (a socket opens, a re-POST
+ * lands), never how fast. A tight budget only makes the suite fail when the
+ * machine is busy - which is exactly when the whole suite runs in parallel.
+ */
+function until(cond: () => boolean, timeoutMs = 20000): Promise<void> {
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
     const timer = setInterval(() => {
@@ -132,8 +180,44 @@ function until(cond: () => boolean, timeoutMs = 5000): Promise<void> {
   });
 }
 
-/** Runtime access to RwsClient2's private reconnect tuning statics. */
-const tuning = RwsClient2 as unknown as {
+const WS_OPEN = 1; // ws.readyState OPEN
+
+/**
+ * Push an event to the client over whichever socket is CURRENTLY live, retrying
+ * until the client's handler actually receives it.
+ *
+ * Sending to a socket by index is not safe here. The server registers a socket
+ * the moment it accepts the upgrade, but the client can still abandon that
+ * connection afterwards - if its own WS open timeout expires before it processes
+ * the open event, it discards the socket and reconnects, leaving the server
+ * holding a dead entry. Under parallel-suite load that is exactly what happens,
+ * and a test that sent to `sockets[1]` then waited was waiting on a corpse: no
+ * amount of patience recovers, which is why widening the timeouts never fixed
+ * this. Addressing "the newest open socket" and re-sending removes the
+ * assumption instead of betting against the race.
+ *
+ * Duplicate deliveries are harmless - the assertions check the FIRST event.
+ */
+async function deliverUntilSeen(
+  sockets: ServerWebSocket[], payload: string, seen: () => boolean, timeoutMs = 20000,
+): Promise<void> {
+  const t0 = Date.now();
+  while (!seen()) {
+    if (Date.now() - t0 > timeoutMs) {
+      throw new Error(`event never reached the handler (${sockets.length} server sockets seen)`);
+    }
+    for (let i = sockets.length - 1; i >= 0; i--) {
+      if (sockets[i].readyState === WS_OPEN) { sockets[i].send(payload); break; }
+    }
+    await new Promise(r => setTimeout(r, 25));
+  }
+}
+
+/** Runtime access to the reconnect tuning statics. They live on `Rws2Core` (the
+ *  transport/subscription base that `RwsClient2` composes), and the reconnect
+ *  loop reads them from there - so overrides must be written on `Rws2Core`, not
+ *  the `RwsClient2` subclass, where they would only shadow the inherited value. */
+const tuning = Rws2Core as unknown as {
   WS_RECONNECT_BASE_MS: number;
   WS_RECONNECT_MAX_ATTEMPTS: number;
   WS_OPEN_TIMEOUT_MS: number;
@@ -175,27 +259,48 @@ describe('RWS 2.0 subscription reconnect', () => {
       const unsubscribe = await client.subscribe(
         ['speedratio'],
         (e: SubscriptionEvent) => events.push({ resource: e.resource, value: e.value }),
+        undefined, undefined,
+        // This test proves the re-POST happens and events still flow - not the
+        // default schedule, and NOT the give-up budget (a separate test covers
+        // that). So: fast backoff for a quick result on an idle machine, and an
+        // attempt budget large enough that the client can never exhaust it and
+        // stop trying while the waits below are still waiting.
+        //
+        // The open timeout is deliberately left at its default. An earlier
+        // attempt to shrink it made things worse in two ways: it burned the
+        // 6-attempt budget faster, and - the real problem - a short timeout is
+        // what makes the client abandon a socket the server has already
+        // accepted, stranding the event the test sends to it. Fewer abandoned
+        // sockets is the goal, so leave it long and let deliverUntilSeen handle
+        // the rest.
+        { reconnectBaseMs: 50, reconnectCapMs: 100, maxReconnectAttempts: 1000 },
       );
       expect(s.posts.length).toBe(1);
       await until(() => s.sockets.length >= 1);
 
-      // Simulate the controller killing the connection.
-      s.sockets[0].terminate();
+      // Simulate the controller killing the connection. Terminate every socket
+      // the server currently holds, not sockets[0]: if the client had already
+      // abandoned and replaced its first connection, killing only that one kills
+      // something already dead and no reconnect is ever triggered.
+      const postsBefore = s.posts.length;
+      const socketsBefore = s.sockets.length;
+      for (const ws of s.sockets) { ws.terminate(); }
 
-      // The client must create a NEW subscription (old WS URL is dead) …
-      await until(() => s.posts.length >= 2, 8000);
-      await until(() => s.sockets.length >= 2, 8000);
+      // The client must create a NEW subscription (the old WS URL is dead) …
+      await until(() => s.posts.length > postsBefore);
+      await until(() => s.sockets.length > socketsBefore);
 
-      // … and events on the new socket must still reach the handler.
-      s.sockets[1].send(
+      // … and events must still reach the handler over whatever socket is live.
+      await deliverUntilSeen(
+        s.sockets,
         '<li class="ios-signal-li"><a href="/rw/panel/speedratio" rel="self"></a><span class="lvalue">42</span></li>',
+        () => events.length >= 1,
       );
-      await until(() => events.length >= 1);
       expect(events[0]).toEqual({ resource: 'speedratio', value: '42' });
 
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('adopts a re-issued session cookie so recovery works after a controller restart', async () => {
     // Live-observed on RW7.21 (2026-08-02): a warm restart kills the session;
@@ -219,7 +324,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(s.sockets.length).toBeGreaterThanOrEqual(2);
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('fires onRestored after each successful re-subscribe, never on the initial one', async () => {
     const s = await startSubscriptionServer();
@@ -248,15 +353,19 @@ describe('RWS 2.0 subscription reconnect', () => {
 
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
-  it('detects a half-open connection via missed PONGs and re-subscribes', async () => {
-    // A controller that stops answering app-level PINGs is half-open (frozen
-    // NAT, yanked cable). The client must terminate the socket and reconnect
-    // within ~2 ping intervals - parity with the RWS 1.0 heartbeat.
-    const s = await startSubscriptionServer({ answerPings: false });
+  it('detects a half-open connection and re-subscribes', async () => {
+    // A half-open link (frozen NAT, yanked cable) is one where the socket looks
+    // open but nothing gets through IN EITHER DIRECTION. This used to be
+    // simulated by withholding PONGs, which no longer means anything: the client
+    // sends nothing on the subscription socket, because OmniCore closes it with
+    // 1008 "Client cannot send data." Liveness now comes from an out-of-band GET,
+    // so a faithful half-open simulation must stall that GET too - which is
+    // exactly what a frozen link does.
+    const s = await startSubscriptionServer({ hangRequests: () => true });
     try {
-      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p', { timeout: 300 });
       let restored = 0;
       const unsubscribe = await client.subscribe(
         ['speedratio'], () => {}, undefined, () => { restored++; },
@@ -264,31 +373,38 @@ describe('RWS 2.0 subscription reconnect', () => {
       );
       await until(() => s.sockets.length >= 1);
 
-      // No pong ever arrives → detection ≤ 2 ticks → reconnect re-POSTs
-      await until(() => s.posts.length >= 2, 5000);
-      await until(() => restored >= 1, 5000);
+      // Neither frames nor probe answers → detection ≤ 2 ticks → reconnect re-POSTs.
+      await until(() => s.posts.length >= 2, 8000);
+      await until(() => restored >= 1, 8000);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
-  it('keeps a healthy connection open when PONGs are answered', async () => {
+  it('keeps a healthy, SILENT connection open across several heartbeat intervals', async () => {
     const s = await startSubscriptionServer({ answerPings: true });
     try {
       const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
-      // Generous interval: the deadline only trips if a PONG takes longer than
-      // a full interval, so CI load can't falsely kill the healthy stream
       const unsubscribe = await client.subscribe(
         ['speedratio'], () => {}, undefined, undefined,
         { pingIntervalMs: 400 },
       );
       await until(() => s.sockets.length >= 1);
       await new Promise(r => setTimeout(r, 1500));
-      // Several ping cycles passed; a healthy stream must not have reconnected
+
+      // Several heartbeat cycles passed; a healthy stream must not reconnect.
       expect(s.posts.length).toBe(1);
       expect(s.sockets.length).toBe(1);
+
+      // And the client must have stayed SILENT on the socket. OmniCore answers
+      // any client frame on a subscription connection with a 1008 close
+      // ("Client cannot send data."), so a keep-alive here is not merely
+      // useless - it is what was destroying the stream every 25 s in production.
+      // Liveness comes from the out-of-band GET the mock now answers.
+      expect(s.framesFromClient, 'client must send nothing on the subscription socket').toBe(0);
+
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('connects the WebSocket via the configured base URL, not the advertised authority', async () => {
     // NAT/port-forward simulation: the controller advertises its own (wrong
@@ -303,14 +419,18 @@ describe('RWS 2.0 subscription reconnect', () => {
         ['speedratio'], (e: SubscriptionEvent) => events.push(e.value),
       );
       await until(() => s.sockets.length >= 1, 5000);
-      s.sockets[0].send(
+      // Deliver over whichever socket is live rather than sockets[0] - the
+      // server registers a socket on upgrade, but the client may still abandon
+      // and replace it. Same latent race as the reconnect test above.
+      await deliverUntilSeen(
+        s.sockets,
         '<li class="ios-signal-li"><a href="/rw/panel/speedratio" rel="self"></a><span class="lvalue">55</span></li>',
+        () => events.length >= 1,
       );
-      await until(() => events.length >= 1);
       expect(events[0]).toBe('55');
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('honors reconnect tuning options and fires onLost after the configured budget', async () => {
     let failing = false;
@@ -325,23 +445,24 @@ describe('RWS 2.0 subscription reconnect', () => {
       await until(() => s.sockets.length >= 1);
       failing = true;
       const postsBefore = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').length;
-      const t0 = Date.now();
       s.sockets[0].terminate();
 
       await until(() => lostCount >= 1, 5000);
-      const elapsed = Date.now() - t0;
       // Exactly maxReconnectAttempts re-POSTs were attempted
-      const postsAfter = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').length;
-      expect(postsAfter - postsBefore).toBe(4);
-      // Capped schedule 50/60/60/60 ms ≈ 230 ms of delays. WITHOUT the cap it
-      // would be 50/100/200/400 ≈ 750 ms, and with the DEFAULT tuning (500 ms
-      // base, 6 attempts) multiple seconds - the bound pins base, cap, and
-      // attempt count together.
-      expect(elapsed).toBeLessThan(600);
+      const rePosts = s.requests.filter(r => r.method === 'POST' && r.url === '/subscription').slice(postsBefore);
+      expect(rePosts.length).toBe(4);
+      // The cap is proven by the SCHEDULE, not the wall clock: gaps between
+      // failing re-POSTs follow the capped 60 ms delay. Without the cap the
+      // 3rd gap alone is >= 400 ms (50/100/200/400 exponential) and with the
+      // default tuning >= 1 s. A whole-sequence wall-clock bound flaked under
+      // parallel-suite CPU load; per-gap bounds keep the discrimination with
+      // 4x the noise margin.
+      const gaps = rePosts.slice(1).map((r, i) => r.at - rePosts[i].at);
+      for (const gap of gaps) { expect(gap).toBeLessThan(300); }
       expect(lostCount).toBe(1);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('does not reconnect after unsubscribe', async () => {
     const s = await startSubscriptionServer();
@@ -354,7 +475,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       await new Promise(r => setTimeout(r, 1200));
       expect(s.posts.length).toBe(1);
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('rides the session cookie and DELETEs the old group before re-subscribing', async () => {
     const s = await startSubscriptionServer();
@@ -377,7 +498,7 @@ describe('RWS 2.0 subscription reconnect', () => {
 
       await unsubscribe();
     } finally { s.close(); }
-  }, 15000);
+  }, 30000);
 
   it('unsubscribe DELETEs the subscription group resource (/subscription/{id}, not the poll URL)', async () => {
     const s = await startSubscriptionServer();
@@ -400,7 +521,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       await expect(client.subscribe(['speedratio'], () => {})).rejects.toThrow(/timed out/i);
       await until(() => s.requests.some(r => r.method === 'DELETE' && r.url === '/subscription/1'), 3000);
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('invokes onLost exactly once when reconnect attempts are exhausted', async () => {
     tuning.WS_RECONNECT_BASE_MS = 5;
@@ -421,7 +542,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(lost).toBe(1);
       await unsubscribe();
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 
   it('unsubscribe during an in-flight reconnect stops the retry loop without onLost', async () => {
     tuning.WS_RECONNECT_BASE_MS = 30;
@@ -451,7 +572,7 @@ describe('RWS 2.0 subscription reconnect', () => {
       expect(subPosts()).toBe(postsAfterUnsub);
       expect(lost).toBe(0);
     } finally { s.close(); }
-  }, 10000);
+  }, 30000);
 });
 
 // ─── TLS behavior (self-signed, like every shipping controller) ──────────────

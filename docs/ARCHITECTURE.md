@@ -3,11 +3,13 @@
 > Typed TypeScript/Node.js client for ABB Robot Web Services, covering **both** protocols:
 > RWS 1.0 (IRC5 / RobotWare 6.x, HTTP Digest, JSON via `?json=1`) and RWS 2.0 (OmniCore /
 > RobotWare 7.x, HTTP Basic, XHTML `;v=2.0`). ESM-only npm package, single runtime
-> dependency (`ws`). Version at time of writing: **0.7.2** (`package.json:3`).
+> dependency (`ws`). Version at time of writing: **1.2.0** (`package.json:3`).
 
 This document was produced by a full read of every source, test, and example file on
-2026-07-02. Line numbers refer to that snapshot. Claims marked **(inferred)** were not
-directly verified against a live controller.
+2026-07-02, and updated 2026-08-11 for the `Rws2Core` + nine-domain-mixin restructure
+and the two-generation endpoint sweep (§1 and the subscription heartbeat reflect the
+newer state). Line numbers refer to those snapshots. Claims marked **(inferred)** were
+not directly verified against a live controller.
 
 ---
 
@@ -39,11 +41,16 @@ The package is layered (documented in `src/index.ts:1-20`):
   WsSubscriber  (RWS1 WebSocket events)
 ```
 
-Key asymmetry: the RWS 1.0 side is decomposed (`HttpSession` + `ResourceMapper` +
-`ResponseParser` + `WsSubscriber`, orchestrated by `RwsClient`, extended by
-`RWS1Adapter`), while the RWS 2.0 side is one monolithic 1,814-line class
-(`RwsClient2`) that contains its own transport, parsing (via `XhtmlParser`), and
-subscriptions. `RWS2Adapter` is an empty type-brand:
+Both sides are decomposed. The RWS 1.0 side is `HttpSession` + `ResourceMapper` +
+`ResponseParser` + `WsSubscriber`, orchestrated by `RwsClient` and extended by
+`RWS1Adapter`. The RWS 2.0 side is `Rws2Core` (`src/rws2/core.ts` - transport,
+connection, subscriptions, mastership / control-station, RMMP) plus nine
+per-RWS-domain mixins under `src/rws2/` (`panel`, `rapid`, `motion`, `io`,
+`cfgElogDipc`, `ctrl`, `system`, `users`, `files`) composed onto `RwsClient2`
+(`src/RwsClient2.ts`): `export class RwsClient2 extends PanelOps(RapidOps(…(Rws2Core))) {}`.
+Splitting by RWS domain mirrors how ABB organises RWS itself, so a protocol
+change lands in one obvious module beside its `src/paths` table. `RWS2Adapter` is
+an empty type-brand:
 `export class RWS2Adapter extends RwsClient2 implements IRWSAdapter {}`
 (`src/RWS2Adapter.ts:19`).
 
@@ -104,7 +111,9 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 | `src/ResponseParser.ts` | 710 | Pure functions: RWS 1.0 XHTML → typed objects; throws `RwsError('PARSE_ERROR')` | types | RwsClient, WsSubscriber |
 | `src/WsSubscriber.ts` | 289 | RWS 1.0 WebSocket subscriptions: POST `/subscription`, `robapi2_subscription` subprotocol, cookie auth, 3-retry backoff | HttpSession, ResourceMapper, ResponseParser, types | RwsClient |
 | `src/RwsClient.ts` | 1,150 | RWS 1.0 typed facade - ~57 endpoint methods + generic `request()` escape hatch (L164-175) | HttpSession, WsSubscriber, ResourceMapper, ResponseParser, types | RWS1Adapter, detect, RobotManager |
-| `src/RwsClient2.ts` | 1,814 | RWS 2.0 everything: transport (Basic auth, keep-alive agents, 55 ms pacing), full endpoint surface, subscriptions, mastership/RMMP | XhtmlParser, Logger, types, `ws` (dynamic import) | RWS2Adapter, detect |
+| `src/RwsClient2.ts` | ~27 | RWS 2.0 composition façade: `class RwsClient2 extends PanelOps(RapidOps(…(Rws2Core))) {}` | Rws2Core + the 9 domain mixins | RWS2Adapter, detect |
+| `src/rws2/core.ts` | ~1,580 | `Rws2Core`: RWS 2.0 transport (Basic auth, keep-alive agents, 55 ms pacing), connection, subscriptions, mastership/control-station, RMMP | XhtmlParser, HalJsonParser, Logger, types, `ws` (dynamic import) | RwsClient2, the 9 mixins |
+| `src/rws2/{panel,rapid,motion,io,cfgElogDipc,ctrl,system,users,files}.ts` | ~90–930 each | One per-RWS-domain mixin `XOps(Base)` + its public-methods interface `XMethods`; the 236 endpoint methods, each beside its `src/paths` table | core (helpers), paths, ResourceMapper2, types | RwsClient2 |
 | `src/IRWSAdapter.ts` | 415 | The unified contract: ~60 required, ~90 optional (`?`) methods | types | adapters, RobotManager, detect |
 | `src/RWS1Adapter.ts` | 865 | IRWSAdapter for RWS 1.0: delegation + ~55 extra endpoints via `?json=1` helpers + self-contained `digestPost` for FK/IK/jog | RwsClient, IRWSAdapter, types, node:http/crypto | detect, RobotManager |
 | `src/RWS2Adapter.ts` | 19 | Empty type-brand: `extends RwsClient2 implements IRWSAdapter` | RwsClient2, IRWSAdapter | detect, RobotManager |
@@ -112,6 +121,11 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
 | `src/RobotManager.ts` | 1,478 | Single-robot manager: discovery (port probe + wide TCP scan), connect/reconnect, 1 s/5 s polling + WS augmentation, mastership/RMMP policy, ~120 wrappers | adapters, IRWSAdapter, RwsClient, Logger, types, node:net/fs/os | MultiRobotManager, index |
 | `src/MultiRobotManager.ts` | 156 | Map of RobotManagers keyed by config id; one **active** robot; event fan-in | RobotManager, types, node:crypto | index |
 | `src/index.ts` | 79 | Public barrel | all of the above | consumers |
+
+> Note: line counts above are approximate and some `src/RwsClient2.ts:NNN` pointers
+> in the flow traces below predate the RWS 2.0 domain split - the referenced code
+> now lives in `src/rws2/core.ts` (transport, subscriptions, mastership) or the
+> matching `src/rws2/<domain>.ts` mixin. Search by symbol name, not line number.
 
 ---
 
@@ -169,8 +183,10 @@ FK / IK / jog, which re-implement digest auth themselves (`digestPost`,
    - RWS 2.0 path: `RwsClient2.subscribe()` hand-rolls the POST (semicolons in the body
      must stay **literal**, `src/RwsClient2.ts:1337`), takes the WS URL from `Location`
      (real hardware) or the XHTML body (VC), authenticates the WS with the Cookie from
-     that response, sends `'PING'` every 25 s (controller closes idle sockets at 30 s)
-     (`src/RwsClient2.ts:1375-1530`).
+     that response, then stays **silent** on the subscription socket (OmniCore answers
+     any client frame - `PING` included - with a 1008 "Client cannot send data" close),
+     establishing liveness **out of band** with a cheap `GET` probe each tick
+     (`src/rws2/core.ts:1185-1216`).
 3. Success → poll every **5 s** (positions etc.); failure → subscription-less full
    polling every **1 s** (`src/RobotManager.ts:392-413`). A `fetchInFlight` single-flight
    guard prevents the request pile-up that caused 10 s timeouts during heavy motion

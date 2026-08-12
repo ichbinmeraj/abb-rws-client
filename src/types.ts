@@ -108,6 +108,18 @@ export interface ControllerIdentity {
   mac: string;
 }
 
+/**
+ * One substituted argument of an event-log message. The controller stores the
+ * message text as a template and supplies the values separately, so "The speed
+ * has been adjusted to 100% by Default User" arrives as a title plus
+ * `[{type:'long', value:'100'}, {type:'string', value:'Default User'}]`.
+ */
+export interface ElogArg {
+  /** Controller-declared type, e.g. 'long', 'string', 'float'. */
+  type: string;
+  value: string;
+}
+
 export interface ElogMessage {
   /** Sequence number */
   seqnum: number;
@@ -124,6 +136,24 @@ export interface ElogMessage {
   causes: string;
   consequences: string;
   actions: string;
+  /**
+   * Substituted values for this message, in order. Empty when the message
+   * takes none. Both protocols carry them; they were never read until 2026-08.
+   */
+  args: ElogArg[];
+}
+
+/**
+ * A controller status code translated by the controller's own dictionary
+ * (`GET /rw/retcode?code=N`). Available on every generation.
+ */
+export interface ReturnCodeInfo {
+  code: number;
+  /** ABB's symbolic name, e.g. 'SYS_CTRL_E_NO_SUCH_SYMBOL'. */
+  name: string;
+  /** e.g. 'Error', 'Warning'. */
+  severity: string;
+  description: string;
 }
 
 /** Controller clock date/time. */
@@ -183,7 +213,16 @@ export interface RapidSymbolSearchParams {
 }
 
 /** Controller restart mode. */
-export type RestartMode = 'restart' | 'istart' | 'pstart' | 'bstart';
+/**
+ * Controller restart modes. `restart` (warm), `istart` (re-install the system),
+ * `pstart` (restart and delete the program), `bstart` (restart from the last
+ * backup) are accepted on both protocol generations.
+ *
+ * `shutdown` and `xstart` are RWS 2.0 only: the RobotWare 7/8 `/ctrl/restart`
+ * form advertises all six, while the RWS 1.0 panel form lists only the first
+ * four (live-verified 2026-08 by reading each controller's own OPTIONS form).
+ */
+export type RestartMode = 'restart' | 'istart' | 'pstart' | 'bstart' | 'shutdown' | 'xstart';
 
 export interface FileEntry {
   name: string;
@@ -275,6 +314,20 @@ export type SubscriptionResource =
   | { type: 'execycle' }
   | { type: 'elog'; domain: number };
 
+/**
+ * Strip a leading `RAPID/` from a symbol path.
+ *
+ * The two protocols disagree on the shape of a persistent-variable subscription:
+ * RWS 1.0 wants `/rw/rapid/symbol/data/RAPID/{task}/{module}/{sym};value` and
+ * RWS 2.0 wants `/rw/rapid/symbol/RAPID/{task}/{module}/{sym}/data;value`, and
+ * each rejects the other's shape. Both builders normalize through this helper so
+ * one `{ type: 'persvar', name }` works on either adapter, with or without the
+ * prefix. Live-verified 2026-08 on RW6.16, RW7.21 and RW8.1.1.
+ */
+export function stripRapidDomain(name: string): string {
+  return name.replace(/^\/?RAPID\//i, '');
+}
+
 export interface SubscriptionEvent {
   resource: string;
   value: string;
@@ -301,6 +354,9 @@ export type RwsErrorCode =
   | 'MASTERSHIP_REQUIRED'  // write needs mastership, or another client holds it
   | 'GRANT_DENIED'         // controller rejected the operation (RMMP not granted / UAS grant missing)
   | 'WRONG_MODE'           // operation not allowed in the current controller state or op-mode
+  | 'UNSUPPORTED_OPERATION' // this protocol generation / controller does not have the operation
+  | 'INVALID_ARGUMENT'     // caller passed a value the controller cannot accept; nothing was sent
+  | 'NOT_CONNECTED'        // connect() has not run (or the manager has no adapter yet)
   | 'RATE_LIMITED'
   | 'CONTROLLER_BUSY'
   | 'NETWORK_ERROR'
@@ -357,4 +413,142 @@ export interface HttpResponse {
   status: number;
   body: string;
   headers: Headers;
+}
+
+/**
+ * Read the substituted arguments out of one parsed event-log message.
+ *
+ * The two representations carry them differently and neither is documented:
+ *   hal+json / ?json=1 : "argv":[{"type":"long","value":100}, ...]
+ *   XHTML              : <span class="arg1" type="long">100</span> ...
+ * Handles both, on both protocol generations. Returns [] when the message
+ * takes no arguments, which is the common case.
+ */
+export function decodeElogArgs(fields: Record<string, unknown>): ElogArg[] {
+  const raw = fields['argv'];
+  // RWS 1.0's ?json=1 path hands over the parsed array; the hal+json parser
+  // keeps it as a JSON string. Accept either.
+  const list: unknown = typeof raw === 'string' && raw
+    ? ((): unknown => { try { return JSON.parse(raw); } catch { return undefined; } })()
+    : raw;
+  if (Array.isArray(list)) {
+    return (list as Array<{ type?: unknown; value?: unknown }>).map(a => ({
+      type: String(a?.type ?? ''),
+      value: String(a?.value ?? ''),
+    }));
+  }
+  const count = Number(fields['argc'] ?? 0);
+  if (!Number.isFinite(count) || count <= 0) { return []; }
+  const out: ElogArg[] = [];
+  for (let i = 1; i <= count; i++) {
+    const v = fields[`arg${i}`];
+    if (v === undefined) { continue; }
+    out.push({ type: '', value: String(v) });
+  }
+  return out;
+}
+
+// ─── Endpoint-completion additions (2026-08-09) ──────────────────────────────
+// Every shape below was read off a controller's own OPTIONS form, not the
+// specification. See docs/tasks/endpoint-completion.md for the evidence.
+
+/**
+ * What `RwsClient2.subscribe()` returns: call it to unsubscribe, exactly as
+ * before, but it also carries the group's resource path so the group can be
+ * edited in place via `updateSubscriptionGroup` / `unsubscribeResource`.
+ *
+ * `groupPath` is read live rather than snapshotted - a reconnect mints a new
+ * group - and is `''` while no group is currently held.
+ */
+export type SubscriptionHandle = (() => Promise<void>) & {
+  readonly groupPath: string;
+};
+
+/**
+ * Criteria for POST /rw/iosystem/signals/signal-search-ex.
+ *
+ * The OPTIONS form (live-read 2026-08-09 on RW7.21 and RW8.1.1) advertises every
+ * field twice - `name`/`name2`, `device`/`device2`, ... - so the controller
+ * takes up to TWO criteria sets. The second set NARROWS the first (logical AND),
+ * it does not union with it. Live-verified 2026-08-09 on RW8.1.1:
+ *   type=DI            -> 33 signals
+ *   type=DO            -> 39 signals
+ *   type=DI & type2=DI -> 33 signals   (intersection with itself)
+ *   type=DI & type2=DO ->  0 signals   (nothing is both)
+ * An empty body returns everything. `name` matches literally - there is no glob
+ * support, and `name=*` returns 0 rather than all.
+ */
+export interface SignalSearchExCriteria {
+  name?: string;
+  device?: string;
+  network?: string;
+  category?: string;
+  /** Maps to the form's `category-pon` field. */
+  categoryPon?: string;
+  type?: string;
+  invert?: boolean;
+  blocked?: boolean;
+}
+
+/**
+ * Request for POST /rw/cfg/validate-instances.
+ *
+ * This validates CFG instances that ALREADY EXIST; it is not a dry run for
+ * instances you are about to create. Live-verified 2026-08-09 on RW8.1.1: an
+ * existing signal name (`ASI_C1_PIN8_DI`) answers 204, while every synthetic
+ * name and every `-Name "..." -SignalType "..."` instance body answers 200 with
+ * "Instance name not found, or the type is not named".
+ */
+export interface CfgValidateRequest {
+  /**
+   * The form's `operation` field - numeric, NOT a verb. The controller accepts
+   * only 0 and 1 and rejects every other value (including 'add', 'update',
+   * 'validate' and any integer outside 0..1) with
+   * "Invalid operation parameter value". Live-verified 2026-08-09.
+   */
+  operation: 0 | 1;
+  /** The form's `cfgdomain` field, e.g. 'EIO', 'MOC', 'SYS'. */
+  domain: string;
+  /** The form's `cfgtype` field, e.g. 'EIO_SIGNAL'. */
+  type: string;
+  /** Names of existing instances; sent as `instances`, `instancescount` derived. */
+  instances: string[];
+}
+
+/**
+ * ModPos - POST /rw/rapid/tasks/{task}/modules/{module}/modify-position.
+ * Form fields live-read 2026-08-09 on RW7.21.
+ */
+export interface ModifyPositionOptions {
+  startRow: number;
+  startCol: number;
+  endRow?: number;
+  endCol?: number;
+  /** Form field `checklimit`. */
+  checkLimit?: boolean;
+  /** Form field `checkdeactaxes`. */
+  checkDeactAxes?: boolean;
+  /** Form field `allowdeact`. */
+  allowDeact?: boolean;
+  /** Form field `text`. */
+  text?: string;
+}
+
+/** A saved-diagnostics record from GET /ctrl/diagnostics. */
+export interface DiagnosticsInfo {
+  /** True when the controller has no diagnostics saved yet (it answers 400). */
+  empty: boolean;
+  entries: Array<Record<string, string>>;
+}
+
+/**
+ * POST /users/register - form fields live-read 2026-08-09
+ * (`application`, `username`, `location`, `ulocale`).
+ */
+export interface UserRegistration {
+  application: string;
+  username: string;
+  location: string;
+  /** Form field `ulocale`. */
+  locale?: string;
 }

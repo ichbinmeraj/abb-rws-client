@@ -1,0 +1,371 @@
+{
+ "crawledAt": "2026-08-11",
+ "summary": {
+  "implemented": 59,
+  "deliberate-gap": 1,
+  "unmapped": 0,
+  "orphan": 0
+ },
+ "rows": [
+  {
+   "gen": "rws1",
+   "resource": "/ctrl",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerIdentity"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/backup",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/clock",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerClock"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/compress",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/identity",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerIdentity"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/network",
+   "verdict": "implemented",
+   "by": "ctrl.getNetworkConfig"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/options",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/safety",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vtspeed",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vtstate",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vttime",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/ctrl/virtualtime/vttimeslice",
+   "verdict": "implemented",
+   "by": "ctrl.setControllerLanguage"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw",
+   "verdict": "implemented",
+   "by": "panel.getControllerState"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listCurrentUserGrants"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users/rmmp",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws1",
+   "resource": "/users/rmmp/poll",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl",
+   "verdict": "implemented",
+   "by": "panel.restartController"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/backup",
+   "verdict": "implemented",
+   "by": "ctrl.createBackup"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/backup/state",
+   "verdict": "implemented",
+   "by": "ctrl.getBackupStatus"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/certstore",
+   "verdict": "implemented",
+   "by": "ctrl.listCertificateStores"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/certstore/controller",
+   "verdict": "implemented",
+   "by": "ctrl.listCertificateStores"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/certstore/controller/trust_ca_store",
+   "verdict": "implemented",
+   "by": "ctrl.listCertificateStores"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/certstore/system",
+   "verdict": "implemented",
+   "by": "ctrl.listCertificateStores"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/certstore/system/robapi_store",
+   "verdict": "implemented",
+   "by": "ctrl.listCertificateStores"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/certstore/system/rws_store",
+   "verdict": "implemented",
+   "by": "ctrl.listCertificateStores"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/clock",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerClock"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/features",
+   "verdict": "implemented",
+   "by": "ctrl.listFeatures"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/identity",
+   "verdict": "implemented",
+   "by": "ctrl.getControllerIdentity"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/options",
+   "verdict": "deliberate-gap",
+   "by": "ctrl.ctrlOptionsVerify"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/cfgrules",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/cfgtext",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/devices",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/elogrules",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/elogtext",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/hw-compatibility",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/option",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/rapid-metadata",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/rapid-text",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/rw-services",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/registry/uastext",
+   "verdict": "implemented",
+   "by": "ctrl.getRegistry"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/safety",
+   "verdict": "implemented",
+   "by": "ctrl.getSafetyMode"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/safety/config",
+   "verdict": "implemented",
+   "by": "ctrl.getSafetyStartupStatus"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/safety/load",
+   "verdict": "implemented",
+   "by": "ctrl.getSafetyLoadStatus"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/safety/mode",
+   "verdict": "implemented",
+   "by": "ctrl.getSafetyMode"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/safety/violation",
+   "verdict": "implemented",
+   "by": "ctrl.getSafetyViolationInfo"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/virtualtime",
+   "verdict": "implemented",
+   "by": "ctrl.setVirtualTimeRunning"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/virtualtime/vtspeed",
+   "verdict": "implemented",
+   "by": "ctrl.setVirtualTimeScale"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/virtualtime/vtstate",
+   "verdict": "implemented",
+   "by": "ctrl.setVirtualTimeRunning"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/virtualtime/vttime",
+   "verdict": "implemented",
+   "by": "ctrl.getVirtualTimeClock"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/ctrl/virtualtime/vttimeslice",
+   "verdict": "implemented",
+   "by": "ctrl.getVirtualTimeTimeslice"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw",
+   "verdict": "implemented",
+   "by": "panel.getControllerState"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas",
+   "verdict": "implemented",
+   "by": "usersUas.listAllGrants"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listAllGrants"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/ldap",
+   "verdict": "implemented",
+   "by": "usersUas.listLdapResources"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/users",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/users/rmmp",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  },
+  {
+   "gen": "rws2",
+   "resource": "/users/rmmp/poll",
+   "verdict": "implemented",
+   "by": "usersUas.getRmmpPrivilege"
+  }
+ ]
+}

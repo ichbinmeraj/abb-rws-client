@@ -146,7 +146,10 @@ function makeClient(port: number, extra: Record<string, unknown> = {}): RwsClien
     username: USER,
     password: PASS,
     requestIntervalMs: 0,
-    timeout: 3000,
+    // Generous hang guard only. The full suite runs many workers in parallel and
+    // CPU contention can stall a worker past a tight timeout, which surfaced as a
+    // flaky NETWORK_ERROR here; tests that exercise timeouts pass their own value.
+    timeout: 15000,
     ...extra,
   });
 }
@@ -239,6 +242,19 @@ describe('RwsClient - request shaping against a mock controller', () => {
     expect(String(last.headers['content-type'])).toBe('application/x-www-form-urlencoded');
   });
 
+  it('setControllerClock PUTs a form body as x-www-form-urlencoded (not octet-stream)', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.setControllerClock(2026, 8, 10, 12, 0, 0);
+
+    const last = mock.seen[mock.seen.length - 1];
+    expect(last.method).toBe('PUT');
+    // The controller's form parser only reads sys-clock-* fields under the form
+    // content type; octet-stream (from TextEncoder-wrapping) left the clock unset.
+    expect(String(last.headers['content-type'])).toBe('application/x-www-form-urlencoded');
+    expect(last.body).toContain('sys-clock-year=2026');
+  });
+
   it('writeSignal composes the lvalue body around the ResourceMapper path', async () => {
     const client = makeClient(mock.port);
     await client.connect();
@@ -247,6 +263,34 @@ describe('RwsClient - request shaping against a mock controller', () => {
     const last = mock.seen[mock.seen.length - 1];
     expect(last.url).toBe('/rw/iosystem/signals/Local/DRV_1/DO_1?action=set');
     expect(last.body).toBe('lvalue=1');
+  });
+
+  it('searchSignals POSTs the query-action form and parses ios-signal-li results', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    mock.routes.set('POST /rw/iosystem/signals?action=signal-search', (res) => {
+      res.writeHead(200, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<html><body><ul><li class="ios-signal-li" title="Local/DRV_1/DO_1">' +
+        '<span class="name">DO_1</span><span class="type">DO</span><span class="lvalue">1</span></li></ul></body></html>');
+    });
+    const hits = await client.searchSignals({ type: 'DO', device: 'DRV_1' });
+
+    const last = mock.seen[mock.seen.length - 1];
+    expect(last.method).toBe('POST');
+    expect(last.url).toBe('/rw/iosystem/signals?action=signal-search');
+    expect(last.body).toBe('device=DRV_1&type=DO');
+    expect(hits.map(h => h.name)).toContain('DO_1');
+  });
+
+  it('renameFile POSTs fs-action=rename to the file path with a bare fs-newname', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.renameFile('$HOME/Old.mod', 'New.mod');
+
+    const last = mock.seen[mock.seen.length - 1];
+    expect(last.method).toBe('POST');
+    expect(last.url).toBe('/fileservice/$HOME/Old.mod');
+    expect(last.body).toBe('fs-action=rename&fs-newname=New.mod');
   });
 
   it('uploadFile PUTs the raw content to /fileservice with a binary content type', async () => {
@@ -311,27 +355,38 @@ describe('RwsClient - request shaping against a mock controller', () => {
       port: mock.port,
       username: USER,
       password: PASS,
-      timeout: 3000,
+      timeout: 15000,
     });
     await client.connect();
 
     const before = mock.seen.length;
+    const t0 = Date.now();
     await Promise.all([
       client.getControllerState(),
       client.getControllerState(),
       client.getControllerState(),
     ]);
-    const times = mock.seen.slice(before).map((r) => r.at);
-    expect(times).toHaveLength(3);
-    // Each gap should be near 55 ms; allow generous timer slack but reject bursts.
-    expect(times[1] - times[0]).toBeGreaterThanOrEqual(40);
-    expect(times[2] - times[1]).toBeGreaterThanOrEqual(40);
+    const elapsed = Date.now() - t0;
+    expect(mock.seen.slice(before)).toHaveLength(3);
+
+    // Assert the pacing CLIENT-side, on total elapsed time, rather than on the
+    // per-request arrival timestamps the mock records.
+    //
+    // Those timestamps are taken when the server handles the request, so a
+    // stalled event loop under parallel-suite load can stamp two requests that
+    // really were sent 55 ms apart at almost the same instant - collapsing a gap
+    // that did happen and failing the test for a scheduling hiccup rather than a
+    // pacing bug. Total elapsed cannot be faked the same way: three requests at a
+    // 55 ms interval need two gaps, so anything under ~100 ms means the queue
+    // burst. Load only ever makes this number larger, never smaller.
+    expect(elapsed).toBeGreaterThanOrEqual(100);
   });
 
   // Live-verified 2026-07-09 on IRC5 RW6.16: GET /rw/rapid/uiinstr/active returns
-  // 404 while no UI instruction is waiting, so this method throws MODULE_NOT_FOUND
-  // instead of resolving to the documented null.
-  it.fails('getActiveUiInstruction resolves to null when the controller has no active instruction', async () => {
+  // 404 while no UI instruction is waiting. The method treats that idle 404 as the
+  // documented "no instruction" state and resolves to null (rather than throwing
+  // RESOURCE_NOT_FOUND on every idle poll).
+  it('getActiveUiInstruction resolves to null when the controller has no active instruction', async () => {
     const client = makeClient(mock.port);
     await client.connect();
 

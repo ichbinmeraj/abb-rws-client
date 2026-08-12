@@ -27,7 +27,10 @@ export class XhtmlParser {
       const hrefM = inner.match(/href="([^"]*?)" rel="self"/);
       if (hrefM) { fields['_href'] = hrefM[1]; }
 
-      for (const [, cls, val] of inner.matchAll(/<span class="([^"]+)">([^<]*)<\/span>/g)) {
+      // Tolerate further attributes after class="...". Event-log arguments are
+      // served as <span class="arg1" type="long">100</span>, and a pattern that
+      // demanded '>' right after the class dropped them silently.
+      for (const [, cls, val] of inner.matchAll(/<span class="([^"]+)"[^>]*>([^<]*)<\/span>/g)) {
         fields[cls] = val;
       }
       results.push(fields);

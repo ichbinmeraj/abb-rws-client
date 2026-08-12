@@ -72,13 +72,41 @@ function cleanMsg(msg: string | null): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-/** Controller codes → taxonomy. Shared across RWS 1.0 and 2.0. */
+/**
+ * Controller codes → taxonomy. Shared across RWS 1.0 and 2.0.
+ *
+ * Harvested by triggering safe, guaranteed-rejected operations against RW6.16,
+ * RW7.21 and RW8.1.1 and recording every native code each one returns. A code
+ * that is not listed here falls back to HTTP semantics, which for a 400 means
+ * `UNKNOWN` - so an unmapped code silently costs callers their error branch.
+ */
 const CODE_MAP: ReadonlyArray<{ codes: number[]; rws: RwsErrorCode }> = [
   { codes: [-1073445862, -1073445859], rws: 'MASTERSHIP_REQUIRED' },
-  { codes: [-1073445881],              rws: 'GRANT_DENIED' },
+  // -1073445867 "The user is not allowed access": returned for UAS-gated
+  // resources such as /uas/ldap/*. Without it a 403 fell through to UNKNOWN,
+  // because the HTTP fallback below only promotes 404.
+  { codes: [-1073445881, -1073435873, -1073435870, -1073445867], rws: 'GRANT_DENIED' },
   { codes: [-1073442809],              rws: 'WRONG_MODE' },
   { codes: [-1073442813],              rws: 'MODULE_NOT_FOUND' },
-  { codes: [-1073414146, -1073445866, -1073438713], rws: 'RESOURCE_NOT_FOUND' },
+  // Everything below means "the thing you named is not there". Notes on the
+  // ones that are not obvious:
+  //   -1073438716  "Virtual root does not exist" - RWS 2.0 answer for a bad
+  //                volume in a file path, on 400. RWS 1.0 answers the same
+  //                condition 404 with -1073414146, so listDirectory on a bad
+  //                volume reported RESOURCE_NOT_FOUND on RW6 but UNKNOWN on
+  //                RW7/RW8 until this was mapped.
+  //   -1073438708  RW6 loadModule with a path that does not exist. The
+  //                controller sends no human-readable text, only the code.
+  //   -1073442816  Overloaded by the controller across at least three distinct
+  //                conditions, each with its own wording and HTTP status:
+  //                "Unknown module name" (RW6 unloadmod, 400), "Symbol not
+  //                found" (RW7/RW8 symbol GET, 404), and an untranslated
+  //                "org_code: -517" (RW6 symbol write, 404). The number alone
+  //                cannot tell them apart, so it lands on the general meaning
+  //                and the message promotes it where it is specific.
+  { codes: [-1073414146, -1073445866, -1073438713, -1073438716, -1073438708,
+            -1073445883, -1073442816],
+    rws: 'RESOURCE_NOT_FOUND' },
 ];
 
 export function classifyControllerError(args: {
@@ -97,7 +125,12 @@ export function classifyControllerError(args: {
   if (controllerCode !== null) {
     rws = CODE_MAP.find(m => m.codes.includes(controllerCode))?.rws ?? null;
   }
-  if (rws === 'RESOURCE_NOT_FOUND' && /\/modules\//.test(cleanPath)) {
+  // Promote a generic not-found to MODULE_NOT_FOUND. The path alone is not
+  // enough: RWS 1.0 unloads a module by POSTing to the *task*, so the module
+  // only appears in the request body. The controller's own wording is the
+  // reliable signal, because -1073442816 is overloaded (see CODE_MAP).
+  if (rws === 'RESOURCE_NOT_FOUND'
+      && (/\/modules\//.test(cleanPath) || /unknown module/i.test(controllerMsg ?? ''))) {
     rws = 'MODULE_NOT_FOUND';
   }
   if (rws === null) {

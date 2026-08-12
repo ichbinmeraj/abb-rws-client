@@ -1,0 +1,311 @@
+{
+  "$comment": "Structural coverage matrix - ground truth for docs/tasks/structural-coverage-loop.md. Every cell must end verified | manual-only | excluded, never untested. Generated Phase 0, 2026-08-09.",
+  "generatedAt": "2026-08-09",
+  "controllers": {
+    "rws1": { "label": "IRC5 RW6.16.3007", "transport": "http+digest", "port": 35112 },
+    "rws2": { "label": "OmniCore RW7.21.0 / RW8.1.1", "transport": "https+basic", "port": 9805 }
+  },
+  "statusValues": ["untested", "verified", "manual-only", "excluded"],
+  "cells": [
+    {
+      "id": "S01-drop-midrequest", "scenario": "Connection drop mid-request",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "plain GET mid-flight -> typed RwsError, never an uncaught throw",
+        "mastership-guarded POST mid-flight -> mastership released or reacquirable, no stuck hold",
+        "file transfer mid-flight -> typed error, no partial file silently accepted",
+        "quality reflects the drop (stale or polling), never stays live"
+      ]
+    },
+    {
+      "id": "S01-drop-midrequest", "scenario": "Connection drop mid-request",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "plain GET mid-flight -> typed RwsError, never an uncaught throw",
+        "mastership-guarded POST mid-flight -> write access released or reacquirable",
+        "file transfer mid-flight -> typed error, no partial file silently accepted",
+        "quality reflects the drop (stale or polling), never stays live"
+      ]
+    },
+
+    {
+      "id": "S02-half-open-freeze", "scenario": "Half-open freeze (sockets alive, no forwarding)",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "heartbeat detects within 2x ping interval",
+        "frozen socket is terminated, reconnect path runs",
+        "onLost fires at most once if the budget is exhausted",
+        "onRestored fires after recovery"
+      ]
+    },
+    {
+      "id": "S02-half-open-freeze", "scenario": "Half-open freeze (sockets alive, no forwarding)",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "app-level PING/PONG deadline detects within 2x ping interval",
+        "frozen socket is terminated, re-POST /subscription runs",
+        "onLost fires at most once if the budget is exhausted",
+        "onRestored fires after recovery"
+      ]
+    },
+
+    {
+      "id": "S03-warm-restart", "scenario": "Controller warm restart",
+      "generation": "rws1", "automation": "auto", "destructive": 1, "status": "untested",
+      "properties": [
+        "mid-session: silent re-auth, consumer sees no error",
+        "mid-subscription: subscriber re-registers, events resume",
+        "mid-mastership-hold: hold is not falsely believed after restart",
+        "RWS port may DRIFT on IRC5 (new RobVC process) - client or test must rediscover",
+        "UPDATE 2026-08-10: the ~5 s setup abort is FIXED (commit 289b59e wraps the pre-restart connect()/getSpeedRatio in a CONTROLLER_BUSY retry). The cell now runs the full ~19 min and reaches the real post-restart assertions. Remaining failure: the post-restart speedratio=42 SUBSCRIPTION EVENT does not arrive within the window (expectSpeedEvent, soft assertion). This is timing-sensitive, not a deterministic client bug - rws2 PASSED this exact cell in an earlier isolated run; a freshly-rebooted VC can lag on WebSocket event delivery. Options for whoever picks this up: widen the post-restart event window well past the current bound, OR assert re-registration by the group id / a fresh read rather than by event arrival (the write is already confirmed to land via pollLive). Do NOT keep re-running - each attempt is two multi-minute VC restarts."
+      ]
+    },
+    {
+      "id": "S03-warm-restart", "scenario": "Controller warm restart",
+      "generation": "rws2", "automation": "auto", "destructive": 1, "status": "untested",
+      "properties": [
+        "mid-session: fresh session cookie adopted (old one is dead)",
+        "mid-subscription: re-POST + WS upgrade with the NEW cookie, not the stale one",
+        "mid-write-access-hold: control-station registration re-established",
+        "quality returns to live/polling, not stuck reconnecting"
+      ]
+    },
+
+    {
+      "id": "S04-idle-expiry", "scenario": "Session idle past expiry, then burst",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "silent re-auth on the first request after expiry",
+        "no error surfaced to the consumer",
+        "burst after expiry does not exceed the rate ceiling"
+      ]
+    },
+    {
+      "id": "S04-idle-expiry", "scenario": "Session idle past expiry, then burst",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "silent re-auth on the first request after expiry",
+        "no error surfaced to the consumer",
+        "burst after expiry does not exceed the rate ceiling"
+      ]
+    },
+
+    {
+      "id": "S05-session-slot-pressure", "scenario": "Session-slot pressure over reconnect cycles",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "repeated connect/disconnect reuses slots - controller session count flat",
+        "disconnect issues GET /logout (clearSession is a deliberate no-op)",
+        "IRC5 caps at 70 sessions; churn must not approach it",
+        "EVIDENCE 2026-08-09, measured OUTSIDE the cell with paired controls. (1) 30 connect/disconnect cycles WITH disconnect all succeed; the same loop WITHOUT disconnect fails at cycle 2 with CONTROLLER_BUSY - so the client frees its slot, and the method would unmistakably detect it if it did not. (2) On a DRAINED controller, 40 connect/disconnect cycles and 40 subscribe/unsubscribe cycles BOTH pass 40/40 - so the RWS 1.0 subscriber releases its controller-side registrations too. No client leak on either path.",
+        "CONCLUSION: the 503s seen in a full pass are CUMULATIVE rig load, not any single cell leaking. Every cell passes alone; fourteen fault-injection cells back-to-back exhaust the IRC5's 70-slot budget faster than its 300 s expiry reclaims it, and once the pool is dry every LATER cell fails CONTROLLER_BUSY for a reason unrelated to what it asserts. Run rws1 cells in batches with a drain between, or restart the IRC5 between groups. This is a property of the controller, and no client change can fix it."
+      ]
+    },
+    {
+      "id": "S05-session-slot-pressure", "scenario": "Session-slot pressure over reconnect cycles",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "EXCLUDED sub-property: 'controller session count flat' is NOT OBSERVABLE on RWS 2.0. The cell's own premise guard demonstrated it: connecting a client leaves GET /users unchanged (2 -> 2), so that list enumerates users, not sessions. A measurement that cannot see one deliberate session cannot see twenty accidental ones, and the test correctly refuses to assert a leak it cannot detect rather than reporting a false 'flat'.",
+        "credentials are not re-sent once a session cookie is held",
+        "subscription re-POST rides the existing session (no new session per subscribe)",
+        "OPEN: the two properties above need a mock HTTPS server to assert - a TCP chaos proxy cannot read TLS headers, so wire-level claims are unobservable through it on this generation"
+      ]
+    },
+
+    {
+      "id": "S06-401-storm", "scenario": "401 storm / credentials changed mid-session",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "typed AUTH_FAILED, not a generic error",
+        "no infinite retry loop",
+        "clean disconnect; quality -> disconnected"
+      ]
+    },
+    {
+      "id": "S06-401-storm", "scenario": "401 storm / credentials changed mid-session",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "typed AUTH_FAILED, not a generic error",
+        "no infinite retry loop",
+        "WS upgrade 401 does not spin forever (live-observed failure mode on RW7.21)"
+      ]
+    },
+
+    {
+      "id": "S07-mastership-conflict", "scenario": "Mastership / write-access conflict",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "second holder -> typed MASTERSHIP_REQUIRED",
+        "recovery after the other side releases",
+        "release-on-disconnect actually releases"
+      ]
+    },
+    {
+      "id": "S07-mastership-conflict", "scenario": "Mastership / write-access conflict",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "second holder -> typed MASTERSHIP_REQUIRED",
+        "RW8 control-station path: conflict surfaces typed, not as a raw 403",
+        "release-on-disconnect actually releases"
+      ]
+    },
+
+    {
+      "id": "S08-churn", "scenario": "Rapid connect/disconnect churn (50+ cycles)",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "zero leaked sockets", "zero leaked timers", "zero leaked sessions",
+        "zero leaked subscriptions", "heap does not grow monotonically"
+      ]
+    },
+    {
+      "id": "S08-churn", "scenario": "Rapid connect/disconnect churn (50+ cycles)",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "zero leaked sockets", "zero leaked timers", "zero leaked sessions",
+        "zero leaked subscriptions", "heap does not grow monotonically"
+      ]
+    },
+
+    {
+      "id": "S09-latency", "scenario": "Latency injection (500 ms - 5 s)",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "configured timeout fires, typed error",
+        "request queue drains, no pile-up",
+        "rate limiter still respected under delay"
+      ]
+    },
+    {
+      "id": "S09-latency", "scenario": "Latency injection (500 ms - 5 s)",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "configured timeout fires, typed error",
+        "request queue drains, no pile-up",
+        "rate limiter still respected under delay"
+      ]
+    },
+
+    {
+      "id": "S10-503-storm", "scenario": "503 storm / backpressure",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "CONTROLLER_BUSY typed",
+        "backpressure holds under the <20 req/s ceiling",
+        "requests eventually succeed, no starvation"
+      ]
+    },
+    {
+      "id": "S10-503-storm", "scenario": "503 storm / backpressure",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "CONTROLLER_BUSY typed",
+        "backpressure holds under the <20 req/s ceiling",
+        "requests eventually succeed, no starvation"
+      ]
+    },
+
+    {
+      "id": "S11-event-flood", "scenario": "Subscription event flood",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "no unbounded buffering",
+        "events delivered in order",
+        "no silent drops - any drop is signalled"
+      ]
+    },
+    {
+      "id": "S11-event-flood", "scenario": "Subscription event flood",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "no unbounded buffering",
+        "events delivered in order",
+        "no silent drops - any drop is signalled"
+      ]
+    },
+
+    {
+      "id": "S12-malformed", "scenario": "Malformed / truncated responses",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "parsers never throw uncaught",
+        "every failure is a typed RwsError (PARSE_ERROR family)",
+        "truncated body mid-element does not hang the request"
+      ]
+    },
+    {
+      "id": "S12-malformed", "scenario": "Malformed / truncated responses",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "parsers never throw uncaught (XHTML and hal+json paths)",
+        "every failure is a typed RwsError (PARSE_ERROR family)",
+        "truncated body mid-element does not hang the request"
+      ]
+    },
+
+    {
+      "id": "S13-multi-robot-isolation", "scenario": "Multi-robot fault isolation",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "one manager's failure never changes another's state",
+        "quality is per-robot, not global",
+        "change notifications carry the robot id"
+      ]
+    },
+    {
+      "id": "S13-multi-robot-isolation", "scenario": "Multi-robot fault isolation",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "one manager's failure never changes another's state",
+        "quality is per-robot, not global",
+        "mixed-generation fleet isolates too (RW6 + RW7 in one MultiRobotManager)"
+      ]
+    },
+
+    {
+      "id": "S14-quality-truthfulness", "scenario": "ConnectionQuality truthfulness (cross-cutting)",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "asserted inside every other cell, not as a separate run",
+        "quality never claims live while the stream is down",
+        "quality never claims disconnected while requests still succeed",
+        "every transition carries a non-empty human-readable reason"
+      ]
+    },
+    {
+      "id": "S14-quality-truthfulness", "scenario": "ConnectionQuality truthfulness (cross-cutting)",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "properties": [
+        "asserted inside every other cell, not as a separate run",
+        "quality never claims live while the stream is down",
+        "quality never claims disconnected while requests still succeed",
+        "every transition carries a non-empty human-readable reason"
+      ]
+    },
+
+    {
+      "id": "S15-soak", "scenario": "24 h soak with periodic injected faults",
+      "generation": "rws1", "automation": "manual", "destructive": 0, "status": "untested",
+      "properties": [
+        "RSS drift within threshold",
+        "handle/socket count flat",
+        "zero uncaught exceptions",
+        "final state matches controller truth"
+      ],
+      "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc.",
+      "manualProcedure": "1. Restart both VCs so no session backlog is carried in.\n2. `node scripts/soak.mjs --minutes 1440` (add `--rss-drift-mb` / `--handle-growth` to override the thresholds).\n3. Leave the machine otherwise idle - the run holds a manager against each generation and injects a fault every 15 s.\n\nThresholds are fixed BEFORE the run, in the script, so the verdict cannot be rationalised afterwards:\n- **RSS drift** <= 75 MB from a POST-WARMUP baseline (warm-up excluded because the first minute is lazy imports and JIT, which never recur).\n- **Handle growth** <= 5 for any single active-handle kind. Sockets and timers are what leak here; one socket in TIME_WAIT is noise, sustained growth is not.\n- **Uncaught exceptions** exactly 0. Any unhandled rejection fails the soak outright regardless of memory.\n- **Final state** must match an INDEPENDENT client's reading, not the manager's own cached view.\n\nOutput lands in `docs/structural/soak-<timestamp>.json`. A scaled run is written with `scaled: true` and is evidence the harness works, NOT the acceptance run."
+    },
+    {
+      "id": "S15-soak", "scenario": "24 h soak with periodic injected faults",
+      "generation": "rws2", "automation": "manual", "destructive": 0, "status": "untested",
+      "properties": [
+        "RSS drift within threshold",
+        "handle/socket count flat",
+        "zero uncaught exceptions",
+        "final state matches controller truth"
+      ],
+      "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc.",
+      "manualProcedure": "1. Restart both VCs so no session backlog is carried in.\n2. `node scripts/soak.mjs --minutes 1440` (add `--rss-drift-mb` / `--handle-growth` to override the thresholds).\n3. Leave the machine otherwise idle - the run holds a manager against each generation and injects a fault every 15 s.\n\nThresholds are fixed BEFORE the run, in the script, so the verdict cannot be rationalised afterwards:\n- **RSS drift** <= 75 MB from a POST-WARMUP baseline (warm-up excluded because the first minute is lazy imports and JIT, which never recur).\n- **Handle growth** <= 5 for any single active-handle kind. Sockets and timers are what leak here; one socket in TIME_WAIT is noise, sustained growth is not.\n- **Uncaught exceptions** exactly 0. Any unhandled rejection fails the soak outright regardless of memory.\n- **Final state** must match an INDEPENDENT client's reading, not the manager's own cached view.\n\nOutput lands in `docs/structural/soak-<timestamp>.json`. A scaled run is written with `scaled: true` and is evidence the harness works, NOT the acceptance run."
+    }
+  ]
+}

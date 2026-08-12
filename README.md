@@ -329,6 +329,7 @@ new RwsClient(options: RwsClientOptions)
 | `getControllerState()` | `ControllerState` | Motor state: motoron / motoroff / guardstop / emergencystop / … |
 | `setControllerState(state)` | `void` | Set motor state - requires mastership |
 | `getOperationMode()` | `OperationMode` | AUTO / MANR / MANF |
+| `acknowledgeOperationMode(mode)` | `void` | Confirm a pending mode switch, RWS 2.0 |
 | `lockOperationMode(pin, permanent?)` | `void` | Lock FlexPendant key switch with PIN |
 | `unlockOperationMode()` | `void` | Unlock FlexPendant key switch |
 | `getSpeedRatio()` | `number` | Speed override 0-100 |
@@ -339,6 +340,26 @@ new RwsClient(options: RwsClientOptions)
 | `getSystemInfo()` | `SystemInfo` | RobotWare version, options, system ID |
 | `getControllerClock()` | `ControllerClock` | Current date/time (UTC) |
 | `setControllerClock(y,mo,d,h,mi,s)` | `void` | Set controller date/time (UTC) |
+| `getRestartCount()` | `number` | Times the controller has restarted, RWS 2.0 |
+| `listProgress()` / `getProgress(id)` | - | Track async operations (backup, log dump) |
+| `setPanelLanguage(code)` | `void` | Panel language, both generations (field `lang-code`) |
+| `setControllerLanguage(lang)` | `void` | Controller language, both generations (field `lang`) |
+| `setExternalEmergencyStop(state)` | `void` | Simulated **external** e-stop circuit, RWS 2.0 |
+| `getDiagnostics()` | `DiagnosticsInfo` | Saved diagnostics; `empty: true` when none |
+
+Not available on a virtual controller (they answer 403/404 and surface as typed
+`RwsError`s): `saveSystemInfo`, `saveDiagnostics`, and the whole `/ctrl/tpu/*`,
+`/ctrl/env`, `/ctrl/systems` and `/ctrl/syslog` group. See
+`docs/tasks/endpoint-completion.md` for exactly what each controller answered.
+
+> **The rows tagged `RWS 2.0` above are RWS 2.0 only** (e.g. `acknowledgeOperationMode`,
+> `getRestartCount`, `setExternalEmergencyStop`). Every one of their paths answers
+> 404 on an IRC5, so they are declared optional on `IRWSAdapter` and `RWS1Adapter`
+> does not implement them. Through `RobotManager` the behaviour is explicit: reads
+> return a neutral value on RobotWare 6, and **writes throw `UNSUPPORTED_OPERATION`**
+> rather than quietly doing nothing. Rows tagged **both generations**
+> (`setPanelLanguage`, `setControllerLanguage`) are live-verified on RWS 1.0 too and
+> work on either controller.
 
 ---
 
@@ -350,6 +371,7 @@ new RwsClient(options: RwsClientOptions)
 | `getRapidExecutionInfo()` | `ExecutionInfo` | State + current cycle mode |
 | `getRapidTasks()` | `RapidTask[]` | All tasks with name, type, state, active flag |
 | `startRapid()` | `void` | Start execution (AUTO + motors on required) |
+| `startProductionEntry()` | `void` | Start from the production entry point |
 | `stopRapid()` | `void` | Stop execution |
 | `resetRapid()` | `void` | Reset program pointer to Main |
 | `setExecutionCycle(cycle)` | `void` | `'once'` \| `'forever'` \| `'asis'` |
@@ -381,6 +403,9 @@ new RwsClient(options: RwsClientOptions)
 | `listModules(taskName)` | `string[]` | Names of all loaded modules in a task |
 | `loadModule(task, modulePath, replace?)` | `void` | Load module from controller filesystem into task |
 | `unloadModule(task, moduleName)` | `void` | Unload module from task (RAPID must be stopped) |
+| `saveModule(task, moduleName, filepath)` | `void` | Save a module's source to a controller volume |
+| `loadProgram(task, progpath, loadmode?)` | `void` | Load a full RAPID program (.pgf), RWS 2.0 |
+| `saveProgram(task, destination)` | `void` | Save the loaded program to disk, RWS 2.0 |
 
 ---
 
@@ -389,8 +414,11 @@ new RwsClient(options: RwsClientOptions)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `getJointPositions(mechunit?)` | `JointTarget` | rax_1-rax_6 in degrees (default mechunit: ROB_1) |
-| `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion |
+| `getRobTarget(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion for a chosen tool/wobj |
+| `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | RWS 1.0 name for `getRobTarget` |
 | `getCartesianFull(mechunit?)` | `CartesianFull` | TCP pose + j1/j4/j6/jx configuration flags |
+| `getMotionSupervision(mechunit?)` / `getPathSupervision(mechunit?)` | - | Supervision mode + level, RWS 2.0 |
+| `getAxisPose(mechunit, axis)` | `RobTarget` | Pose of one axis, RWS 2.0 |
 
 ---
 
@@ -404,6 +432,8 @@ new RwsClient(options: RwsClientOptions)
 | `deleteFile(remotePath)` | `void` | Delete file |
 | `createDirectory(parentPath, dirName)` | `void` | Create directory |
 | `copyFile(sourcePath, destPath)` | `void` | Copy file on controller |
+| `renameFile(path, newName)` | `void` | Rename a file in place, both generations |
+| `listFileVolumes()` | `string[]` | Controller volumes/devices |
 
 ---
 
@@ -412,7 +442,10 @@ new RwsClient(options: RwsClientOptions)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `listAllSignals(start?, limit?)` | `Signal[]` | Paginated flat list of all signals |
+| `searchSignals(criteria)` | `Signal[]` | Server-side search (name substring, type, device, network), both generations |
+| `searchSignalsEx(criteria[])` | `Signal[]` | Two-criteria search, both generations - the second set **narrows** the first |
 | `readSignal(network, device, name)` | `Signal` | Read a specific signal by address |
+| `getSignalConfig(network, device, name)` | `Record` | Configuration instance of a signal, RWS 2.0 |
 | `writeSignal(network, device, name, value)` | `void` | Write DO/AO/GO - value as string: `'1'`, `'0'`, `'3.14'` |
 | `listNetworks()` | `IoNetwork[]` | All I/O networks |
 | `listDevices(network)` | `IoDevice[]` | Devices on a network |
@@ -428,6 +461,8 @@ new RwsClient(options: RwsClientOptions)
 | `getEventLog(domain?, lang?)` | `ElogMessage[]` | Read log messages (domain 0 = main, newest first) |
 | `clearEventLog(domain?)` | `void` | Clear messages in one domain |
 | `clearAllEventLogs()` | `void` | Clear all domains |
+| `saveEventLogRaw(destination)` | `void` | Dump the full log to a file in system-dump format, both generations |
+| `getEventLogMessage(domain, seqnum, lang?)` | `ElogMessage \| null` | One message by domain + sequence number |
 
 ---
 
@@ -504,6 +539,38 @@ const unsub2 = await client2.subscribe(resources, handler, onLost, onRestored, {
 `RobotManager` wires this automatically: it resyncs with a full poll on restore and
 falls back to fast polling on loss.
 
+#### Editing a live group (RWS 2.0)
+
+A subscription group can be changed in place instead of being torn down and
+rebuilt. The handle `subscribe()` returns is still just the unsubscribe
+function, but it also carries the group's path:
+
+```ts
+const unsubscribe = await client2.subscribe(['controllerstate'], handler);
+
+// Add a resource. The PUT response carries its INITIAL value event, so you get
+// the starting state without waiting for the first change.
+await client2.updateSubscriptionGroup(unsubscribe.groupPath, ['speedratio']);
+
+// Drop just that one resource; the group and its WebSocket stay up.
+await client2.unsubscribeResource(unsubscribe.groupPath, 'speedratio');
+
+await unsubscribe();   // tears down the whole group, as before
+```
+
+Adding is additive, not a replace. Removing the *last* resource retires the
+group, after which the controller rejects further edits - call the unsubscribe
+handle when you mean to tear everything down.
+
+`RobotManager` owns its own subscription; edit that one through
+`manager.subscriptionGroupPath` (it is `undefined` when the manager is
+polling-only or talking to an IRC5):
+
+```ts
+const group = manager.subscriptionGroupPath;
+if (group) { await manager.updateSubscriptionGroup(group, ['uiinstr']); }
+```
+
 ---
 
 ### Error Handling
@@ -524,6 +591,10 @@ All public methods throw `RwsError` - never a plain `Error`.
 | `'RATE_LIMITED'` | Too many requests (429) |
 | `'NETWORK_ERROR'` | TCP / timeout / WebSocket error |
 | `'PARSE_ERROR'` | Unexpected XML response format |
+| `'UNSUPPORTED_OPERATION'` | This protocol generation / controller does not have the operation |
+| `'INVALID_ARGUMENT'` | Caller passed a value the controller cannot accept - nothing was sent |
+| `'NOT_CONNECTED'` | `connect()` has not run (or the manager has no adapter yet) |
+| `'PROTOCOL_DETECT_FAILED'` | Could not determine RWS 1.0 vs 2.0 during connect |
 | `'UNKNOWN'` | Unmapped error - check `httpStatus` and `rwsDetail` |
 
 4xx responses are classified by the controller's own error body, not the HTTP
@@ -583,19 +654,48 @@ OmniCore-specific limits aren't fully documented by ABB; what the lib observes e
 
 ## Compatibility
 
-| | RobotWare 6.x (RWS 1.0) | RobotWare 7.x (RWS 2.0) |
-|--|--|--|
-| This package | ✅ `RwsClient` | ✅ `RwsClient2` |
-| IRC5 controller (real) | ✅ | n/a |
-| OmniCore controller (real) | n/a | ✅ |
-| RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) |
-| Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` |
+| | RobotWare 6.x (RWS 1.0) | RobotWare 7.x (RWS 2.0) | RobotWare 8.x (RWS 2.0) |
+|--|--|--|--|
+| This package | ✅ `RwsClient` | ✅ `RwsClient2` | ✅ `RwsClient2` |
+| IRC5 controller (real) | ✅ | n/a | n/a |
+| OmniCore controller (real) | n/a | ✅ | ✅ |
+| RobotStudio virtual controller | ✅ (RW6.x VC) | ✅ (RW7.x VC) | ✅ (RW8.x VC) |
+| Auto-detect from one entry point | ✅ via `createClient()` | ✅ via `createClient()` | ✅ via `createClient()` |
+| Write access | Mastership | Mastership | Control Station (automatic) |
 
-**Live-tested matrix** as of v1.1.0: RobotWare 7.21 (OmniCore VC, RWS 2.0), RobotWare 6.16 (IRC5 VC, RWS 1.0). 440+ unit tests + 339 live protocol-coverage tests + chaos-proxy resilience suites pass against both.
+RobotWare 8 removes the mastership service and requires a registered control
+station for write access. The client detects the RobotWare version on connect
+and routes write access automatically, so the same code runs on all three
+generations. The full Control Station Service is also exposed directly
+(`requestWriteAccess`, `getWriteAccessStatus`, `setAllowMotionControl`, ...).
+
+**Live-tested matrix**: RobotWare 8.1 (OmniCore VC), RobotWare 7.21 (OmniCore VC), RobotWare 6.16 (IRC5 VC). 460+ unit tests + live protocol-coverage tests + chaos-proxy resilience suites.
 
 ---
 
 ## Resources
+
+**What this client is proven to do**
+
+- [COVERAGE.md](./docs/COVERAGE.md) - the guarantees and how each one is tested.
+- [STRUCTURAL.md](./STRUCTURAL.md) - what happens when the network, the controller
+  or the clock misbehaves: a fault-injection matrix run against live controllers,
+  where every cell is `verified`, `manual-only` or `excluded` and never assumed.
+  Regenerate with `npm run structural`.
+- [CONFORMANCE.md](./CONFORMANCE.md) - does the client cover what the controllers
+  actually advertise? Diffs the path tables in `src/paths` against a live crawl of
+  each controller's resource tree, flagging any advertised resource nothing maps.
+  Regenerate with `npm run conformance`.
+- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) - how the pieces fit together.
+
+**Where the URLs live**
+
+Every RWS URL the client uses is declared once in [`src/paths`](./src/paths),
+one table per RWS domain, keyed by operation and split by protocol generation.
+That is the single source of truth an ABB update lands in - and what
+`npm run conformance` checks against the live controllers.
+
+**External**
 
 - [ABB Developer Center - RWS API](https://developercenter.robotstudio.com/api/rwsApi/)
 - [Companion VS Code Extension](https://marketplace.visualstudio.com/items?itemName=merajsafari.abb-rws)
