@@ -6,10 +6,10 @@ tree. Regenerate with `npm run conformance`.
 
 **59 implemented · 1 deliberate-gap · 0 unmapped · 0 orphan** (crawled 2026-08-11)
 
-- **unmapped** — the controller advertises it and nothing in the tables claims
+- **unmapped** - the controller advertises it and nothing in the tables claims
   it. This is the drift the check exists to catch: a new endpoint after a
   RobotWare upgrade, or one the client never wrapped.
-- **orphan** — a table entry whose path no controller advertises. A typo, or an
+- **orphan** - a table entry whose path no controller advertises. A typo, or an
   endpoint ABB removed.
 
 ## RWS 1.0 (IRC5)
