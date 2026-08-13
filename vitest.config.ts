@@ -10,6 +10,11 @@ import { defineConfig } from 'vitest/config';
 // the paced-HTTP tests real headroom - a genuine hang still blows past 20 s.
 export default defineConfig({
   test: {
+    // Only this package's own test tree. Without the explicit scope vitest
+    // globs **/*.test.ts from the repo root and can pick up copies of the
+    // suite in nested working directories (editor tooling, linked checkouts),
+    // running every test twice and doubling the CPU load on the timing tests.
+    include: ['tests/**/*.test.ts'],
     testTimeout: 20000,
     hookTimeout: 20000,
   },
