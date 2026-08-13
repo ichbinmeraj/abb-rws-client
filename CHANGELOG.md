@@ -245,8 +245,8 @@ its date rather than being back-filled.
 - **The flaky RWS 2.0 reconnect test is fixed at its cause.** The subscription
   tests addressed server sockets by index (`sockets[0]`, `sockets[1]`), which
   assumes every socket the server accepts is one the client kept. It is not: if
-  the client's WS open timeout expires while the handshake is still settling —
-  ordinary under parallel-suite CPU load — the client discards that connection
+  the client's WS open timeout expires while the handshake is still settling -
+  ordinary under parallel-suite CPU load - the client discards that connection
   and reconnects, leaving the server holding a dead entry. The test then sent
   its event to a closed socket and waited, which no timeout could rescue. This
   was reproduced deliberately (a 5 ms open timeout leaves the server holding one
@@ -257,9 +257,9 @@ its date rather than being back-filled.
   contention pass, against roughly one failure in two before this work.
 
 - **RobotWare 8 no longer throws when releasing write access.** Any write clears
-  control-station write access as a side effect on RW8 — the status resource
+  control-station write access as a side effect on RW8 - the status resource
   reports `held=false` immediately after a write while the session keeps writing
-  successfully — so the release that followed was refused with
+  successfully - so the release that followed was refused with
   `403 "The control station does not have SPoC."` and `releaseMastership`
   propagated it. Because the documented pattern is acquire → try →
   release-in-finally, that surfaced from the `finally` and masked the caller's
@@ -274,9 +274,9 @@ its date rather than being back-filled.
   source directly in program memory (the write side of the existing
   `getModuleText`, with no TEMP round trip), and `setModuleTextRange` replaces a
   row/column range. Both are RWS 2.0 only. Note the controller's own form for the
-  ranged variant advertises `action=".../textrange"`, which 404s — the real path
+  ranged variant advertises `action=".../textrange"`, which 404s - the real path
   is `/text/range`, the one its OPTIONS is served at.
-- `setKeylessMotorOn` — motors on without the key switch, for controllers with
+- `setKeylessMotorOn` - motors on without the key switch, for controllers with
   the Keyless Mode Switch option. The resource lives at
   `/rw/panel/ctrl-state/keyless-motoron`; the widely-recorded
   `/rw/panel/keyless-motoron` 404s on every generation.
@@ -304,7 +304,7 @@ its date rather than being back-filled.
   initial value event, so there is no wait for the first change) and
   `unsubscribeResource` drops a single resource without tearing the group down.
   Both clients previously rebuilt the entire group on any change. The group's
-  path is exposed as `groupPath` on the handle `subscribe()` returns — the
+  path is exposed as `groupPath` on the handle `subscribe()` returns - the
   handle is still callable exactly as before.
 - Several endpoints behave differently from what the specification implies, all
   live-verified on RobotWare 7.21 and 8.1.1: `signal-search-ex`'s second criteria
