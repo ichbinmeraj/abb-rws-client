@@ -14,30 +14,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on `IRWSAdapter` but had no `RobotManager` path are now first-class wrappers,
   so consumers no longer need adapter casts. Same house rules as the rest of the
   facade: reads degrade to a neutral value on controllers that lack the op,
-  writes throw a typed `UNSUPPORTED_OPERATION` instead of silently no-opping,
-  and mastership/RMMP stays the caller's business.
+  writes throw a typed `UNSUPPORTED_OPERATION` instead of silently no-opping.
   - **RMMP lifecycle:** `pollRmmp` (keeps the FlexPendant approval window
     alive), `cancelRmmp` (withdraws the popup) - closing the gap that forced
-    UI consumers into a guarded adapter cast.
+    UI consumers into a guarded adapter cast. Both (and `requestRmmp`) now
+    throw `NOT_CONNECTED` when no adapter exists, reserving
+    `UNSUPPORTED_OPERATION` for a real capability gap.
   - **Event log:** `getEventLog(domain, lang)` - fetch any domain directly;
     `refreshEventLog()` remains the state-updating domain-0 path.
   - **Files:** `uploadFile(path, content)` - write an arbitrary controller
     file without the module-load semantics of `loadProgram`.
   - **Mastership:** per-domain `requestMastership` / `releaseMastership` for
-    caller-held multi-step edits, plus `listMastershipDomains`.
+    caller-held multi-step edits, plus `listMastershipDomains`. A caller-held
+    hold is coordinated with the rest of the facade: mastership-wrapped writes
+    (`startRapid`, `stopRapid`, cfg writes, stepping) run inside the hold
+    instead of acquiring and releasing their own (which would destroy it -
+    RWS mastership is session-scoped with no refcount), and `jog()` neither
+    re-requests nor auto-releases a hold the caller owns.
   - **RAPID debugger backbone:** `setPPToCursor`, `stepRapid`, `holdToRun`,
-    `listBreakpoints`, `setBreakpoint`, `removeBreakpoint`.
+    `listBreakpoints`, `setBreakpoint`, `removeBreakpoint`. Stepping and PP
+    moves post to the same mastership-gated execution/pcp family as
+    `startRapid`, so they auto-acquire mastership like their siblings.
+    Caveat: `holdToRun` is verified on RWS 2.0 only - the RWS 1.0 wire form
+    is an unverified guess that answers HTTP 400 on RW6.
   - **Vision:** `getVisionSystemInfo`, `listVisionJobs`, `triggerVisionJob`.
+    Caveat: RWS 1.0 cannot address a specific vision job (its wire form has
+    no job segment), so naming one on an IRC5 throws instead of silently
+    triggering whatever job is active.
   - **Safety:** `listSafetyZones`, `runCyclicBrakeCheck`.
   - **Mechunit:** `setMechunitBaseFrame` (write side of the already-wrapped
-    read), `getMechunitPjoints`.
+    read; auto-acquires mastership like the other config writes),
+    `getMechunitPjoints`.
   - **Certificate store:** `listCertificates`, `uploadCertificate`,
     `removeCertificate`.
   - **Controller devices:** `listDeviceGroups`, `listControllerDevices`.
 
-  No protocol changes - every wrapper is a thin passthrough over endpoints that
-  shipped in 1.3.0 or earlier. Delegation and degrade/throw behavior covered by
-  new unit tests.
+  No protocol changes - every wrapper delegates to endpoints that shipped in
+  1.3.0 or earlier. Delegation, degrade/throw, and mastership-coordination
+  behavior covered by new unit tests.
 
 ## [1.3.0] - 2026-08-12
 

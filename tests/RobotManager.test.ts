@@ -944,13 +944,16 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
   it('getEventLog fetches a chosen domain without touching state', async () => {
     const mgr = new RobotManager();
     const fake = makeFakeAdapter();
+    const msg = { seqnum: 1, msgtype: 'info', code: 10015, title: 'Program started' };
+    (fake.getEventLog as any).mockResolvedValue([msg]);
     (mgr as any).adapter = fake;
 
-    await mgr.getEventLog(3, 'de');
+    await expect(mgr.getEventLog(3, 'de')).resolves.toEqual([msg]);
     expect(fake.getEventLog).toHaveBeenCalledWith(3, 'de');
     await mgr.getEventLog();
     expect(fake.getEventLog).toHaveBeenCalledWith(0, 'en');
-    expect((mgr as any)._state.eventLog).toEqual([]); // state untouched
+    // A non-empty fetch result must NOT leak into state - refreshEventLog owns that.
+    expect((mgr as any)._state.eventLog).toEqual([]);
   });
 
   it('uploadFile and per-domain mastership delegate with arguments', async () => {
@@ -972,13 +975,14 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     ]);
   });
 
-  it('debugger backbone delegates with arguments', async () => {
+  it('debugger backbone delegates with arguments; stepping/PP wrap in mastership like their siblings', async () => {
     const mgr = new RobotManager();
     const fake = makeFakeAdapter() as any;
     const calls: Array<[string, unknown[]]> = [];
-    for (const m of ['setPPToCursor', 'stepRapid', 'holdToRun', 'setBreakpoint', 'removeBreakpoint']) {
+    for (const m of ['setPPToCursor', 'stepRapid', 'holdToRun', 'setBreakpoint', 'removeBreakpoint', 'requestMastership']) {
       fake[m] = async (...a: unknown[]) => { calls.push([m, a]); };
     }
+    fake.releaseMastership = async (...a: unknown[]) => { calls.push(['releaseMastership', a]); };
     fake.listBreakpoints = async (...a: unknown[]) => { calls.push(['listBreakpoints', a]); return [{ module: 'MainModule', row: 12 }]; };
     (mgr as any).adapter = fake;
 
@@ -990,13 +994,99 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     await mgr.removeBreakpoint('T_ROB1', 'MainModule', 12);
 
     expect(calls).toEqual([
+      // setPPToCursor and stepRapid post to the mastership-gated execution/pcp
+      // family, so they acquire and release around the op like startRapid does.
+      ['requestMastership', ['rapid']],
       ['setPPToCursor', ['T_ROB1', 'MainModule', 12, 0]],
+      ['releaseMastership', ['rapid']],
+      ['requestMastership', ['rapid']],
       ['stepRapid', ['T_ROB1', 'over']],
+      ['releaseMastership', ['rapid']],
       ['holdToRun', ['T_ROB1', 'press']],
       ['listBreakpoints', ['T_ROB1']],
       ['setBreakpoint', ['T_ROB1', 'MainModule', 12, undefined]],
       ['removeBreakpoint', ['T_ROB1', 'MainModule', 12, undefined]],
     ]);
+  });
+
+  it('a caller-held rapid hold is respected by mastership-wrapped ops, not churned', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    const calls: Array<[string, unknown[]]> = [];
+    fake.requestMastership = async (...a: unknown[]) => { calls.push(['requestMastership', a]); };
+    fake.releaseMastership = async (...a: unknown[]) => { calls.push(['releaseMastership', a]); };
+    fake.stepRapid = async (...a: unknown[]) => { calls.push(['stepRapid', a]); };
+    (mgr as any).adapter = fake;
+
+    await mgr.requestMastership('rapid');   // caller takes the hold
+    await mgr.stepRapid('T_ROB1', 'into');  // must NOT acquire/release its own
+    await mgr.releaseMastership('rapid');
+
+    expect(calls).toEqual([
+      ['requestMastership', ['rapid']],
+      ['stepRapid', ['T_ROB1', 'into']],
+      ['releaseMastership', ['rapid']],
+    ]);
+  });
+
+  it('caller-held motion mastership takes over and disarms the jog auto-release machinery', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    fake.requestMastership = vi.fn(async () => {});
+    fake.jog = vi.fn(async () => {});
+    (mgr as any).adapter = fake;
+    (mgr as any)._state.opmode = 'MANR';
+    (mgr as any)._state.ctrlstate = 'motoron';
+
+    await mgr.requestMastership('motion');
+    expect((mgr as any).motionMastershipHeld).toBe(true);
+
+    // Jogging inside a caller hold must not arm the 2s auto-release timer -
+    // that timer would release the caller's mastership mid-edit.
+    await mgr.jog({ mode: 'Joint', axes: [1, 0, 0, 0, 0, 0], speed: 10 });
+    expect(fake.jog).toHaveBeenCalled();
+    expect((mgr as any).jogReleaseTimer).toBeNull();
+    expect(fake.requestMastership).toHaveBeenCalledTimes(1); // jog reused the hold
+
+    await mgr.releaseMastership('motion');
+    expect((mgr as any).motionMastershipHeld).toBe(false);
+    expect(fake.releaseMastership).toHaveBeenCalledWith('motion');
+  });
+
+  it('releaseMastership(motion) after a jog resyncs the jog tracking', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    fake.requestMastership = vi.fn(async () => {});
+    fake.jog = vi.fn(async () => {});
+    (mgr as any).adapter = fake;
+    (mgr as any)._state.opmode = 'MANR';
+    (mgr as any)._state.ctrlstate = 'motoron';
+
+    await mgr.jog({ mode: 'Joint', axes: [1, 0, 0, 0, 0, 0], speed: 10 });
+    expect((mgr as any).motionMastershipHeld).toBe(true);
+    expect((mgr as any).jogReleaseTimer).not.toBeNull();
+
+    await mgr.releaseMastership('motion');
+    // Flag and timer must both reset, or the next jog would skip the
+    // re-request and 403 against a mastership the session no longer holds.
+    expect((mgr as any).motionMastershipHeld).toBe(false);
+    expect((mgr as any).jogReleaseTimer).toBeNull();
+  });
+
+  it('triggerVisionJob refuses to run a different job than named on a one-arg (RWS 1.0) adapter', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    const calls: unknown[][] = [];
+    fake.triggerVisionJob = async (system: string, job: string) => { calls.push([system, job]); };
+    (mgr as any).adapter = fake;
+    await mgr.triggerVisionJob('cam1', 'JobB');
+    expect(calls).toEqual([['cam1', 'JobB']]);
+
+    const rws1ish = makeFakeAdapter() as any;
+    rws1ish.triggerVisionJob = async (system: string) => { calls.push([system]); };
+    (mgr as any).adapter = rws1ish;
+    await expect(mgr.triggerVisionJob('cam1', 'JobB')).rejects.toThrow(/active job only/);
+    expect(calls).toHaveLength(1); // the wrong-job call never went to the wire
   });
 
   it('reads degrade to neutral values on adapters without the ops', async () => {

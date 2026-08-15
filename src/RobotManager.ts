@@ -761,6 +761,8 @@ export class RobotManager {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     // Release any held motion mastership BEFORE closing the adapter
     await this.releaseJogMastership();
+    // Caller-held mastership is session-scoped - it dies with the session.
+    this.callerHeldDomains.clear();
     // Unsubscribe WebSocket before closing adapter so DELETE /subscription fires correctly
     if (this.unsubscribeFn) {
       await this.unsubscribeFn().catch(() => {});
@@ -930,9 +932,28 @@ export class RobotManager {
    */
   private async withMastership<T>(fn: () => Promise<T>): Promise<T> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    // A caller-held hold (public requestMastership) already covers this op -
+    // acquiring/releasing our own would destroy the caller's hold mid-edit,
+    // because RWS mastership is session-scoped with no refcount.
+    if (this.callerCoversRapid()) { return fn(); }
     await this.adapter.requestMastership('rapid');
     try { return await fn(); }
     finally { await this.adapter.releaseMastership('rapid').catch(() => {}); }
+  }
+
+  /**
+   * Domains the CONSUMER holds via the public requestMastership() - the
+   * facade's self-managing writes (withMastership, jog) must not release
+   * these out from under a multi-step edit.
+   */
+  private callerHeldDomains = new Set<MastershipDomain>();
+
+  /** True when a caller-held domain already covers a withMastership('rapid') wrap.
+   *  RWS 2.0 folds 'rapid' and 'cfg' into one 'edit' domain, so on that
+   *  generation a held 'cfg' covers (and would be destroyed by) the wrap. */
+  private callerCoversRapid(): boolean {
+    if (this.callerHeldDomains.has('rapid')) { return true; }
+    return this.callerHeldDomains.has('cfg') && this.adapter instanceof RWS2Adapter;
   }
 
   // ─── Remote Mastership Privilege (RMMP) ──────────────────────────────────
@@ -943,7 +964,8 @@ export class RobotManager {
   }
   /** Request RMMP - triggers a FlexPendant popup that the operator must approve. */
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
-    if (!this.adapter?.requestRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    if (!this.adapter.requestRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.requestRmmp(level);
   }
   /** Poll a pending RMMP request - keeps the approval window alive and reports status. */
@@ -953,7 +975,8 @@ export class RobotManager {
   }
   /** Cancel this session's pending/held RMMP request (withdraws the FlexPendant popup). */
   async cancelRmmp(): Promise<void> {
-    if (!this.adapter?.cancelRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    if (!this.adapter.cancelRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.cancelRmmp();
   }
 
@@ -1702,17 +1725,30 @@ export class RobotManager {
   // Adapter members that existed on IRWSAdapter but had no RobotManager path,
   // so consumers (extension, panel) had to reach around with adapter casts.
   // Same house rules as the endpoint-completion surface: reads degrade to a
-  // neutral value, writes throw rather than silently no-op. All are thin
-  // passthroughs - mastership/RMMP stays the caller's business (see the
-  // withMastership design note above).
+  // neutral value, writes throw rather than silently no-op. Execution/PP
+  // writes wrap in withMastership like their existing siblings; everything
+  // else is a thin passthrough. RMMP stays a recovery path, not a
+  // precondition (see the withMastership design note above).
 
-  // RAPID debugger backbone
+  // RAPID debugger backbone. Stepping and PP moves post to the same
+  // execution/pcp endpoint family as startRapid/setPPToRoutine, which requires
+  // 'edit'/'rapid' mastership (live-verified: 403 org_code -4501 without it) -
+  // so they get the same withMastership wrap as their siblings. A caller-held
+  // requestMastership('rapid') hold is respected, not churned.
   async setPPToCursor(task: string, module: string, row: number, col: number): Promise<void> {
-    return this.requireOp(this.adapter?.setPPToCursor, 'setPPToCursor').call(this.adapter, task, module, row, col);
+    const op = this.requireOp(this.adapter?.setPPToCursor, 'setPPToCursor');
+    return this.withMastership(() => op.call(this.adapter, task, module, row, col));
   }
   async stepRapid(task: string, mode: 'into' | 'over' | 'out'): Promise<void> {
-    return this.requireOp(this.adapter?.stepRapid, 'stepRapid').call(this.adapter, task, mode);
+    const op = this.requireOp(this.adapter?.stepRapid, 'stepRapid');
+    return this.withMastership(() => op.call(this.adapter, task, mode));
   }
+  /**
+   * Hold-to-run press/release. Verified on RWS 2.0 only: the RWS 1.0 wire form
+   * is an unverified guess that answers HTTP 400 on RW6 (live-probed) - expect
+   * failure on IRC5 even though the call type-checks and doesn't throw
+   * UNSUPPORTED_OPERATION.
+   */
   async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
     return this.requireOp(this.adapter?.holdToRun, 'holdToRun').call(this.adapter, task, action);
   }
@@ -1733,8 +1769,17 @@ export class RobotManager {
   async listVisionJobs(system: string): Promise<Array<{ name: string; active?: boolean }>> {
     return this.adapter?.listVisionJobs?.(system) ?? [];
   }
+  /**
+   * Trigger a vision job. RWS 1.0's wire form has no job segment (it fires
+   * whatever job is currently active), so naming a specific job on an IRC5
+   * throws rather than silently running a different job than requested.
+   */
   async triggerVisionJob(system: string, job: string): Promise<void> {
-    return this.requireOp(this.adapter?.triggerVisionJob, 'triggerVisionJob').call(this.adapter, system, job);
+    const op = this.requireOp(this.adapter?.triggerVisionJob, 'triggerVisionJob');
+    if (op.length < 2) {
+      throw new RwsError('This controller cannot address a specific vision job (RWS 1.0 triggers the active job only)', 'UNSUPPORTED_OPERATION');
+    }
+    return op.call(this.adapter, system, job);
   }
 
   // Safety (getSafetyStatus was already wrapped above)
@@ -1746,9 +1791,14 @@ export class RobotManager {
   }
 
   // Mechunit write side + permanent joints
-  /** Set the base frame transform. Mastership is caller-managed, like jog(). */
+  /**
+   * Set the base frame transform. Auto-acquires mastership the way the other
+   * config writes do: the wrap requests 'rapid', which RWS 2.0 folds into the
+   * 'edit' domain this endpoint needs (a caller-held hold is respected).
+   */
   async setMechunitBaseFrame(mechunit: string, frame: { x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }): Promise<void> {
-    return this.requireOp(this.adapter?.setMechunitBaseFrame, 'setMechunitBaseFrame').call(this.adapter, mechunit, frame);
+    const op = this.requireOp(this.adapter?.setMechunitBaseFrame, 'setMechunitBaseFrame');
+    return this.withMastership(() => op.call(this.adapter, mechunit, frame));
   }
   async getMechunitPjoints(mechunit?: string): Promise<Record<string, number>> {
     return this.adapter?.getMechunitPjoints?.(mechunit) ?? {};
@@ -1832,16 +1882,34 @@ export class RobotManager {
   }
 
   /**
-   * Acquire mastership on one domain and keep it - for multi-step edits where
-   * the per-call acquire/release of withMastership would churn. The caller owns
-   * the release: always pair with releaseMastership(domain) in a finally.
+   * Acquire mastership on one domain and KEEP it - for multi-step edits where
+   * per-call acquire/release would churn. While a domain is held this way, the
+   * facade's self-managing paths respect the hold instead of destroying it:
+   * withMastership-wrapped writes (startRapid, stopRapid, cfg writes, stepping)
+   * run inside a caller-held rapid/cfg hold, and jog() stops auto-releasing a
+   * caller-held motion hold. The caller owns the release: always pair with
+   * releaseMastership(domain) in a finally.
    */
   async requestMastership(domain: MastershipDomain): Promise<void> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
-    return this.adapter.requestMastership(domain);
+    // The session may already hold motion via the jog machinery - a second
+    // request would fail, so just take ownership of the existing hold.
+    const alreadyHeld = domain === 'motion' && this.motionMastershipHeld;
+    if (!alreadyHeld) { await this.adapter.requestMastership(domain); }
+    this.callerHeldDomains.add(domain);
+    if (domain === 'motion') {
+      if (this.jogReleaseTimer) { clearTimeout(this.jogReleaseTimer); this.jogReleaseTimer = null; }
+      this.motionMastershipHeld = true;
+    }
   }
   async releaseMastership(domain: MastershipDomain): Promise<void> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    this.callerHeldDomains.delete(domain);
+    if (domain === 'motion') {
+      // Keep the jog machinery's view in sync with the real session state.
+      if (this.jogReleaseTimer) { clearTimeout(this.jogReleaseTimer); this.jogReleaseTimer = null; }
+      this.motionMastershipHeld = false;
+    }
     return this.adapter.releaseMastership(domain);
   }
   /** Enumerate the mastership domains this controller exposes. */
@@ -1898,9 +1966,14 @@ export class RobotManager {
       this.motionMastershipHeld = true;
     }
 
-    // Reset the auto-release timer on every jog so it only fires after 2 s of no jogging
-    if (this.jogReleaseTimer) { clearTimeout(this.jogReleaseTimer); }
-    this.jogReleaseTimer = setTimeout(() => { this.releaseJogMastership().catch(() => {}); }, 2000);
+    // Reset the auto-release timer on every jog so it only fires after 2 s of
+    // no jogging - unless the CALLER holds motion mastership via the public
+    // requestMastership('motion'), in which case the hold is theirs to release
+    // and auto-releasing it would break their multi-step edit.
+    if (!this.callerHeldDomains.has('motion')) {
+      if (this.jogReleaseTimer) { clearTimeout(this.jogReleaseTimer); }
+      this.jogReleaseTimer = setTimeout(() => { this.releaseJogMastership().catch(() => {}); }, 2000);
+    }
 
     await this.adapter.jog(params);
   }
