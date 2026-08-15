@@ -919,3 +919,128 @@ describe('RobotManager.parseListeningPorts (locale-independent listening scan)',
     expect(RobotManager.parseListeningPorts('not netstat output at all', 'win32')).toEqual([]);
   });
 });
+
+describe('RobotManager wrapper-surface completion (1.3.1)', () => {
+  it('pollRmmp and cancelRmmp delegate to the adapter', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    const calls: string[] = [];
+    fake.pollRmmp = async () => { calls.push('pollRmmp'); return 'pending modify'; };
+    fake.cancelRmmp = async () => { calls.push('cancelRmmp'); };
+    (mgr as any).adapter = fake;
+
+    await expect(mgr.pollRmmp()).resolves.toBe('pending modify');
+    await mgr.cancelRmmp();
+    expect(calls).toEqual(['pollRmmp', 'cancelRmmp']);
+  });
+
+  it('pollRmmp degrades and cancelRmmp throws when the adapter lacks RMMP', async () => {
+    const mgr = new RobotManager();
+    (mgr as any).adapter = makeFakeAdapter(); // no rmmp members
+    await expect(mgr.pollRmmp()).resolves.toBe('unsupported');
+    await expect(mgr.cancelRmmp()).rejects.toThrow(/RMMP/);
+  });
+
+  it('getEventLog fetches a chosen domain without touching state', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter();
+    (mgr as any).adapter = fake;
+
+    await mgr.getEventLog(3, 'de');
+    expect(fake.getEventLog).toHaveBeenCalledWith(3, 'de');
+    await mgr.getEventLog();
+    expect(fake.getEventLog).toHaveBeenCalledWith(0, 'en');
+    expect((mgr as any)._state.eventLog).toEqual([]); // state untouched
+  });
+
+  it('uploadFile and per-domain mastership delegate with arguments', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    const calls: Array<[string, unknown[]]> = [];
+    fake.uploadFile = async (...a: unknown[]) => { calls.push(['uploadFile', a]); };
+    fake.requestMastership = async (...a: unknown[]) => { calls.push(['requestMastership', a]); };
+    fake.releaseMastership = async (...a: unknown[]) => { calls.push(['releaseMastership', a]); };
+    (mgr as any).adapter = fake;
+
+    await mgr.uploadFile('$HOME/probe.txt', 'hello');
+    await mgr.requestMastership('motion');
+    await mgr.releaseMastership('motion');
+    expect(calls).toEqual([
+      ['uploadFile', ['$HOME/probe.txt', 'hello']],
+      ['requestMastership', ['motion']],
+      ['releaseMastership', ['motion']],
+    ]);
+  });
+
+  it('debugger backbone delegates with arguments', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    const calls: Array<[string, unknown[]]> = [];
+    for (const m of ['setPPToCursor', 'stepRapid', 'holdToRun', 'setBreakpoint', 'removeBreakpoint']) {
+      fake[m] = async (...a: unknown[]) => { calls.push([m, a]); };
+    }
+    fake.listBreakpoints = async (...a: unknown[]) => { calls.push(['listBreakpoints', a]); return [{ module: 'MainModule', row: 12 }]; };
+    (mgr as any).adapter = fake;
+
+    await mgr.setPPToCursor('T_ROB1', 'MainModule', 12, 0);
+    await mgr.stepRapid('T_ROB1', 'over');
+    await mgr.holdToRun('T_ROB1', 'press');
+    await expect(mgr.listBreakpoints('T_ROB1')).resolves.toEqual([{ module: 'MainModule', row: 12 }]);
+    await mgr.setBreakpoint('T_ROB1', 'MainModule', 12);
+    await mgr.removeBreakpoint('T_ROB1', 'MainModule', 12);
+
+    expect(calls).toEqual([
+      ['setPPToCursor', ['T_ROB1', 'MainModule', 12, 0]],
+      ['stepRapid', ['T_ROB1', 'over']],
+      ['holdToRun', ['T_ROB1', 'press']],
+      ['listBreakpoints', ['T_ROB1']],
+      ['setBreakpoint', ['T_ROB1', 'MainModule', 12, undefined]],
+      ['removeBreakpoint', ['T_ROB1', 'MainModule', 12, undefined]],
+    ]);
+  });
+
+  it('reads degrade to neutral values on adapters without the ops', async () => {
+    const mgr = new RobotManager();
+    (mgr as any).adapter = makeFakeAdapter(); // none of the optional ops present
+
+    await expect(mgr.listBreakpoints('T_ROB1')).resolves.toEqual([]);
+    await expect(mgr.getVisionSystemInfo('cam1')).resolves.toEqual({});
+    await expect(mgr.listVisionJobs('cam1')).resolves.toEqual([]);
+    await expect(mgr.listSafetyZones()).resolves.toEqual([]);
+    await expect(mgr.getMechunitPjoints()).resolves.toEqual({});
+    await expect(mgr.listCertificates()).resolves.toEqual([]);
+    await expect(mgr.listDeviceGroups()).resolves.toEqual([]);
+    await expect(mgr.listControllerDevices('HW_DEVICES')).resolves.toEqual([]);
+    await expect(mgr.listMastershipDomains()).resolves.toEqual([]);
+  });
+
+  it('writes throw a typed error rather than silently no-op', async () => {
+    const mgr = new RobotManager();
+    (mgr as any).adapter = makeFakeAdapter();
+
+    for (const call of [
+      () => mgr.setPPToCursor('T_ROB1', 'MainModule', 1, 0),
+      () => mgr.stepRapid('T_ROB1', 'into'),
+      () => mgr.holdToRun('T_ROB1', 'press'),
+      () => mgr.setBreakpoint('T_ROB1', 'MainModule', 1),
+      () => mgr.removeBreakpoint('T_ROB1', 'MainModule', 1),
+      () => mgr.triggerVisionJob('cam1', 'job1'),
+      () => mgr.runCyclicBrakeCheck(),
+      () => mgr.setMechunitBaseFrame('ROB_1', { x: 0, y: 0, z: 0, q1: 1, q2: 0, q3: 0, q4: 0 }),
+      () => mgr.uploadCertificate('c', 'PEM'),
+      () => mgr.removeCertificate('c'),
+    ]) {
+      await expect(call()).rejects.toThrow(/not available on this controller/);
+    }
+  });
+
+  it('throws NOT_CONNECTED before any adapter exists', async () => {
+    const mgr = new RobotManager();
+    await expect(mgr.getEventLog()).rejects.toThrow(/Not connected/);
+    await expect(mgr.uploadFile('$HOME/x', 'y')).rejects.toThrow(/Not connected/);
+    await expect(mgr.requestMastership('rapid')).rejects.toThrow(/Not connected/);
+    await expect(mgr.releaseMastership('rapid')).rejects.toThrow(/Not connected/);
+    await expect(mgr.stepRapid('T_ROB1', 'into')).rejects.toThrow(/not connected/);
+    await expect(mgr.pollRmmp()).resolves.toBe('unsupported'); // read degrades even unconnected
+  });
+});

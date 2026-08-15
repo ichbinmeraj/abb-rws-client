@@ -6,7 +6,7 @@ import type {
   UiInstruction, RestartMode, Signal, IoNetwork, IoDevice,
   SubscriptionEvent, ConnectionQuality, SubscriptionResource,
   SignalSearchExCriteria, CfgValidateRequest, ModifyPositionOptions,
-  DiagnosticsInfo, UserRegistration,
+  DiagnosticsInfo, UserRegistration, MastershipDomain,
 } from './types.js';
 import { RwsError } from './types.js';
 import * as https from 'https';
@@ -946,6 +946,16 @@ export class RobotManager {
     if (!this.adapter?.requestRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
     return this.adapter.requestRmmp(level);
   }
+  /** Poll a pending RMMP request - keeps the approval window alive and reports status. */
+  async pollRmmp(): Promise<string> {
+    if (!this.adapter?.pollRmmp) { return 'unsupported'; }
+    return this.adapter.pollRmmp();
+  }
+  /** Cancel this session's pending/held RMMP request (withdraws the FlexPendant popup). */
+  async cancelRmmp(): Promise<void> {
+    if (!this.adapter?.cancelRmmp) { throw new RwsError('RMMP not supported on this controller', 'UNSUPPORTED_OPERATION'); }
+    return this.adapter.cancelRmmp();
+  }
 
   /**
    * Tracks the last PP target the user explicitly chose via setPPToRoutine.
@@ -1162,6 +1172,12 @@ export class RobotManager {
     return this.adapter.readFile(remotePath);
   }
 
+  /** Write an arbitrary file to the controller filesystem (no module load - see loadProgram for that). */
+  async uploadFile(remotePath: string, content: string): Promise<void> {
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    await this.adapter.uploadFile(remotePath, content);
+  }
+
   async deleteControllerFile(remotePath: string): Promise<void> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.deleteFile(remotePath);
@@ -1229,6 +1245,15 @@ export class RobotManager {
     if (!this.adapter) { return; }
     try { this._state.eventLog = await this.adapter.getEventLog(0, 'en'); this.notify(); }
     catch { /* non-fatal */ }
+  }
+
+  /**
+   * Fetch one event-log domain directly (domain 0 = common/all) without
+   * touching state - refreshEventLog() stays the state-updating path.
+   */
+  async getEventLog(domain = 0, lang = 'en'): Promise<ElogMessage[]> {
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    return this.adapter.getEventLog(domain, lang);
   }
 
   async clearEventLog(): Promise<void> {
@@ -1673,6 +1698,81 @@ export class RobotManager {
       .call(this.adapter, groupPath, resource);
   }
 
+  // ─── Wrapper-surface completion (2026-08-15) ────────────────────────────────
+  // Adapter members that existed on IRWSAdapter but had no RobotManager path,
+  // so consumers (extension, panel) had to reach around with adapter casts.
+  // Same house rules as the endpoint-completion surface: reads degrade to a
+  // neutral value, writes throw rather than silently no-op. All are thin
+  // passthroughs - mastership/RMMP stays the caller's business (see the
+  // withMastership design note above).
+
+  // RAPID debugger backbone
+  async setPPToCursor(task: string, module: string, row: number, col: number): Promise<void> {
+    return this.requireOp(this.adapter?.setPPToCursor, 'setPPToCursor').call(this.adapter, task, module, row, col);
+  }
+  async stepRapid(task: string, mode: 'into' | 'over' | 'out'): Promise<void> {
+    return this.requireOp(this.adapter?.stepRapid, 'stepRapid').call(this.adapter, task, mode);
+  }
+  async holdToRun(task: string, action: 'press' | 'release'): Promise<void> {
+    return this.requireOp(this.adapter?.holdToRun, 'holdToRun').call(this.adapter, task, action);
+  }
+  async listBreakpoints(task: string): Promise<Array<{ module: string; row: number; col?: number }>> {
+    return this.adapter?.listBreakpoints?.(task) ?? [];
+  }
+  async setBreakpoint(task: string, module: string, row: number, col?: number): Promise<void> {
+    return this.requireOp(this.adapter?.setBreakpoint, 'setBreakpoint').call(this.adapter, task, module, row, col);
+  }
+  async removeBreakpoint(task: string, module: string, row: number, col?: number): Promise<void> {
+    return this.requireOp(this.adapter?.removeBreakpoint, 'removeBreakpoint').call(this.adapter, task, module, row, col);
+  }
+
+  // Vision drill-in (listVisionSystems was already wrapped above)
+  async getVisionSystemInfo(name: string): Promise<Record<string, string>> {
+    return this.adapter?.getVisionSystemInfo?.(name) ?? {};
+  }
+  async listVisionJobs(system: string): Promise<Array<{ name: string; active?: boolean }>> {
+    return this.adapter?.listVisionJobs?.(system) ?? [];
+  }
+  async triggerVisionJob(system: string, job: string): Promise<void> {
+    return this.requireOp(this.adapter?.triggerVisionJob, 'triggerVisionJob').call(this.adapter, system, job);
+  }
+
+  // Safety (getSafetyStatus was already wrapped above)
+  async listSafetyZones(): Promise<Array<Record<string, string>>> {
+    return this.adapter?.listSafetyZones?.() ?? [];
+  }
+  async runCyclicBrakeCheck(): Promise<void> {
+    return this.requireOp(this.adapter?.runCyclicBrakeCheck, 'runCyclicBrakeCheck').call(this.adapter);
+  }
+
+  // Mechunit write side + permanent joints
+  /** Set the base frame transform. Mastership is caller-managed, like jog(). */
+  async setMechunitBaseFrame(mechunit: string, frame: { x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }): Promise<void> {
+    return this.requireOp(this.adapter?.setMechunitBaseFrame, 'setMechunitBaseFrame').call(this.adapter, mechunit, frame);
+  }
+  async getMechunitPjoints(mechunit?: string): Promise<Record<string, number>> {
+    return this.adapter?.getMechunitPjoints?.(mechunit) ?? {};
+  }
+
+  // Certificate store
+  async listCertificates(): Promise<Array<{ name: string; subject?: string; expires?: string }>> {
+    return this.adapter?.listCertificates?.() ?? [];
+  }
+  async uploadCertificate(name: string, pem: string): Promise<void> {
+    return this.requireOp(this.adapter?.uploadCertificate, 'uploadCertificate').call(this.adapter, name, pem);
+  }
+  async removeCertificate(name: string): Promise<void> {
+    return this.requireOp(this.adapter?.removeCertificate, 'removeCertificate').call(this.adapter, name);
+  }
+
+  // Controller device groups (HW_DEVICES / SW_RESOURCES - distinct from I/O devices)
+  async listDeviceGroups(): Promise<string[]> {
+    return this.adapter?.listDeviceGroups?.() ?? [];
+  }
+  async listControllerDevices(group: string): Promise<Array<{ id: string; name: string }>> {
+    return this.adapter?.listControllerDevices?.(group) ?? [];
+  }
+
   // ─── Inverse + Forward Kinematics ───────────────────────────────────────────
 
   async calcJointsFromCartesian(
@@ -1729,6 +1829,24 @@ export class RobotManager {
     if (!this.adapter?.getMastershipStatus) { return null; }
     try { return await this.adapter.getMastershipStatus(domain); }
     catch { return null; }
+  }
+
+  /**
+   * Acquire mastership on one domain and keep it - for multi-step edits where
+   * the per-call acquire/release of withMastership would churn. The caller owns
+   * the release: always pair with releaseMastership(domain) in a finally.
+   */
+  async requestMastership(domain: MastershipDomain): Promise<void> {
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    return this.adapter.requestMastership(domain);
+  }
+  async releaseMastership(domain: MastershipDomain): Promise<void> {
+    if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
+    return this.adapter.releaseMastership(domain);
+  }
+  /** Enumerate the mastership domains this controller exposes. */
+  async listMastershipDomains(): Promise<string[]> {
+    return this.adapter?.listMastershipDomains?.() ?? [];
   }
 
   // ─── Jogging ──────────────────────────────────────────────────────────────────

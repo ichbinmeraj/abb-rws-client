@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-15
+
+### Added
+
+- **RobotManager wrapper-surface completion.** Adapter capabilities that existed
+  on `IRWSAdapter` but had no `RobotManager` path are now first-class wrappers,
+  so consumers no longer need adapter casts. Same house rules as the rest of the
+  facade: reads degrade to a neutral value on controllers that lack the op,
+  writes throw a typed `UNSUPPORTED_OPERATION` instead of silently no-opping,
+  and mastership/RMMP stays the caller's business.
+  - **RMMP lifecycle:** `pollRmmp` (keeps the FlexPendant approval window
+    alive), `cancelRmmp` (withdraws the popup) - closing the gap that forced
+    UI consumers into a guarded adapter cast.
+  - **Event log:** `getEventLog(domain, lang)` - fetch any domain directly;
+    `refreshEventLog()` remains the state-updating domain-0 path.
+  - **Files:** `uploadFile(path, content)` - write an arbitrary controller
+    file without the module-load semantics of `loadProgram`.
+  - **Mastership:** per-domain `requestMastership` / `releaseMastership` for
+    caller-held multi-step edits, plus `listMastershipDomains`.
+  - **RAPID debugger backbone:** `setPPToCursor`, `stepRapid`, `holdToRun`,
+    `listBreakpoints`, `setBreakpoint`, `removeBreakpoint`.
+  - **Vision:** `getVisionSystemInfo`, `listVisionJobs`, `triggerVisionJob`.
+  - **Safety:** `listSafetyZones`, `runCyclicBrakeCheck`.
+  - **Mechunit:** `setMechunitBaseFrame` (write side of the already-wrapped
+    read), `getMechunitPjoints`.
+  - **Certificate store:** `listCertificates`, `uploadCertificate`,
+    `removeCertificate`.
+  - **Controller devices:** `listDeviceGroups`, `listControllerDevices`.
+
+  No protocol changes - every wrapper is a thin passthrough over endpoints that
+  shipped in 1.3.0 or earlier. Delegation and degrade/throw behavior covered by
+  new unit tests.
+
 ## [1.3.0] - 2026-08-12
 
 ### Added
