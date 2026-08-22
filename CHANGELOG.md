@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.3.0 or earlier. Delegation, degrade/throw, and mastership-coordination
   behavior covered by new unit tests.
 
+### Fixed
+
+- **MultiMove: modules of every active task.** The poller listed modules for
+  a single task (the first one flagged active), so on MultiMove systems the
+  other motion tasks' modules were never fetched. `RobotState` now carries
+  `modulesByTask` (every active task, keyed by name) alongside `modules`,
+  which stays the primary task's list for compatibility. Load/unload refresh
+  the task they touched. Reported against the VS Code extension
+  (ichbinmeraj/abb-rws-vscode#4).
+
 ## [1.3.0] - 2026-08-12
 
 ### Added

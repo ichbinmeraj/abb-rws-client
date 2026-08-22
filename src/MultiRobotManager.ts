@@ -56,7 +56,7 @@ export class MultiRobotManager {
       connected: false, quality: 'disconnected', qualityReason: 'not connected',
       host: '', ctrlstate: null, opmode: null,
       execstate: null, execCycle: null, speedRatio: null, coldetstate: null,
-      tasks: [], modules: [], mechunits: [], joints: null, cartesian: null,
+      tasks: [], modules: [], modulesByTask: {}, mechunits: [], joints: null, cartesian: null,
       cartesianFull: null, identity: null, systemInfo: null, eventLog: [], ioSignals: [],
     };
   }

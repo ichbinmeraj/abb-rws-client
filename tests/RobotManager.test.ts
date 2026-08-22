@@ -641,6 +641,50 @@ describe('RobotManager polling task selection', () => {
     await mgr.refresh();
     expect(fake.listModules).toHaveBeenCalledWith('T_LEFT');
   });
+
+  it('MultiMove: lists the modules of EVERY active task, keeping modules as the primary list', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter();
+    fake.getRapidTasks = vi.fn(async () => [
+      { name: 'T_ROB1', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: true, motiontask: true },
+      { name: 'T_ROB2', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: true, motiontask: true },
+      { name: 'T_BG',   type: 'static', taskstate: 'linked', excstate: 'stopped', active: false, motiontask: false },
+    ]);
+    const perTask: Record<string, string[]> = { T_ROB1: ['MainModule', 'CellA'], T_ROB2: ['MainModule', 'CellB', 'Gripper2'] };
+    fake.listModules = vi.fn(async (task: string) => perTask[task] ?? []);
+    (mgr as any).adapter = fake;
+    (mgr as any)._state.connected = true;
+    await mgr.refresh();
+
+    expect(fake.listModules).toHaveBeenCalledWith('T_ROB1');
+    expect(fake.listModules).toHaveBeenCalledWith('T_ROB2');
+    expect(fake.listModules).not.toHaveBeenCalledWith('T_BG'); // inactive tasks are not listed
+    expect(mgr.state.modules).toEqual(['MainModule', 'CellA']);
+    expect(mgr.state.modulesByTask).toEqual({
+      T_ROB1: ['MainModule', 'CellA'],
+      T_ROB2: ['MainModule', 'CellB', 'Gripper2'],
+    });
+  });
+
+  it('MultiMove: a secondary task failing to list degrades to empty without failing the poll', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter();
+    fake.getRapidTasks = vi.fn(async () => [
+      { name: 'T_ROB1', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: true, motiontask: true },
+      { name: 'T_ROB2', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: true, motiontask: true },
+    ]);
+    fake.listModules = vi.fn(async (task: string) => {
+      if (task === 'T_ROB2') { throw new Error('HTTP 503'); }
+      return ['MainModule'];
+    });
+    (mgr as any).adapter = fake;
+    (mgr as any)._state.connected = true;
+    await mgr.refresh();
+
+    expect(mgr.state.modules).toEqual(['MainModule']);
+    expect(mgr.state.modulesByTask).toEqual({ T_ROB1: ['MainModule'], T_ROB2: [] });
+    expect(mgr.state.connected).toBe(true);
+  });
 });
 
 describe('RobotManager session-cookie persistence', () => {

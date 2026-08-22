@@ -65,7 +65,13 @@ export interface RobotState {
   speedRatio: number | null;
   coldetstate: CollisionDetectionState | null;
   tasks: RapidTask[];
-  modules: string[];
+  modules: string[];             // modules of the primary (active) task - see modulesByTask
+  /**
+   * Modules of EVERY active task, keyed by task name. MultiMove systems run
+   * several active motion tasks with separate module sets; `modules` alone
+   * only ever described the first of them.
+   */
+  modulesByTask: Record<string, string[]>;
   mechunits: string[];           // list of mechanical unit names (e.g. ['ROB_1'])
   joints: JointTarget | null;
   cartesian: RobTarget | null;
@@ -118,7 +124,7 @@ export class RobotManager {
     connected: false, quality: 'disconnected', qualityReason: 'not connected',
     host: '', ctrlstate: null, opmode: null,
     execstate: null, execCycle: null, speedRatio: null, coldetstate: null,
-    tasks: [], modules: [], mechunits: [], joints: null,
+    tasks: [], modules: [], modulesByTask: {}, mechunits: [], joints: null,
     cartesian: null, cartesianFull: null, identity: null, systemInfo: null,
     eventLog: [], ioSignals: [],
   };
@@ -779,7 +785,7 @@ export class RobotManager {
       connected: false, quality: 'disconnected', qualityReason: 'disconnected',
       host: '', ctrlstate: null, opmode: null,
       execstate: null, execCycle: null, speedRatio: null, coldetstate: null,
-      tasks: [], modules: [], mechunits: [], joints: null,
+      tasks: [], modules: [], modulesByTask: {}, mechunits: [], joints: null,
       cartesian: null, cartesianFull: null, identity: null, systemInfo: null,
       eventLog: [], ioSignals: [],
     };
@@ -1030,6 +1036,17 @@ export class RobotManager {
   private activeTaskName(): string {
     const active = this._state.tasks.find(t => t.active);
     return active?.name ?? this._state.tasks[0]?.name ?? 'T_ROB1';
+  }
+
+  /**
+   * Re-list one task's modules after a load/unload: into the per-task map,
+   * and into the flat `modules` snapshot when it is the primary task.
+   */
+  private async refreshTaskModules(taskName: string): Promise<void> {
+    if (!this.adapter) { return; }
+    const list = await this.adapter.listModules(taskName);
+    this._state.modulesByTask = { ...this._state.modulesByTask, [taskName]: list };
+    if (taskName === this.activeTaskName()) { this._state.modules = list; }
   }
 
   async stopRapid(): Promise<void> {
@@ -1387,7 +1404,7 @@ export class RobotManager {
 
       await this.adapter.uploadFile(remotePath, content);
       await this.adapter.loadModule(taskName, remotePath, true);
-      this._state.modules = await this.adapter.listModules(taskName);
+      await this.refreshTaskModules(taskName);
       this.notify();
 
       // If the new module has a main proc, auto-resetpp so the user can Start
@@ -1418,7 +1435,7 @@ export class RobotManager {
     try {
       await this.adapter.stopRapid().catch(() => {});
       await this.adapter.unloadModule(taskName, moduleName);
-      this._state.modules = await this.adapter.listModules(taskName);
+      await this.refreshTaskModules(taskName);
       this.notify();
     } finally {
       await this.adapter.releaseMastership('rapid').catch(() => {});
@@ -2172,17 +2189,27 @@ export class RobotManager {
         ]);
       if (stale()) { return; }
 
-      // Module list needs a task name - resolve it from the tasks we just
+      // Module lists need task names - resolve them from the tasks we just
       // fetched, not a hardcoded T_ROB1 (multi-task systems and OmniCore
-      // single-arm variants name their tasks differently).
+      // single-arm variants name their tasks differently). MultiMove systems
+      // run several ACTIVE motion tasks, each with its own module set, so
+      // every active task is listed: `modules` stays the primary task's list,
+      // `modulesByTask` carries all of them. The primary list is required (a
+      // failure there fails the poll, as before); the others degrade to empty.
       this._state.tasks = tasks;
-      const modules = await this.adapter.listModules(this.activeTaskName());
+      const primaryTask = this.activeTaskName();
+      const taskNames = [primaryTask, ...tasks.filter(t => t.active && t.name !== primaryTask).map(t => t.name)];
+      const lists = await Promise.all(taskNames.map((name, i) =>
+        i === 0 ? this.adapter!.listModules(name) : this.adapter!.listModules(name).catch(() => [] as string[])));
       if (stale()) { return; }
+      const modulesByTask: Record<string, string[]> = {};
+      taskNames.forEach((name, i) => { modulesByTask[name] = lists[i]; });
+      const modules = lists[0];
 
       const cartesian = { x: cartesianFull.x, y: cartesianFull.y, z: cartesianFull.z, q1: cartesianFull.q1, q2: cartesianFull.q2, q3: cartesianFull.q3, q4: cartesianFull.q4 };
       Object.assign(this._state, {
         ctrlstate, opmode, execstate: execInfo.state, execCycle: execInfo.cycle,
-        speedRatio, tasks, modules, joints, cartesian, cartesianFull,
+        speedRatio, tasks, modules, modulesByTask, joints, cartesian, cartesianFull,
       });
 
       const coldetstate = await this.adapter.getCollisionDetectionState().catch(() => null);
