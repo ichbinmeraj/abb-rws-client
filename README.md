@@ -98,7 +98,7 @@ Run both and merge for the widest net (the VS Code extension does exactly that).
 | **IRC5** (RobotWare 6.x) | RWS 1.0 | `RwsClient` | HTTP Digest | 80 (real), 80 / 11811 (VC) |
 | **OmniCore** (RobotWare 7.x) | RWS 2.0 | `RwsClient2` | HTTP Basic | 443 (real), 5466 (VC HTTPS) |
 
-The two generations expose one API: `RwsClient2` carries **280+ endpoint methods**, the RWS 1.0 side covers its generation's full advertised surface (verified by `npm run conformance` against live controllers), and the shared cross-protocol contract - **`IRWSAdapter`, ~190 methods** (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, search, …) - has the same names and signatures on both. The protocol differences (URL shapes, query-action vs path-action forms, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally - your code looks the same.
+The two generations expose one API: `RwsClient2` carries **286 public endpoint methods** (counted on the built class, `Object.getOwnPropertyNames` over its prototype chain), the RWS 1.0 side covers its generation's full advertised surface (verified by `npm run conformance` against live controllers), and the shared cross-protocol contract - **`IRWSAdapter`, 190 methods** (59 required + 131 optional) (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, search, …) - has the same names and signatures on both. The protocol differences (URL shapes, query-action vs path-action forms, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally - your code looks the same.
 
 If you need a single typed reference that holds either:
 
@@ -697,7 +697,7 @@ and routes write access automatically, so the same code runs on all three
 generations. The full Control Station Service is also exposed directly
 (`requestWriteAccess`, `getWriteAccessStatus`, `setAllowMotionControl`, ...).
 
-**Live-tested matrix**: RobotWare 8.1 (OmniCore VC), RobotWare 7.21 (OmniCore VC), RobotWare 6.16 (IRC5 VC). 630+ unit tests + live protocol-coverage tests + chaos-proxy resilience suites. Endpoint conformance against what the live controllers actually advertise: 59 implemented / 0 unmapped / 0 orphan (`npm run conformance`).
+**Live-tested matrix**: RobotWare 8.1 (OmniCore VC), RobotWare 7.21 (OmniCore VC), RobotWare 6.16 (IRC5 VC). 630+ unit tests + live protocol-coverage tests + chaos-proxy resilience suites. Endpoint conformance against what the live controllers actually advertise: 59 implemented · 1 deliberate-gap · 0 unmapped · 0 orphan (`npm run conformance`, see `CONFORMANCE.md`). The one gap is RWS 2.0 `/ctrl/options`: the controller advertises it, but it is an empty verify-style endpoint (200 no-content on RW7/8, 204 on RW6); the real option list comes from `/rw/system/options` via `listControllerOptions`.
 
 ---
 
