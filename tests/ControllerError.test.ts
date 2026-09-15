@@ -58,6 +58,20 @@ const EXPECTED: Record<string, { code: RwsErrorCode; controllerCode: number }> =
   'rws2/400-module-missing-xhtml':             { code: 'MODULE_NOT_FOUND',    controllerCode: -1073442813 },
   'rws2/404-signal-haljson':                   { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073445866 },
   'rws2/404-file-haljson':                     { code: 'RESOURCE_NOT_FOUND',  controllerCode: -1073438713 },
+  // RW8 Control Station Service, captured 2026-09-15 on RW8.1.1+614. All the
+  // write-access refusals are the RW8 spelling of "acquire mastership first"
+  // and must not read as UAS/RMMP permission problems.
+  'rws2/403-writeaccess-held-by-other-station-haljson': { code: 'MASTERSHIP_REQUIRED', controllerCode: -1073435870 },
+  'rws2/403-writeaccess-not-held-haljson':              { code: 'MASTERSHIP_REQUIRED', controllerCode: -1073435873 },
+  'rws2/403-session-not-registered-haljson':            { code: 'MASTERSHIP_REQUIRED', controllerCode: -1073435871 },
+  'rws2/403-station-already-registered-haljson':        { code: 'UNKNOWN',             controllerCode: -1073435874 },
+  'rws2/400-station-id-not-braced-haljson':             { code: 'INVALID_ARGUMENT',    controllerCode: -1073435867 },
+  // Two HTTP 500s that carry a real diagnosis. A start refused because MOTION
+  // mastership is held (by anyone, the caller included) and the RW8.1.x RMMP
+  // service, which the controller itself files as "not supported in this
+  // version". Captured 2026-09-15 on RW7.21 and RW8.1.1.
+  'rws2/500-exec-start-motion-mastership-held-haljson': { code: 'MASTERSHIP_REQUIRED',   controllerCode: -1073445844 },
+  'rws2/500-rmmp-service-not-supported-haljson':        { code: 'UNSUPPORTED_OPERATION', controllerCode: -1073445885 },
   // A bad volume answers 400 on RWS 2.0 and 404 on RWS 1.0, so the same
   // listDirectory call reported RESOURCE_NOT_FOUND on RW6 and UNKNOWN on
   // RW7/RW8 until this code was mapped.

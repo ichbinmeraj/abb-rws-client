@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-station-already-registered-haljson",
+  "request": {
+    "method": "POST",
+    "path": "/rw/controlstation/register/remote",
+    "body": ""
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073435874, \"msg\":\"rws_resource_controlstation.cpp[412] A control station has already been registered. code:-1073435874 icode:-20102\"}}"
+  }
+}

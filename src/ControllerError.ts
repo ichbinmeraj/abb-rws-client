@@ -81,11 +81,37 @@ function cleanMsg(msg: string | null): string | null {
  * `UNKNOWN` - so an unmapped code silently costs callers their error branch.
  */
 const CODE_MAP: ReadonlyArray<{ codes: number[]; rws: RwsErrorCode }> = [
-  { codes: [-1073445862, -1073445859], rws: 'MASTERSHIP_REQUIRED' },
+  // The RW8 Control Station Service has its own write-access code family
+  // (live-captured 2026-09-15 on RW8.1.1+614; icode in parentheses):
+  //   -1073435870 (-20109) "Remote Control Station cannot take SPoC when it is
+  //                taken" - another control station holds write access.
+  //   -1073435873 (-20107) "The control station does not have SPoC" /
+  //                "does not have required WriteAccess" - this session holds
+  //                no write access (also what a release-after-write answers).
+  //   -1073435871 (-20101) "Session is not part of a Control Station" - the
+  //                session was never registered, or is a NEW session (a
+  //                re-issued cookie) whose registration died with the old one.
+  // All three mean "acquire write access first" - the RW8 spelling of the RW7
+  // mastership codes above - not a UAS/RMMP permission problem, which is what
+  // GRANT_DENIED told callers until 1.3.1.
+  // -1073445844 SYS_CTRL_E_RESOURCE_MOTION_HELD_REJECT "Action not possible
+  // since mastership over motion is held": a RAPID start (HTTP 500!) while
+  // any session - including the caller's own - holds MOTION mastership.
+  // Live-captured 2026-09-15 on RW7.21 (probe held motion for motors-on).
+  { codes: [-1073445862, -1073445859, -1073435870, -1073435873, -1073435871, -1073445844], rws: 'MASTERSHIP_REQUIRED' },
   // -1073445867 "The user is not allowed access": returned for UAS-gated
   // resources such as /uas/ldap/*. Without it a 403 fell through to UNKNOWN,
   // because the HTTP fallback below only promotes 404.
-  { codes: [-1073445881, -1073435873, -1073435870, -1073445867], rws: 'GRANT_DENIED' },
+  { codes: [-1073445881, -1073445867], rws: 'GRANT_DENIED' },
+  // -1073435867 (-20103) "Control station id not allowed": the RW8 register
+  // call requires a BRACED GUID ({8-4-4-4-12}); nothing else is accepted.
+  // Hex form 0xC004AB25 is what the community searches for.
+  { codes: [-1073435867],              rws: 'INVALID_ARGUMENT' },
+  // -1073445885 SYS_CTRL_E_SERVICE_NOT_SUPPORTED "The service is not supported
+  // in this version of controller" - what the RW8.1.x RMMP service answers
+  // (HTTP 500) on every verb. The controller's own retcode dictionary names
+  // it on RW7.21 and RW8.1.1 alike (GET /rw/retcode?code=-1073445885).
+  { codes: [-1073445885],              rws: 'UNSUPPORTED_OPERATION' },
   { codes: [-1073442809],              rws: 'WRONG_MODE' },
   { codes: [-1073442813],              rws: 'MODULE_NOT_FOUND' },
   // Everything below means "the thing you named is not there". Notes on the
@@ -150,9 +176,27 @@ export function classifyControllerError(args: {
   let message: string;
   switch (rws) {
     case 'MASTERSHIP_REQUIRED':
-      message = controllerCode === -1073445859
-        ? `Missing mastership: ${status} - acquire it first (requestMastership), then retry${detail}`
-        : `Resource held by another client (mastership or an operation in progress): ${status} - release it there (RobotStudio: Release Write Access) or wait, then retry${detail}`;
+      if (controllerCode === -1073445859) {
+        message = `Missing mastership: ${status} - acquire it first (requestMastership), then retry${detail}`;
+      } else if (controllerCode === -1073435870) {
+        message = `Write access is held by another control station: ${status} - release it there (RobotStudio: Release Write Access, or the pendant) or appeal for it (appealWriteAccessRelease), then retry${detail}`;
+      } else if (controllerCode === -1073435873) {
+        message = `Write access not held: ${status} - request control-station write access first (requestWriteAccess / requestMastership) and re-request it after any write that clears it, then retry${detail}`;
+      } else if (controllerCode === -1073445844) {
+        message = `Mastership over motion is held: ${status} - a RAPID start is refused while any session (this one included) holds motion mastership; release it first, then retry${detail}`;
+      } else if (controllerCode === -1073435871) {
+        message = `Session is not registered as a control station: ${status} - registration is per session, so a re-issued session cookie needs registerControlStationRemote again before write access${detail}`;
+      } else {
+        message = `Resource held by another client (mastership or an operation in progress): ${status} - release it there (RobotStudio: Release Write Access) or wait, then retry${detail}`;
+      }
+      break;
+    case 'UNSUPPORTED_OPERATION':
+      message = `Service not supported by this controller version: ${status}${detail}`;
+      break;
+    case 'INVALID_ARGUMENT':
+      message = controllerCode === -1073435867
+        ? `Control station id not allowed: ${status} - the id must be a braced GUID of the form {8-4-4-4-12}${detail}`
+        : `Invalid argument: ${status}${detail}`;
       break;
     case 'GRANT_DENIED':
       message = `Permission denied: ${status} - request remote-modify privilege (RMMP) via POST /users/rmmp and approve the popup on the FlexPendant, or add the required UAS grant (e.g. "Remote Start and Stop in Auto") in RobotStudio > UAS${detail}`;

@@ -328,7 +328,7 @@ export class Rws2Core {
         // 2026-08-02 across a warm restart).
         const setCookies = res.headers['set-cookie'];
         if (setCookies && setCookies.length > 0) {
-          this.sessionCookie = setCookies.map(c => c.split(';')[0]).join('; ');
+          this.adoptSessionCookie(setCookies.map(c => c.split(';')[0]).join('; '));
         }
 
         const chunks: Buffer[] = [];
@@ -446,6 +446,30 @@ export class Rws2Core {
   }
 
   getSessionCookie(): string | null { return this.sessionCookie; }
+
+  /**
+   * Adopt a session cookie the controller just issued. When it names a
+   * DIFFERENT session than the one this client was using (the controller
+   * restarted, or the old session idled out and a Basic-authed request minted
+   * a fresh one), everything session-scoped on the controller side is gone
+   * with it: the RW8 control-station registration and any write-access hold
+   * (live-verified 2026-09-15 on RW8.1.1: a new session answers "Session is
+   * not part of a Control Station" -1073435871 until it registers again).
+   * Forgetting them here is what makes the next write re-register instead of
+   * failing on a registration that no longer exists.
+   */
+  private adoptSessionCookie(cookie: string): void {
+    const sessionOf = (c: string | null): string => c?.match(/-http-session-=([^;]+)/)?.[1] ?? c ?? '';
+    const previous = this.sessionCookie;
+    this.sessionCookie = cookie;
+    if (previous !== null && sessionOf(previous) !== sessionOf(cookie)) {
+      if (this.controlStationRegistered || this.writeAccessHeld) {
+        Logger.trace?.('mastership', 'RWS2 session was re-issued - control-station registration and write access forgotten (both are session-scoped)');
+      }
+      this.controlStationRegistered = false;
+      this.writeAccessHeld = false;
+    }
+  }
 
   // ─── I/O signals ─────────────────────────────────────────────────────────────
 
@@ -574,12 +598,28 @@ export class Rws2Core {
   private async acquireWriteAccess(): Promise<void> {
     if (!this.controlStationRegistered) {
       const { path, body } = R2.registerControlStationRemote(this.csName, this.csId, this.csPincode);
-      await this.req('POST', path, body);
+      try {
+        await this.req('POST', path, body);
+      } catch (e) {
+        // 403 "A control station has already been registered" -1073435874
+        // (icode -20102): this session IS registered - the flag was simply
+        // behind (a caller registered through the public method with its own
+        // identity, or state was reset defensively). Live-captured 2026-09-15
+        // on RW8.1.1. Anything else is a real refusal.
+        if (!Rws2Core.isAlreadyRegistered(e)) { throw e; }
+      }
       this.controlStationRegistered = true;
     }
     const { path } = R2.requestWriteAccess();
     await this.req('POST', path);
     this.writeAccessHeld = true;
+  }
+
+  /** True when `e` is RW8's "A control station has already been registered" refusal. */
+  private static isAlreadyRegistered(e: unknown): boolean {
+    return e instanceof RwsError
+      && e.httpStatus === 403
+      && (e.controllerCode === -1073435874 || /already been registered/i.test(e.controllerMsg ?? ''));
   }
 
   /**
@@ -774,13 +814,24 @@ export class Rws2Core {
     return Number(p.getState('controlstation-release-write-access-appeal-change-count')['changecount'] ?? 0);
   }
 
-  /** Who holds write access, and whether external control is enabled. */
-  async getWriteAccessStatus(): Promise<{ held: boolean; heldById: string; heldByName: string; externalControlEnabled: boolean }> {
+  /**
+   * Who holds write access, and whether external control is enabled.
+   *
+   * `held` alone does not say whether THIS client can write: `held=true` with
+   * another station's id means someone else owns it (a request then answers
+   * 403 "cannot take SPoC when it is taken"). `heldByMe` compares the holder
+   * id with this client's control-station id - the PC SDK's HeldByMe, which
+   * the RWS resource does not carry itself. Live shape 2026-09-15 on RW8.1.1.
+   */
+  async getWriteAccessStatus(): Promise<{ held: boolean; heldByMe: boolean; heldById: string; heldByName: string; externalControlEnabled: boolean }> {
     const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getWriteAccessStatus.rws2 as PathSpec)));
     const d = p.getState('controlstation-write-access-status');
+    const held = d['control-station-write-access-held'] === 'true';
+    const heldById = d['held-by-control-station-Id'] ?? 'none';
     return {
-      held:                   d['control-station-write-access-held'] === 'true',
-      heldById:               d['held-by-control-station-Id'] ?? 'none',
+      held,
+      heldByMe:               held && heldById.toLowerCase() === this.csId.toLowerCase(),
+      heldById,
       heldByName:             d['held-by-control-station-name'] ?? 'none',
       externalControlEnabled: d['control-station-external-control-enabled'] === 'true',
     };
@@ -976,7 +1027,7 @@ export class Rws2Core {
           // or the upgrade is rejected 401 (live-observed on RW7.21 2026-08-02).
           const setCookies = (res.headers['set-cookie'] ?? []) as string[];
           if (setCookies.length > 0) {
-            this.sessionCookie = setCookies.map((c: string) => c.split(';')[0]).join('; ');
+            this.adoptSessionCookie(setCookies.map((c: string) => c.split(';')[0]).join('; '));
           }
           const cookieStr = this.sessionCookie ?? '';
 
@@ -1336,10 +1387,11 @@ export class Rws2Core {
     try {
       xml = await this.req('GET', buildPath(USERS_UAS.getRmmpPrivilege.rws2 as PathSpec));
     } catch (e) {
-      // The whole RMMP service answers HTTP 500 on RobotWare 8.1.1 (GET, POST
-      // and poll alike - live-verified 2026-08 against RW8.1.1 vs a working
-      // RW7.21). Report "no privilege held" rather than surfacing a raw 500 to
-      // every caller that merely polls this.
+      // The whole RMMP service answers HTTP 500 on RobotWare 8.1.x (GET, POST
+      // and poll alike - live-verified 2026-08 and 2026-09-15 on RW8.1.1+614
+      // vs a working RW7.21; a field report names 8.1.0 too, unconfirmed).
+      // Report "no privilege held" rather than surfacing a raw 500 to every
+      // caller that merely polls this.
       if (e instanceof RwsError && e.httpStatus === 500) { return 'none'; }
       throw e;
     }
@@ -1352,16 +1404,21 @@ export class Rws2Core {
   }
 
   /** Request 'modify' privilege. Triggers a FlexPendant approval popup.
-   *  On RobotWare 8.1.1 the RMMP service is broken (every verb answers HTTP
-   *  500), so this reports UNSUPPORTED_OPERATION there instead of a bare 500. */
+   *  On RobotWare 8.1.x the RMMP service is broken (every verb answers HTTP
+   *  500), so this reports UNSUPPORTED_OPERATION there instead of a bare 500.
+   *  The message names the RobotWare version actually read at connect() - the
+   *  affected range is not pinned to one build (8.1.1 verified here, 8.1.0
+   *  field-reported). */
   async requestRmmp(level: 'modify' | 'exclusive' = 'modify'): Promise<void> {
     try {
       await this.req('POST', buildPath(USERS_UAS.requestRmmp.rws2 as PathSpec), { privilege: level });
     } catch (e) {
       if (e instanceof RwsError && e.httpStatus === 500) {
+        const rw = this.rwVersionRaw ? `RobotWare ${this.rwVersionRaw}` : 'this RobotWare release';
         throw new RwsError(
-          'requestRmmp: the controller\'s RMMP service returned HTTP 500. RobotWare 8.1.1 ships with this service broken (all RMMP verbs fail); use the FlexPendant to grant privileges there.',
-          'UNSUPPORTED_OPERATION', 500,
+          `requestRmmp: the controller's RMMP service returned HTTP 500 (${rw}). RobotWare 8.1.x ships with this service broken (all RMMP verbs fail); use the FlexPendant to grant privileges there.`,
+          'UNSUPPORTED_OPERATION', 500, undefined,
+          e.controllerCode, e.controllerMsg,
         );
       }
       throw e;
@@ -1371,7 +1428,7 @@ export class Rws2Core {
   /** Poll a pending RMMP request. Call repeatedly after requestRmmp to keep the
    *  approval window alive and read its status (e.g. 'GRANTED', 'PENDING',
    *  'NO SUCH REQUEST'). Live-verified 200 on RW7.21 (2026-08-11), class
-   *  user-rmmp-poll. RW8.1.1's broken RMMP service (HTTP 500) maps to 'none'. */
+   *  user-rmmp-poll. RW8.1.x's broken RMMP service (HTTP 500) maps to 'none'. */
   async pollRmmp(): Promise<string> {
     let xml: string;
     try {

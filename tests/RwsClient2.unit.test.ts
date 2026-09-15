@@ -790,7 +790,32 @@ describe('RwsClient2 (unit)', () => {
         const err = await client.requestRmmp('modify').then(() => null, (e: unknown) => e as RwsError);
         expect(err).toBeInstanceOf(RwsError);
         expect(err!.code).toBe('UNSUPPORTED_OPERATION');
-        expect(err!.message).toContain('RobotWare 8.1.1');
+        // The affected range is 8.1.x (8.1.1 verified, 8.1.0 field-reported),
+        // so no single build is hard-coded; without a connect() the version is
+        // unknown and the message says so instead of guessing.
+        expect(err!.message).toContain('this RobotWare release');
+        expect(err!.message).not.toContain('8.1.1');
+        expect(err!.controllerCode).toBe(-1073445885);
+      } finally { server.close(); }
+    });
+
+    it('requestRmmp names the RobotWare version read at connect(), not a hard-coded release', async () => {
+      const { server, port } = await startServer((req, res) => {
+        if (req.url === '/rw/system') {
+          res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"sys-system","_title":"system","rwversion":"8.1.0+123"}]}');
+          return;
+        }
+        res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"Unspecified Error"}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.connect();
+        const err = await client.requestRmmp('modify').then(() => null, (e: unknown) => e as RwsError);
+        expect(err!.code).toBe('UNSUPPORTED_OPERATION');
+        expect(err!.message).toContain('RobotWare 8.1.0+123');
+        expect(err!.message).not.toContain('8.1.1');
       } finally { server.close(); }
     });
 
@@ -1204,8 +1229,116 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         expect(await client.getWriteAccessStatus()).toEqual({
-          held: true, heldById: '{1111}', heldByName: 'probe-cs', externalControlEnabled: true,
+          held: true, heldByMe: false, heldById: '{1111}', heldByName: 'probe-cs', externalControlEnabled: true,
         });
+      } finally { server.close(); }
+    });
+
+    it('getWriteAccessStatus reports heldByMe when the holder is this client\'s control station', async () => {
+      // held=true alone cannot tell "I can write" from "someone else owns it";
+      // the PC SDK exposes HeldByMe for this and the RWS resource does not, so
+      // the client derives it from the holder id (case-insensitive - the
+      // controller echoes the GUID as registered, callers may not).
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"controlstation-write-access-status","_title":"write-access-status","held-by-control-station-Id":"{AAAAAAAA-0000-4000-8000-000000000001}","held-by-control-station-name":"me","control-station-write-access-held":"true","control-station-external-control-enabled":"true"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p',
+          { controlStation: { id: '{aaaaaaaa-0000-4000-8000-000000000001}' } });
+        const s = await client.getWriteAccessStatus();
+        expect(s.held).toBe(true);
+        expect(s.heldByMe).toBe(true);
+      } finally { server.close(); }
+    });
+
+    it('re-registers the control station after the controller re-issues the session cookie', async () => {
+      // Registration is session-scoped on RW8. A new session cookie (controller
+      // restart, idle expiry) means the registration is gone, and the next
+      // write-access request would answer 403 "Session is not part of a
+      // Control Station" (-1073435871, live 2026-09-15) if the client still
+      // believed it was registered.
+      let session = 'A';
+      const { server, port, requests } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        // Flip the session once the first hold is released: the next response
+        // carries a different -http-session- value.
+        if (url === '/rw/controlstation/writeaccess/release') { session = 'B'; }
+        res.writeHead(204, { 'Set-Cookie': [`-http-session-=${session}; path=/`, 'ABBCX=x; path=/'] });
+        res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        await client.releaseMastership('rapid');   // response re-issues the cookie
+        await client.requestMastership('rapid');
+        const registers = requests.filter(r => r.url === '/rw/controlstation/register/remote').length;
+        expect(registers).toBe(2);
+        expect(client.getSessionCookie()).toContain('-http-session-=B');
+      } finally { server.close(); }
+    });
+
+    it('does not re-register while the session cookie is unchanged', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        // Same session echoed on every response (some controllers re-send it).
+        res.writeHead(204, { 'Set-Cookie': ['-http-session-=A; path=/', 'ABBCX=y; path=/'] });
+        res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        await client.releaseMastership('rapid');
+        await client.requestMastership('rapid');
+        expect(requests.filter(r => r.url === '/rw/controlstation/register/remote').length).toBe(1);
+      } finally { server.close(); }
+    });
+
+    it('treats 403 "already registered" on register as registered and carries on', async () => {
+      // -1073435874 (icode -20102), live 2026-09-15 on RW8.1.1: the session IS
+      // registered, the client's flag was merely behind.
+      const { server, port, requests } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        if (url === '/rw/controlstation/register/remote') {
+          res.writeHead(403, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073435874,"msg":"rws_resource_controlstation.cpp[1] A control station has already been registered. code:-1073435874 icode:-20102"}}');
+          return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toContain('POST /rw/controlstation/register/remote');
+        expect(urls[urls.length - 1]).toBe('POST /rw/controlstation/writeaccess/request');
+      } finally { server.close(); }
+    });
+
+    it('a write-access conflict with another control station is MASTERSHIP_REQUIRED, not GRANT_DENIED', async () => {
+      // -1073435870 "Remote Control Station cannot take SPoC when it is taken"
+      // (live 2026-09-15). Until 1.3.1 it read as a UAS/RMMP permission problem
+      // and told users to approve a pendant popup that does not exist.
+      const { server, port } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        if (url === '/rw/controlstation/writeaccess/request') {
+          res.writeHead(403, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073435870,"msg":"rws_resource_controlstation.cpp[1] Remote Control Station cannot take SPoC when it is taken. code:-1073435870 icode:-20109"}}');
+          return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.requestMastership('rapid').then(() => null, (e: unknown) => e as RwsError);
+        expect(err!.code).toBe('MASTERSHIP_REQUIRED');
+        expect(err!.controllerCode).toBe(-1073435870);
+        expect(err!.message).toContain('another control station');
+        expect(err!.message).not.toContain('RMMP');
       } finally { server.close(); }
     });
 
