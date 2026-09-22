@@ -732,10 +732,17 @@ That is the single source of truth an ABB update lands in - and what
 
 ## Licence
 
-Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE). If you redistribute this work, keep the NOTICE file. Project names: see [TRADEMARKS.md](./TRADEMARKS.md).
+Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE). If you redistribute
+this work, keep the NOTICE file.
 
-Releases published before this change remain under the MIT licence.
+Releases up to and including 1.3.1 were published under the MIT License and
+remain available under those terms.
+
+Contributions are accepted under the DCO - see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Disclaimer
 
-Independent open-source project by [Meraj Safari](https://github.com/ichbinmeraj). Not affiliated with, endorsed by or sponsored by ABB. ABB, RobotWare, OmniCore, IRC5 and RobotStudio are trademarks of ABB.
+Independent open-source project by [Meraj Safari](https://github.com/ichbinmeraj).
+ABB, IRC5, OmniCore, RobotWare, RobotStudio and FlexPendant are trademarks of
+ABB Ltd. **This project is not affiliated with, endorsed by, or supported by ABB Ltd.**
+Project names and trademark position: see [TRADEMARKS.md](./TRADEMARKS.md).

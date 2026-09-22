@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **License: MIT to Apache-2.0.** The whole `abb-rws-*` family is now Apache-2.0,
+  which adds an explicit patent grant (section 3) and a trademark clause - both
+  of which matter for industrial adoption and for contributors. Releases up to
+  and including 1.3.1 remain available under MIT; this and later releases are
+  Apache-2.0. Added `NOTICE`, `CONTRIBUTING.md` (DCO sign-off) and
+  `TRADEMARKS.md`.
+
 ### Added
 
 - **`getWriteAccessStatus().heldByMe`** (RWS 2.0 / RW8): whether the holder of
