@@ -6,6 +6,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`getWriteAccessStatus().heldByMe`** (RWS 2.0 / RW8): whether the holder of
+  control-station write access is THIS client. `held` alone cannot tell "I can
+  write" from "another station owns it"; the PC SDK exposes HeldByMe and the
+  RWS resource does not, so it is derived from the holder id (case-insensitive).
+  Additive - existing consumers of the status object are unaffected.
+
+### Fixed
+
+- **RW8: the control-station registration is forgotten when the controller
+  re-issues the session cookie.** Registration is session-scoped. After a
+  controller restart or an idle expiry the next write-access request answered
+  403 `-1073435871` "Session is not part of a Control Station" because the
+  client still believed it was registered. Cookie adoption now resets the
+  registration and any hold when the `-http-session-` id changes, so the next
+  write re-registers. A register answered 403 `-1073435874` "already
+  registered" is treated as registered. Live-verified 2026-09-15 on RW8.1.1.
+- **RW8 write-access refusals are `MASTERSHIP_REQUIRED`, not `GRANT_DENIED`.**
+  `-1073435870` (write access held by another control station),
+  `-1073435873` (this session holds no write access) and `-1073435871` (session
+  not registered) told users to approve an RMMP popup on the pendant, which is
+  the wrong remedy for all three. Each now carries its own actionable message
+  (release it there / appeal, request it first, re-register).
+  `-1073435867` (control-station id must be a braced GUID, hex C004AB25) is
+  `INVALID_ARGUMENT`.
+- **A RAPID start refused because motion mastership is held is typed.** The
+  controller answers HTTP 500 `-1073445844` with the untranslated text
+  "org_code: -2302" when any session - the caller's own included - holds motion
+  mastership; it fell through to `UNKNOWN`. It is `MASTERSHIP_REQUIRED` with a
+  "release motion mastership first" message (retcode dictionary:
+  `SYS_CTRL_E_RESOURCE_MOTION_HELD_REJECT`). Live 2026-09-15 on RW7.21.
+- **RMMP on RobotWare 8.1.x: no hard-coded build in the message.** The
+  `UNSUPPORTED_OPERATION` thrown by `requestRmmp` names the RobotWare version
+  actually read at `connect()` (8.1.1 is verified, 8.1.0 is field-reported).
+  The controller code it carries, `-1073445885`, is what the controller's own
+  dictionary files as "service not supported in this version", and now
+  classifies as `UNSUPPORTED_OPERATION` on its own.
+
+### Documentation
+
+- README and `CONFORMANCE.md` wording: exact surface counts (275 public
+  `RwsClient2` methods, 190 `IRWSAdapter` methods) and the one deliberate
+  conformance gap (`/ctrl/options`) named.
+- `setAllowMotionControl` (RW8) is exposed but not sequenced by `RobotManager`
+  before a start; enabling motion control is the caller's job.
+
 ## [1.3.1] - 2026-08-15
 
 ### Added
