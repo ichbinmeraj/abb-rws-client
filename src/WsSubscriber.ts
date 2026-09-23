@@ -164,16 +164,17 @@ function resourceToPath(resource: SubscriptionResource): string {
 /**
  * Build the application/x-www-form-urlencoded body for POST /subscription.
  * Paths are NOT percent-encoded; the semicolons are literal as expected by RWS.
+ *
+ * `resources=<i>` is repeated once PER resource - it names a resource index, it
+ * is not a count. A single `resources=N` makes the controller bind only
+ * resource N and silently drop the rest, while still answering 201.
  */
-function buildSubscriptionBody(resources: SubscriptionResource[]): string {
-  const parts: string[] = [`resources=${resources.length}`];
-  resources.forEach((resource, index) => {
+export function buildSubscriptionBody(resources: SubscriptionResource[]): string {
+  return resources.map((resource, index) => {
     const i = index + 1;
-    const path = resourceToPath(resource);
     // Do NOT encodeURIComponent the path - RWS expects literal semicolons
-    parts.push(`${i}=${path}&${i}-p=1`);
-  });
-  return parts.join('&');
+    return `resources=${i}&${i}=${resourceToPath(resource)}&${i}-p=1`;
+  }).join('&');
 }
 
 // ─── XML event parsing ────────────────────────────────────────────────────────

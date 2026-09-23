@@ -1063,20 +1063,23 @@ export class Rws2Core {
   }
 
   /**
-   * Build the `resources=N&1=<path>&1-p=<prio>&...` body shared by the create
-   * POST and the in-place PUT. Returns null when nothing maps to a real path.
+   * Build the `resources=1&1=<path>&1-p=<prio>&resources=2&...` body shared by
+   * the create POST and the in-place PUT. Returns null when nothing maps to a
+   * real path.
+   *
+   * `resources=<i>` is repeated once PER resource - it names an index, it is
+   * not a count. Live-verified 2026-09-24 on RW 7.21 and 8.1.1 VCs
+   * (reference probe s2-bind-format.mjs): with a single `resources=6` the 201
+   * lists ONE bound resource (the sixth) and no other events ever arrive; with
+   * the index repeated all six are bound.
    *
    * Semicolons inside a resource path must stay LITERAL - percent-encoding them
    * makes the controller drop the state parameter.
    */
-  private static buildSubscriptionBody(resources: SubscriptionResource[]): string | null {
+  static buildSubscriptionBody(resources: SubscriptionResource[]): string | null {
     const paths = resources.map(r => Rws2Core.rws2ResourcePath(r)).filter(Boolean) as string[];
     if (paths.length === 0) { return null; }
-    const parts = [`resources=${paths.length}`];
-    paths.forEach((p, i) => {
-      parts.push(`${i + 1}=${p}&${i + 1}-p=1`);
-    });
-    return parts.join('&');
+    return paths.map((p, i) => `resources=${i + 1}&${i + 1}=${p}&${i + 1}-p=1`).join('&');
   }
 
   async subscribe(

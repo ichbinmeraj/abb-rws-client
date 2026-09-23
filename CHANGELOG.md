@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Subscriptions bound only one resource, on both protocol generations.** The
+  subscription body announced `resources=N` once, but `resources=<i>` names a
+  resource index and must be repeated per resource. The controller bound only
+  the last resource, silently dropped the rest, and still answered 201 - so
+  `RobotManager` subscribed to six resources, received only event-log events,
+  and reported its link `live` while controller state, operating mode, speed
+  ratio, execution state and collision detection were refreshed only by the
+  5-second slow poll. Live-verified on RobotWare 6.16, 7.21 and 8.1.1 virtual
+  controllers: all six are now bound, and speed-ratio and controller-state
+  events arrive within about 200 ms of the change.
+
 - **Port recovery could connect to a different controller.** When a saved port
   stopped answering, `RobotManager` scanned the host and adopted the first
   controller of the same protocol generation - on a PC running several virtual
