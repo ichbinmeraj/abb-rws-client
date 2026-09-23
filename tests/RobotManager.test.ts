@@ -1249,6 +1249,26 @@ describe('RobotManager port recovery picks the SAME controller', () => {
     await mgr.disconnect();
   });
 
+  it('on localhost, a VC on a standard port does not hide a moved VC on another port', async () => {
+    // Live 2026-09-23: the RW6 VC moved 33806 -> 50959 while the RW8 VC sat on
+    // standard port 5466; the moved RW6 was never offered to the identity check.
+    const RW6_MOVED = { port: 50959, useHttps: false, authType: 'digest' as const };
+    const mgr = new RobotManager();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8]);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([
+      { host: '127.0.0.1', ...RW8 }, { host: '127.0.0.1', ...RW6_MOVED },
+    ]);
+    const seen: number[][] = [];
+    vi.spyOn(RobotManager, 'chooseRecoveryCandidate').mockImplementation(async cands => {
+      seen.push(cands.map(c => c.port));
+      return { match: null, reason: 'stop here' };
+    });
+    await mgr.connect('127.0.0.1', 'u', 'p', 33806, false).catch(() => {});
+    expect(seen[0]).toEqual([5466, 50959]);   // the standard-port hit plus the moved VC, once each
+    await mgr.disconnect();
+  });
+
   it('MultiRobotManager passes a config entry\'s expected id to its manager', () => {
     const multi = new MultiRobotManager();
     multi.addRobot({ id: 'rw7', name: 'RW7', host: '127.0.0.1', port: 9403, useHttps: true, username: 'u', password: 'p', expectedSystemId: ids[9403] });

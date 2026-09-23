@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last successful connection; with no id and more than one candidate it keeps
   the saved port instead of guessing. New: `RobotManager.setExpectedSystemId()`,
   `RobotManager.chooseRecoveryCandidate()`, `RobotConfig.expectedSystemId`.
+- **Port recovery on localhost missed a moved controller when another sat on a
+  standard port.** The complete scan of the OS's listening ports ran only when
+  the standard ports held no controller at all, so one virtual controller on a
+  standard port hid every other one: an RW6 VC that moved to a new port was
+  never considered while an RW8 VC answered on 5466. On localhost the listening
+  ports are now always scanned when recovering.
 
 - **`heldByMe` was always false when an explicit control-station identity was
   passed to `registerControlStationRemote`.** The method sent the given id on the

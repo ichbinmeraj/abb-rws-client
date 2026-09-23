@@ -698,14 +698,21 @@ export class RobotManager {
         // Phase 1: quick scan of the standard ports
         let candidates = await RobotManager.detectAllControllers(host, this.strictTls);
 
-        // Phase 2: if nothing on standard ports and we're scanning localhost,
-        // probe the OS's listening ports (fast, no range cap - finds a VC on any
-        // reassigned port; blind scan only if the OS query is unavailable).
-        if (candidates.length === 0 && (host === '127.0.0.1' || host === 'localhost')) {
-          Logger.info(`standard ports empty - scanning ${host} listening ports for the reassigned VC…`);
+        // Phase 2: on localhost, ALWAYS add the OS's listening ports (fast, no
+        // range cap - finds a VC on any reassigned port). This used to run only
+        // when phase 1 found nothing at all, so one VC on a standard port hid
+        // every other VC: live 2026-09-23, an RW6 VC moved 33806 -> 50959 while
+        // an RW8 VC sat on 5466, phase 1 returned only the RW8, and the RW6 was
+        // never considered. Recovery only runs when the saved port is dead, so
+        // the extra scan is cheap.
+        if (host === '127.0.0.1' || host === 'localhost') {
+          Logger.info(`scanning ${host} listening ports for the reassigned VC…`);
           const local = await RobotManager.discoverLocalControllers(host, this.strictTls);
-          candidates = local.map(c => ({ port: c.port, useHttps: c.useHttps, authType: c.authType }));
-          Logger.info(`local scan found ${candidates.length} ABB controller(s) on ${host}`);
+          const seen = new Set(candidates.map(c => c.port));
+          for (const c of local) {
+            if (!seen.has(c.port)) { candidates.push({ port: c.port, useHttps: c.useHttps, authType: c.authType }); }
+          }
+          Logger.info(`${candidates.length} ABB controller(s) on ${host} after the local scan`);
         }
 
         // Several controllers on one host is the normal RobotStudio setup, and the
