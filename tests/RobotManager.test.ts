@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as https from 'node:https';
 import { RobotManager } from '../src/RobotManager.js';
+import { RwsError } from '../src/types.js';
 import { MultiRobotManager } from '../src/MultiRobotManager.js';
 import * as MdnsDiscovery from '../src/MdnsDiscovery.js';
 import { RWS1Adapter } from '../src/RWS1Adapter.js';
@@ -373,6 +374,22 @@ describe('RobotManager: a poll never overwrites a newer subscription event', () 
     fake.listModules = vi.fn(async () => ['MainModule']);
     await (mgr as any).fetchAll((mgr as any).pollGeneration);
     expect(mgr!.state.speedRatio).toBe(60);
+  });
+});
+
+describe('RobotManager.resetRapid', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('says the task has no main routine when the controller answers 404', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    fake.requestMastership = vi.fn(async () => {});
+    fake.releaseMastership = vi.fn(async () => {});
+    fake.resetRapid = vi.fn(async () => {
+      throw new RwsError('Resource does not exist on the controller: HTTP 404 from POST /rw/rapid/execution/resetpp', 'RESOURCE_NOT_FOUND', 404);
+    });
+    (mgr as any).adapter = fake;
+    await expect(mgr.resetRapid()).rejects.toMatchObject({ code: 'RESOURCE_NOT_FOUND', message: expect.stringMatching(/no main routine/) });
   });
 });
 

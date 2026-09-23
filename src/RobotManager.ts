@@ -1166,7 +1166,19 @@ export class RobotManager {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     // PP-to-Main clears the routine target - Start will go to main from now on.
     this.lastPPTarget = null;
-    await this.withMastership(() => this.adapter!.resetRapid());
+    try {
+      await this.withMastership(() => this.adapter!.resetRapid());
+    } catch (e) {
+      // Live-verified 2026-09-24 on an RW 7.21 VC (reference probe sweep-motion.mjs):
+      // a task with no `main` routine answers POST resetpp with 404, which reads
+      // as "Resource does not exist" - the path exists; the routine does not.
+      if (e instanceof RwsError && e.code === 'RESOURCE_NOT_FOUND') {
+        throw new RwsError(
+          `Cannot set the program pointer to main: task ${this.activeTaskName()} has no main routine`,
+          'RESOURCE_NOT_FOUND', e.httpStatus, e.rwsDetail, e.controllerCode, e.controllerMsg);
+      }
+      throw e;
+    }
   }
 
   async setExecutionCycle(cycle: 'once' | 'forever' | 'asis'): Promise<void> {

@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   had read before the change: live, speed 50 was reported and then 100 again.
   Events (and `setSpeedRatio()`) are now numbered per field, and a poll skips
   any field set after it began reading.
+- **PP to main on a task without a `main` routine reported "Resource does not
+  exist on the controller".** The controller answers 404; the path exists, the
+  routine does not. `resetRapid()` now says the task has no main routine (code
+  unchanged: `RESOURCE_NOT_FOUND`).
 
 - **Port recovery could connect to a different controller.** When a saved port
   stopped answering, `RobotManager` scanned the host and adopted the first
