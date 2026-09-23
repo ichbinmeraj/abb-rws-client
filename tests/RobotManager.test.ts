@@ -319,6 +319,63 @@ describe('RobotManager polling vs disconnect', () => {
   });
 });
 
+describe('RobotManager: a poll never overwrites a newer subscription event', () => {
+  // Live 2026-09-24 (RW6.16 VC, via the daemon stream): speed 50 was reported,
+  // then 100 again 0.3 s later - a slow poll that had read 100 before the change
+  // wrote it back after the speedratio event for 50 had arrived.
+  let mgr: RobotManager | null = null;
+  afterEach(async () => { await mgr?.disconnect().catch(() => {}); mgr = null; vi.restoreAllMocks(); });
+
+  /** A manager with live subscriptions whose first poll is held open on listModules. */
+  async function heldPoll(reads: { speed: number; ctrl: string }) {
+    mgr = new RobotManager();
+    const fake = makeFakeAdapter();
+    let emit!: (e: { resource: string; value: string; timestamp: Date }) => void;
+    fake.subscribe = vi.fn(async (_r: unknown, handler: typeof emit) => { emit = handler; return async () => {}; }) as never;
+    fake.getSpeedRatio = vi.fn(async () => reads.speed);
+    fake.getControllerState = vi.fn(async () => reads.ctrl);
+    let releaseModules!: (m: string[]) => void;
+    fake.listModules = vi.fn(() => new Promise<string[]>(r => { releaseModules = r; }));
+    (mgr as any).adapter = fake;
+    (mgr as any).adapterConfig = { host: 'vc-a', username: 'u', password: 'p', port: 80 };
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(DIGEST_PROBE);
+    const connected = mgr.connect('vc-a', 'u', 'p', 80);
+    await vi.waitFor(() => expect(fake.listModules).toHaveBeenCalled());   // poll has read its values, still in flight
+    return { fake, emit, release: () => releaseModules(['MainModule']), connected };
+  }
+
+  it('keeps an event that arrived while the poll was in flight', async () => {
+    const { emit, release, connected } = await heldPoll({ speed: 100, ctrl: 'motoroff' });
+    emit({ resource: 'speedratio', value: '50', timestamp: new Date() });
+    emit({ resource: 'controllerstate', value: 'motoron', timestamp: new Date() });
+    release();
+    await connected;
+    expect(mgr!.state.speedRatio).toBe(50);
+    expect(mgr!.state.ctrlstate).toBe('motoron');
+  });
+
+  it('keeps its own speed write when a poll that read the old value finishes later', async () => {
+    const { fake, release, connected } = await heldPoll({ speed: 100, ctrl: 'motoroff' });
+    fake.setSpeedRatio = vi.fn(async () => {});
+    await mgr!.setSpeedRatio(30);
+    release();
+    await connected;
+    expect(mgr!.state.speedRatio).toBe(30);
+  });
+
+  it('still lets a poll that started after an event replace its value', async () => {
+    const { fake, emit, release, connected } = await heldPoll({ speed: 100, ctrl: 'motoroff' });
+    release();
+    await connected;
+    emit({ resource: 'speedratio', value: '50', timestamp: new Date() });
+    // The controller moves on again with no event this time; the next poll reads it.
+    fake.getSpeedRatio = vi.fn(async () => 60);
+    fake.listModules = vi.fn(async () => ['MainModule']);
+    await (mgr as any).fetchAll((mgr as any).pollGeneration);
+    expect(mgr!.state.speedRatio).toBe(60);
+  });
+});
+
 describe('RobotManager simulation panel wrappers', () => {
   it('delegates to the RWS 2.0 adapter', async () => {
     const mgr = new RobotManager();

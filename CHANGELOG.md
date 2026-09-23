@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5-second slow poll. Live-verified on RobotWare 6.16, 7.21 and 8.1.1 virtual
   controllers: all six are now bound, and speed-ratio and controller-state
   events arrive within about 200 ms of the change.
+- **A slow poll could overwrite a newer value with an older one.** A poll reads
+  controller state, operating mode, speed ratio and execution state, then awaits
+  several more requests before writing what it read into the state. A
+  subscription event arriving in between was overwritten by the value the poll
+  had read before the change: live, speed 50 was reported and then 100 again.
+  Events (and `setSpeedRatio()`) are now numbered per field, and a poll skips
+  any field set after it began reading.
 
 - **Port recovery could connect to a different controller.** When a saved port
   stopped answering, `RobotManager` scanned the host and adopted the first

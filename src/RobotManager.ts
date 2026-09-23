@@ -153,6 +153,15 @@ export class RobotManager {
   }
   /** True when WebSocket subscriptions are active (drives reduced polling interval). */
   private subscriptionActive = false;
+  /**
+   * Subscription events are numbered; each state field remembers the number of
+   * the last event that set it. A poll notes the number when it starts reading
+   * and does not overwrite a field an event set after that - the poll's value
+   * is older than the event's. Live 2026-09-24: without this, speed 50 was
+   * reported and then 100 again, written back by a poll that read it earlier.
+   */
+  private eventSeq = 0;
+  private readonly fieldEventSeq = new Map<'ctrlstate' | 'opmode' | 'speedRatio' | 'execstate' | 'coldetstate', number>();
   /** In-flight connect promise - used to dedupe rapid-clicks so we never run two connects in parallel. */
   private connectingPromise: Promise<void> | null = null;
   /** Args of the in-flight connect, so a repeat call can tell "same target" from "new target". */
@@ -925,6 +934,8 @@ export class RobotManager {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     await this.adapter.setSpeedRatio(ratio);
     this._state.speedRatio = ratio;
+    // A write we just made is newer than any poll already in flight.
+    this.fieldEventSeq.set('speedRatio', ++this.eventSeq);
     this.notify();
   }
 
@@ -2195,16 +2206,25 @@ export class RobotManager {
     const isColdet    = r === 'coldetstate'     || /\/coldetstate/.test(r);
     const isElog      = r === 'elog'            || /\/elog\//.test(r);
 
+    const stamp = (f: 'ctrlstate' | 'opmode' | 'speedRatio' | 'execstate' | 'coldetstate'): void => {
+      this.fieldEventSeq.set(f, ++this.eventSeq);
+    };
+
     if (isCtrlState) {
+      stamp('ctrlstate');
       if (this._state.ctrlstate !== event.value) { this._state.ctrlstate = event.value; changed = true; }
     } else if (isOpMode) {
+      stamp('opmode');
       if (this._state.opmode !== event.value) { this._state.opmode = event.value; changed = true; }
     } else if (isSpeed) {
       const n = Number(event.value);
+      if (!isNaN(n)) { stamp('speedRatio'); }
       if (!isNaN(n) && this._state.speedRatio !== n) { this._state.speedRatio = n; changed = true; }
     } else if (isExec) {
+      stamp('execstate');
       if (this._state.execstate !== event.value) { this._state.execstate = event.value; changed = true; }
     } else if (isColdet) {
+      stamp('coldetstate');
       if (this._state.coldetstate !== event.value) {
         this._state.coldetstate = event.value as CollisionDetectionState;
         changed = true;
@@ -2274,6 +2294,10 @@ export class RobotManager {
     if (!this.adapter) { return; }
     if (this.fetchInFlight) { return; }
     this.fetchInFlight = true;
+    // Events numbered above this arrived after the reads below were issued.
+    const pollSeq = this.eventSeq;
+    const newerEvent = (f: 'ctrlstate' | 'opmode' | 'speedRatio' | 'execstate' | 'coldetstate'): boolean =>
+      (this.fieldEventSeq.get(f) ?? 0) > pollSeq;
     try {
       const [execInfo, ctrlstate, opmode, speedRatio, tasks, joints, cartesianFull] =
         await Promise.all([
@@ -2306,13 +2330,17 @@ export class RobotManager {
 
       const cartesian = { x: cartesianFull.x, y: cartesianFull.y, z: cartesianFull.z, q1: cartesianFull.q1, q2: cartesianFull.q2, q3: cartesianFull.q3, q4: cartesianFull.q4 };
       Object.assign(this._state, {
-        ctrlstate, opmode, execstate: execInfo.state, execCycle: execInfo.cycle,
-        speedRatio, tasks, modules, modulesByTask, joints, cartesian, cartesianFull,
+        execCycle: execInfo.cycle, tasks, modules, modulesByTask, joints, cartesian, cartesianFull,
+        // Subscribed fields: keep a value an event set while this poll was in flight.
+        ...(newerEvent('ctrlstate') ? {} : { ctrlstate }),
+        ...(newerEvent('opmode') ? {} : { opmode }),
+        ...(newerEvent('execstate') ? {} : { execstate: execInfo.state }),
+        ...(newerEvent('speedRatio') ? {} : { speedRatio }),
       });
 
       const coldetstate = await this.adapter.getCollisionDetectionState().catch(() => null);
       if (stale()) { return; }
-      this._state.coldetstate = coldetstate;
+      if (!newerEvent('coldetstate')) { this._state.coldetstate = coldetstate; }
 
       this.fetchCount++;
       // Identity / systemInfo / eventLog / mechunits - only refresh occasionally,
