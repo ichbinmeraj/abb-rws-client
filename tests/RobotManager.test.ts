@@ -1294,6 +1294,23 @@ describe('RobotManager port recovery picks the SAME controller', () => {
     await mgr.disconnect();
   });
 
+  it('refuses to connect when the saved port holds a stranger and the controller is nowhere', async () => {
+    // Live 2026-09-23: the RW7 VC was off and another VC held its 9403. Falling
+    // back to the saved port would have connected straight to the stranger.
+    const mgr = new RobotManager();
+    stubRws2();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(RW7);
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8, RW7]);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    vi.spyOn(RobotManager.prototype as any, 'identifyCandidate').mockImplementation(async (_h: unknown, c: unknown) =>
+      (c as { port: number }).port === 9403 ? '{D9E18C83-0000-0000-0000-000000000000}' : ids[(c as { port: number }).port] ?? null);
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await expect(mgr.connect('127.0.0.1', 'u', 'p', 9403, true)).rejects.toMatchObject({ code: 'PROTOCOL_DETECT_FAILED' });
+    expect(rws2CtorArgs).toHaveLength(0);   // no adapter was ever pointed at the stranger
+    expect(mgr.state.connected).toBe(false);
+  });
+
   it('uses the saved port without scanning when it answers as the expected controller', async () => {
     const mgr = new RobotManager();
     stubRws2();

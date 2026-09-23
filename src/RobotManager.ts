@@ -693,11 +693,13 @@ export class RobotManager {
       // connected to it. When the expected identity is known, check it, and treat
       // a stranger on the saved port exactly like a dead port - recover.
       const expectedHere = this.expectedSystemId ?? this.knownSystemId;
+      let savedPortIsStranger = false;
       if (verified && expectedHere) {
         const got = await this.identifyCandidate(host, verified, username, password).catch(() => null);
         if (got && normaliseSystemId(got) !== normaliseSystemId(expectedHere)) {
           Logger.warn(`saved port ${port} now answers as a different controller (system id ${got}, expected ${expectedHere}) - recovering`);
           verified = null;
+          savedPortIsStranger = true;
         }
       }
       if (verified) {
@@ -740,6 +742,11 @@ export class RobotManager {
         if (match) {
           probe = match;
           Logger.info(`recovered: ${match.useHttps ? 'HTTPS' : 'HTTP'}/${match.authType} on port ${match.port} (saved was ${port}; ${reason})`);
+        } else if (savedPortIsStranger) {
+          // Falling back to the saved port would connect to the stranger on it.
+          throw new RwsError(
+            `controller ${expectedHere} not found on ${host}: port ${port} now belongs to a different controller (${reason})`,
+            'PROTOCOL_DETECT_FAILED');
         } else if (candidates.length > 0) {
           const https_ = useHttps ?? (port === 443 || port === 9403);
           probe = { port, useHttps: https_, authType: https_ ? 'basic' : 'digest' };
