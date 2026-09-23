@@ -21,7 +21,7 @@ import { RWS2Adapter } from './RWS2Adapter.js';
 import { Logger } from './Logger.js';
 import { discoverControllersMdns } from './MdnsDiscovery.js';
 import type { MdnsController } from './MdnsDiscovery.js';
-import { KNOWN_RWS_PORTS } from './detect.js';
+import { KNOWN_RWS_PORTS, createAdapter } from './detect.js';
 
 /**
  * Listener signature for `onError`. The host (VS Code extension, CLI, etc.) can
@@ -120,6 +120,10 @@ export class RobotManager {
   private adapter: IRWSAdapter | null = null;
   private adapterConfig: { host: string; username: string; password: string; port: number } | null = null;
   private errorListener: ErrorListener | null = null;
+  /** System id the caller says this manager's controller must have (see setExpectedSystemId). */
+  private expectedSystemId: string | null = null;
+  /** System id of the controller this manager last read successfully. */
+  private knownSystemId: string | null = null;
   private _state: RobotState = {
     connected: false, quality: 'disconnected', qualityReason: 'not connected',
     host: '', ctrlstate: null, opmode: null,
@@ -210,6 +214,61 @@ export class RobotManager {
    * on internally - others are passed through for the host to handle.
    */
   onError(fn: ErrorListener) { this.errorListener = fn; }
+
+  /**
+   * Declare which controller this manager is for, by its system id (the GUID
+   * from `getSystemInfo().sysid`). When the saved port stops answering and the
+   * host is scanned for the controller, only a candidate with this id is
+   * adopted. Without it the manager uses the id it read on its last successful
+   * connection, if any. Pass null to clear.
+   */
+  setExpectedSystemId(id: string | null | undefined): void {
+    this.expectedSystemId = id ? id : null;
+  }
+
+  /**
+   * Decide which scanned candidate, if any, is the controller whose saved port
+   * stopped answering. Never crosses protocol generation. With a known system
+   * id, a candidate is adopted only if `identify` returns the same id. Without
+   * one, a candidate is adopted only if it is the single one of its generation
+   * - with two or more, any choice would be a guess, and a wrong guess connects
+   * to a different robot.
+   */
+  static async chooseRecoveryCandidate(
+    candidates: ProbeResult[],
+    expectedAuth: 'digest' | 'basic',
+    expectedSystemId: string | null,
+    identify: (c: ProbeResult) => Promise<string | null>,
+  ): Promise<{ match: ProbeResult | null; reason: string }> {
+    const sameGeneration = candidates.filter(c => c.authType === expectedAuth);
+    if (sameGeneration.length === 0) {
+      return { match: null, reason: `no ${expectedAuth} candidate among ${candidates.length}` };
+    }
+    if (expectedSystemId) {
+      const want = normaliseSystemId(expectedSystemId);
+      for (const c of sameGeneration) {
+        const got = await identify(c).catch(() => null);
+        if (got && normaliseSystemId(got) === want) {
+          return { match: c, reason: `system id ${expectedSystemId} confirmed on port ${c.port}` };
+        }
+      }
+      return { match: null, reason: `none of ${sameGeneration.length} candidate(s) has system id ${expectedSystemId}` };
+    }
+    if (sameGeneration.length === 1) {
+      return { match: sameGeneration[0], reason: 'only candidate of its protocol; system id unknown, not verified' };
+    }
+    return { match: null, reason: `${sameGeneration.length} candidates of the same protocol and no system id to tell them apart` };
+  }
+
+  /** Sign in to a candidate once, read its system id, sign out. */
+  private async identifyCandidate(host: string, c: ProbeResult, username: string, password: string): Promise<string | null> {
+    const a = await createAdapter({ host, port: c.port, https: c.useHttps, username, password, strictTls: this.strictTls });
+    try {
+      return (await a.getSystemInfo()).sysid || null;
+    } finally {
+      await a.disconnect().catch(() => { /* best effort */ });
+    }
+  }
 
   // ─── Auto-detection ─────────────────────────────────────────────────────────
 
@@ -649,10 +708,22 @@ export class RobotManager {
           Logger.info(`local scan found ${candidates.length} ABB controller(s) on ${host}`);
         }
 
-        const match = candidates.find(c => c.authType === expectedAuth) ?? candidates[0];
+        // Several controllers on one host is the normal RobotStudio setup, and the
+        // only one where ports move. "First controller of the same protocol" is
+        // then just whichever answered first - a DIFFERENT robot. Adopt a
+        // candidate only when it is provably the same controller.
+        const expectedId = this.expectedSystemId ?? this.knownSystemId;
+        const { match, reason } = await RobotManager.chooseRecoveryCandidate(
+          candidates, expectedAuth, expectedId,
+          c => this.identifyCandidate(host, c, username, password),
+        );
         if (match) {
           probe = match;
-          Logger.info(`recovered: ${match.useHttps ? 'HTTPS' : 'HTTP'}/${match.authType} on port ${match.port} (saved was ${port})`);
+          Logger.info(`recovered: ${match.useHttps ? 'HTTPS' : 'HTTP'}/${match.authType} on port ${match.port} (saved was ${port}; ${reason})`);
+        } else if (candidates.length > 0) {
+          const https_ = useHttps ?? (port === 443 || port === 9403);
+          probe = { port, useHttps: https_, authType: https_ ? 'basic' : 'digest' };
+          Logger.warn(`saved port ${port} not responding and no candidate on ${host} is provably this controller (${reason}) - keeping the saved port`);
         } else {
           // Last resort: try the saved port anyway - maybe a firewall blocks the probe but lets through auth
           const https_ = useHttps ?? (port === 443 || port === 9403);
@@ -2235,7 +2306,11 @@ export class RobotManager {
         ]);
         if (stale()) { return; }
         if (identity)   { this._state.identity   = identity; }
-        if (systemInfo) { this._state.systemInfo  = systemInfo; }
+        if (systemInfo) {
+          this._state.systemInfo = systemInfo;
+          // Remembered so a later port recovery can prove it found THIS controller.
+          if (systemInfo.sysid) { this.knownSystemId = systemInfo.sysid; }
+        }
         this._state.eventLog  = eventLog;
         this._state.mechunits = mechunits;
       }
@@ -2299,4 +2374,9 @@ export class RobotManager {
       this.fetchInFlight = false;
     }
   }
+}
+
+/** System ids are GUIDs; compare them without braces or case. */
+function normaliseSystemId(id: string): string {
+  return id.trim().replace(/^\{|\}$/g, '').toLowerCase();
 }

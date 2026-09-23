@@ -1178,3 +1178,80 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     await expect(mgr.pollRmmp()).resolves.toBe('unsupported'); // read degrades even unconnected
   });
 });
+
+describe('RobotManager port recovery picks the SAME controller', () => {
+  // Reproduces 2026-09-23: three VCs on one PC; the RW7 entry's saved port went
+  // stale, recovery took the first RWS 2.0 controller found - the RW8 VC.
+  const RW8 = { port: 5466, useHttps: true, authType: 'basic' as const };
+  const RW7 = { port: 9403, useHttps: true, authType: 'basic' as const };
+  const RW6 = { port: 33806, useHttps: false, authType: 'digest' as const };
+  const ids: Record<number, string> = { 5466: '{DDDEA751-93CE-4DAC-8D85-55725137AF66}', 9403: '{A3BE1993-3FA0-4D46-93FF-7FA2D8086C81}' };
+  const identify = async (c: { port: number }) => ids[c.port] ?? null;
+
+  it('adopts the candidate whose system id matches, even when another answers first', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW8, RW7, RW6], 'basic', ids[9403], identify);
+    expect(r.match).toEqual(RW7);
+  });
+
+  it('compares system ids without braces or case', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW8, RW7], 'basic', 'a3be1993-3fa0-4d46-93ff-7fa2d8086c81', identify);
+    expect(r.match).toEqual(RW7);
+  });
+
+  it('adopts nothing when no candidate has the expected id', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW8], 'basic', ids[9403], identify);
+    expect(r.match).toBeNull();
+  });
+
+  it('treats a candidate it cannot identify as not a match', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW7], 'basic', ids[9403], async () => { throw new Error('401'); });
+    expect(r.match).toBeNull();
+  });
+
+  it('never crosses protocol generation, even as a fallback', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW6], 'basic', null, identify);
+    expect(r.match).toBeNull();
+  });
+
+  it('without an id, adopts a single candidate of the generation but refuses to guess between two', async () => {
+    expect((await RobotManager.chooseRecoveryCandidate([RW7, RW6], 'basic', null, identify)).match).toEqual(RW7);
+    expect((await RobotManager.chooseRecoveryCandidate([RW8, RW7], 'basic', null, identify)).match).toBeNull();
+  });
+
+  function stubRws2() {
+    vi.spyOn(RWS2Adapter.prototype, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'getSessionCookie').mockReturnValue(null);
+    vi.spyOn(RWS2Adapter.prototype, 'subscribe').mockRejectedValue(new Error('no ws'));
+    vi.spyOn(RobotManager.prototype as any, 'fetchAll').mockResolvedValue(undefined);
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);      // saved port is dead
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8, RW7]);
+    vi.spyOn(RobotManager.prototype as any, 'identifyCandidate')
+      .mockImplementation(async (_h: unknown, c: unknown) => ids[(c as { port: number }).port] ?? null);
+  }
+
+  it('connect() recovers to the expected controller, not the first one found', async () => {
+    const mgr = new RobotManager();
+    stubRws2();
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9999, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9403');
+    await mgr.disconnect();
+  });
+
+  it('connect() keeps the saved port rather than guess between two controllers', async () => {
+    const mgr = new RobotManager();
+    stubRws2();
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9999, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9999');
+    await mgr.disconnect();
+  });
+
+  it('MultiRobotManager passes a config entry\'s expected id to its manager', () => {
+    const multi = new MultiRobotManager();
+    multi.addRobot({ id: 'rw7', name: 'RW7', host: '127.0.0.1', port: 9403, useHttps: true, username: 'u', password: 'p', expectedSystemId: ids[9403] });
+    expect((multi.entries[0].manager as any).expectedSystemId).toBe(ids[9403]);
+  });
+});

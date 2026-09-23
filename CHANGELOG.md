@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Port recovery could connect to a different controller.** When a saved port
+  stopped answering, `RobotManager` scanned the host and adopted the first
+  controller of the same protocol generation - on a PC running several virtual
+  controllers, that is whichever answers first, and with no fallback guard it
+  could even cross generations. A saved RW7 entry was observed reconnecting to
+  an RW8 controller on the same PC. Recovery now never crosses generation; it
+  adopts a candidate only after confirming its system id (signing in once and
+  out again), using the id from `setExpectedSystemId()` or the one read on the
+  last successful connection; with no id and more than one candidate it keeps
+  the saved port instead of guessing. New: `RobotManager.setExpectedSystemId()`,
+  `RobotManager.chooseRecoveryCandidate()`, `RobotConfig.expectedSystemId`.
+
 - **`heldByMe` was always false when an explicit control-station identity was
   passed to `registerControlStationRemote`.** The method sent the given id on the
   wire but did not adopt it, while `getWriteAccessStatus()` derives `heldByMe` by

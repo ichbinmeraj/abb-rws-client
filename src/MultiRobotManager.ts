@@ -14,6 +14,12 @@ export interface RobotConfig {
   useHttps?: boolean;
   username: string;
   password: string;
+  /**
+   * System id (GUID from `getSystemInfo().sysid`) of the controller this entry
+   * is for. When set, port recovery only adopts a controller with this id -
+   * several controllers on one host otherwise make recovery a guess.
+   */
+  expectedSystemId?: string;
 }
 
 /**
@@ -94,6 +100,7 @@ export class MultiRobotManager {
     const mgr = new RobotManager(this.managerOptions);
     mgr.onDidChange(() => { this.notify(); this.notifyRobot(config.id); });
     if (this.errorListener) { mgr.onError(this.errorListener); }
+    mgr.setExpectedSystemId(config.expectedSystemId);
     this.managers.set(config.id, mgr);
     this.configMap.set(config.id, config);
     if (!this._activeId) { this._activeId = config.id; }
@@ -105,6 +112,7 @@ export class MultiRobotManager {
     const existing = this.configMap.get(id);
     if (existing) {
       this.configMap.set(id, { ...existing, ...patch });
+      if ('expectedSystemId' in patch) { this.managers.get(id)?.setExpectedSystemId(patch.expectedSystemId); }
       this.notify();
     }
   }
