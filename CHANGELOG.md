@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`heldByMe` was always false when an explicit control-station identity was
+  passed to `registerControlStationRemote`.** The method sent the given id on the
+  wire but did not adopt it, while `getWriteAccessStatus()` derives `heldByMe` by
+  comparing the holder against the client's own `csId` - still the constructor
+  default, a random GUID. Any caller that registered with its own identity read
+  `heldByMe === false` even while it was demonstrably the holder. The method now
+  adopts the name, id and pincode it registered. Live-verified 2026-09-23 on
+  RW8.1.1 with two registered stations: the holder reads `heldByMe` true, the
+  other station false. Registering with no arguments was never affected.
+
 - **RW8: the control-station registration is forgotten when the controller
   re-issues the session cookie.** Registration is session-scoped. After a
   controller restart or an idle expiry the next write-access request answered

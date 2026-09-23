@@ -153,9 +153,12 @@ export class Rws2Core {
   private controlStationRegistered = false;
   /** True while this session holds RW8 control-station write access. */
   private writeAccessHeld = false;
-  private readonly csName: string;
-  private readonly csId: string;
-  private readonly csPincode: string;
+  // Not readonly: registerControlStationRemote() may be called with an explicit
+  // identity, and that identity has to become this session's, because
+  // getWriteAccessStatus() derives heldByMe by comparing the holder id with csId.
+  private csName: string;
+  private csId: string;
+  private csPincode: string;
 
   constructor(
     private readonly baseUrl: string,
@@ -780,9 +783,21 @@ export class Rws2Core {
    * overridden. The id must be a braced GUID.
    */
   async registerControlStationRemote(name?: string, id?: string, pincode?: string): Promise<void> {
-    const { path, body } = R2.registerControlStationRemote(
-      name ?? this.csName, id ?? this.csId, pincode ?? this.csPincode);
+    const useName = name ?? this.csName;
+    const useId = id ?? this.csId;
+    const usePincode = pincode ?? this.csPincode;
+    const { path, body } = R2.registerControlStationRemote(useName, useId, usePincode);
     await this.req('POST', path, body);
+    // Adopt the identity actually registered. Without this, a caller that passes
+    // an explicit id registers as that id while csId still holds the constructor
+    // default, so getWriteAccessStatus().heldByMe compares the holder against the
+    // wrong id and reads FALSE even when this session IS the holder.
+    // Live-verified 2026-09-23 on RW8.1.1: registering with an explicit id gave
+    // held=true/heldByMe=false with heldById matching the id we registered;
+    // registering with no args gave held=true/heldByMe=true.
+    this.csName = useName;
+    this.csId = useId;
+    this.csPincode = usePincode;
     this.controlStationRegistered = true;
   }
 

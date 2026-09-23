@@ -1252,6 +1252,34 @@ describe('RwsClient2 (unit)', () => {
       } finally { server.close(); }
     });
 
+    it('adopts an explicit identity passed to registerControlStationRemote, so heldByMe still works', async () => {
+      // registerControlStationRemote(name, id, pincode) used to send the explicit
+      // id on the wire without adopting it, while getWriteAccessStatus derived
+      // heldByMe by comparing the holder against the CONSTRUCTOR default. A caller
+      // that registered with its own id therefore read heldByMe=false even when it
+      // was the holder. Live-verified 2026-09-23 on RW8.1.1: explicit id gave
+      // held=true/heldByMe=false; no-args gave held=true/heldByMe=true.
+      const EXPLICIT = '{BBBBBBBB-0000-4000-8000-000000000002}';
+      const { server, port } = await startServer((req, res) => {
+        if (req.url?.includes('/register/remote')) {
+          res.writeHead(204, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end(`{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"controlstation-write-access-status","_title":"write-access-status","held-by-control-station-Id":"${EXPLICIT}","held-by-control-station-name":"probe","control-station-write-access-held":"true","control-station-external-control-enabled":"true"}]}`);
+      });
+      try {
+        // Constructor default is a random GUID - deliberately NOT the explicit id.
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.registerControlStationRemote('probe', EXPLICIT, '1234');
+        const s = await client.getWriteAccessStatus();
+        expect(s.held).toBe(true);
+        expect(s.heldById).toBe(EXPLICIT);
+        expect(s.heldByMe).toBe(true);
+      } finally { server.close(); }
+    });
+
     it('re-registers the control station after the controller re-issues the session cookie', async () => {
       // Registration is session-scoped on RW8. A new session cookie (controller
       // restart, idle expiry) means the registration is gone, and the next
