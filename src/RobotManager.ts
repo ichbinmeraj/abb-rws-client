@@ -686,7 +686,20 @@ export class RobotManager {
     let probe: ProbeResult;
     if (port !== undefined) {
       // Port is pinned in config - verify it's actually reachable with the right protocol.
-      const verified = await RobotManager.probeSpecificPort(host, port, this.strictTls);
+      let verified = await RobotManager.probeSpecificPort(host, port, this.strictTls);
+      // Reachable is not enough: VCs restarting together can swap ports, so the
+      // saved port may now answer as a DIFFERENT controller. Live 2026-09-23: an
+      // RW7 entry's saved 9403 was taken by another RW8 VC and the manager
+      // connected to it. When the expected identity is known, check it, and treat
+      // a stranger on the saved port exactly like a dead port - recover.
+      const expectedHere = this.expectedSystemId ?? this.knownSystemId;
+      if (verified && expectedHere) {
+        const got = await this.identifyCandidate(host, verified, username, password).catch(() => null);
+        if (got && normaliseSystemId(got) !== normaliseSystemId(expectedHere)) {
+          Logger.warn(`saved port ${port} now answers as a different controller (system id ${got}, expected ${expectedHere}) - recovering`);
+          verified = null;
+        }
+      }
       if (verified) {
         probe = verified;
         Logger.info(`port ${port} verified: ${verified.useHttps ? 'HTTPS' : 'HTTP'}/${verified.authType}`);

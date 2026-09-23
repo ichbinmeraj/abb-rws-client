@@ -1180,6 +1180,10 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
 });
 
 describe('RobotManager port recovery picks the SAME controller', () => {
+  // Spies on static methods outlive a test unless restored - one test's fake
+  // chooser silently decided the next test's recovery.
+  afterEach(() => { vi.restoreAllMocks(); });
+
   // Reproduces 2026-09-23: three VCs on one PC; the RW7 entry's saved port went
   // stale, recovery took the first RWS 2.0 controller found - the RW8 VC.
   const RW8 = { port: 5466, useHttps: true, authType: 'basic' as const };
@@ -1266,6 +1270,40 @@ describe('RobotManager port recovery picks the SAME controller', () => {
     });
     await mgr.connect('127.0.0.1', 'u', 'p', 33806, false).catch(() => {});
     expect(seen[0]).toEqual([5466, 50959]);   // the standard-port hit plus the moved VC, once each
+    await mgr.disconnect();
+  });
+
+  it('treats a different controller on the saved port like a dead port, and recovers', async () => {
+    // Live 2026-09-23: the RW7 entry's saved 9403 was taken by another VC after
+    // a restart; the RW7 had moved to 9404.
+    const STRANGER_ID = '{D9E18C83-0000-0000-0000-000000000000}';
+    const RW7_MOVED = { port: 9404, useHttps: true, authType: 'basic' as const };
+    const mgr = new RobotManager();
+    stubRws2();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(RW7);          // 9403 answers...
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8, RW7]);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([{ host: '127.0.0.1', ...RW7_MOVED }]);
+    vi.spyOn(RobotManager.prototype as any, 'identifyCandidate').mockImplementation(async (_h: unknown, c: unknown) => {
+      const port = (c as { port: number }).port;
+      return port === 9403 ? STRANGER_ID : port === 9404 ? ids[9403] : ids[port] ?? null;   // ...as a stranger
+    });
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9403, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9404');
+    await mgr.disconnect();
+  });
+
+  it('uses the saved port without scanning when it answers as the expected controller', async () => {
+    const mgr = new RobotManager();
+    stubRws2();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(RW7);
+    const scan = vi.spyOn(RobotManager, 'detectAllControllers');
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9403, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9403');
+    expect(scan).not.toHaveBeenCalled();
     await mgr.disconnect();
   });
 

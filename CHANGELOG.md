@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   standard port hid every other one: an RW6 VC that moved to a new port was
   never considered while an RW8 VC answered on 5466. On localhost the listening
   ports are now always scanned when recovering.
+- **A saved port taken over by another controller was used without question.**
+  Virtual controllers restarting together can swap ports; the saved port then
+  answers, so recovery never ran and the manager connected to a different
+  controller. When the expected system id is known, the controller on the
+  saved port is now identified first, and a stranger is treated like a dead
+  port: recovery runs and finds the right controller elsewhere.
 
 - **`heldByMe` was always false when an explicit control-station identity was
   passed to `registerControlStationRemote`.** The method sent the given id on the
