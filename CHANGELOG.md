@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   controller. When the expected system id is known, the controller on the
   saved port is now identified first, and a stranger is treated like a dead
   port: recovery runs and finds the right controller elsewhere.
+- **A failed recovery reported the dead port's network error instead of why.**
+  With the expected system id known, a dead saved port and other controllers
+  present but none of them the right one, `connect()` retried the dead port and
+  surfaced its `fetch failed`. It now rejects with `PROTOCOL_DETECT_FAILED`
+  naming the controller, the saved port and the recovery's conclusion (e.g.
+  "none of 1 candidate(s) has system id ..."). Without an expected id the saved
+  port is still kept, as before.
 
 - **`heldByMe` was always false when an explicit control-station identity was
   passed to `registerControlStationRemote`.** The method sent the given id on the

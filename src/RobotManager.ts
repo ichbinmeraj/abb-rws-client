@@ -756,6 +756,14 @@ export class RobotManager {
           throw new RwsError(
             `controller ${expectedHere} not found on ${host}: port ${port} now belongs to a different controller (${reason})`,
             'PROTOCOL_DETECT_FAILED');
+        } else if (candidates.length > 0 && expectedId) {
+          // The saved port already failed the probe; retrying it would only
+          // replace this conclusion with its network error. Live 2026-09-24: the
+          // RW6 entry's VC was off while another RW6 system ran on 17186 - the
+          // caller saw "fetch failed" and not why nothing was adopted.
+          throw new RwsError(
+            `controller ${expectedId} not found on ${host}: saved port ${port} is not responding and ${reason}`,
+            'PROTOCOL_DETECT_FAILED');
         } else if (candidates.length > 0) {
           const https_ = useHttps ?? (port === 443 || port === 9403);
           probe = { port, useHttps: https_, authType: https_ ? 'basic' : 'digest' };

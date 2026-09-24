@@ -1385,6 +1385,24 @@ describe('RobotManager port recovery picks the SAME controller', () => {
     expect(mgr.state.connected).toBe(false);
   });
 
+  it('says why when the saved port is dead and no candidate is the expected controller', async () => {
+    // Live 2026-09-24: the RW6 entry's VC was off, another RW6 system ran on a
+    // new port; the caller saw only the dead saved port's "fetch failed".
+    const mgr = new RobotManager();
+    stubRws2();                                                  // saved port dead; candidates RW8, RW7
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    const OFF_ID = '{F2E08F07-3F27-4DE5-82CC-74A72537F492}';    // neither candidate
+    mgr.setExpectedSystemId(OFF_ID);
+    rws2CtorArgs.length = 0;
+    const err = await mgr.connect('127.0.0.1', 'u', 'p', 9999, true).catch(e => e);
+    expect(err).toMatchObject({ code: 'PROTOCOL_DETECT_FAILED' });
+    expect(err.message).toContain(`controller ${OFF_ID} not found on 127.0.0.1`);
+    expect(err.message).toContain('saved port 9999 is not responding');
+    expect(err.message).toContain('none of 2 candidate(s)');
+    expect(rws2CtorArgs).toHaveLength(0);                       // nothing was pointed at any port
+    expect(mgr.state.connected).toBe(false);
+  });
+
   it('uses the saved port without scanning when it answers as the expected controller', async () => {
     const mgr = new RobotManager();
     stubRws2();
