@@ -488,3 +488,46 @@ describe('RwsClient.subscribe - option pass-through', () => {
     expect(captured[0]?.onRestored).toBe(onRestored);
   });
 });
+
+describe('RwsClient - requests after disconnect()', () => {
+  // A request on a disconnected client used to carry the dead cookie, get 401,
+  // and sign in a fresh session that nobody logged out (review finding,
+  // 2026-09-25: a sampler reading on a manager that was being removed).
+  let mock: MockController;
+
+  beforeEach(async () => {
+    mock = await startMockController();
+  });
+
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  it('are refused with NOT_CONNECTED and never reach the controller; a second disconnect() sends no second /logout', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.disconnect();
+    const sent = mock.seen.length;
+    expect(mock.seen[sent - 1].url).toBe('/logout');
+
+    await expect(client.getControllerState()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    await client.disconnect();
+    expect(mock.seen).toHaveLength(sent);
+    expect(mock.seen.filter(r => r.url === '/logout')).toHaveLength(1);
+  });
+
+  it('connect() re-opens the client on the same session cookie (no fresh handshake, no new session)', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.disconnect();
+    const sent = mock.seen.length;
+    await client.connect();
+    // One authorized request, straight through: the digest state and cookie
+    // were kept across the disconnect (the pool-preserving rule).
+    expect(mock.seen).toHaveLength(sent + 1);
+    expect(mock.seen[sent].url).toBe('/rw/panel/ctrlstate');
+    expect(mock.seen[sent].authorized).toBe(true);
+    expect(mock.seen[sent].headers.cookie).toContain('-http-session-=sess-1');
+    expect(await client.getControllerState()).toBe('motoron');
+  });
+});

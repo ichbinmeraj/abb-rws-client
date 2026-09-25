@@ -1382,3 +1382,80 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 });
+
+// ─── A disconnected client refuses requests instead of signing in again ──────
+
+describe('RwsClient2 after disconnect() (closed client)', () => {
+  // A request on a logged-out client used to go out with Basic auth and no
+  // cookie, which makes the controller open a NEW session, and the client
+  // adopted that session cookie with nobody left to log it out: one leaked
+  // session per disconnect for any poller whose next read landed behind
+  // /logout (review finding, 2026-09-25). The client now closes in the same
+  // tick it reserves the /logout slot.
+  // hal+json, so one read is exactly one request: an XHTML answer to a hal+json
+  // GET makes the client re-issue it as XHTML through a second slot.
+  const CTRLSTATE = '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"pnl-ctrlstate","_title":"ctrl-state","ctrlstate":"motoron"}]}';
+  const serve = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    if ((req.url ?? '').includes('ctrl')) {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' }); res.end(CTRLSTATE); return;
+    }
+    res.writeHead(204); res.end();
+  };
+
+  it('refuses every later request with NOT_CONNECTED, sends nothing, and a second disconnect() sends no second /logout', async () => {
+    const { server, port, requests } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      await client.connect();
+      await client.disconnect();
+      const urls = (): string[] => requests.map(r => r.url);
+      expect(urls().filter(u => u === '/logout')).toHaveLength(1);
+      const sent = requests.length;
+
+      await expect(client.getControllerState()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+      await client.disconnect();
+      expect(requests.length).toBe(sent); // nothing reached the controller
+      expect(urls()[urls().length - 1]).toBe('/logout');
+    } finally { server.close(); }
+  });
+
+  it('a request queued before disconnect() still goes out ahead of /logout; one queued after it is refused', async () => {
+    const { server, port, requests } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      await client.connect();
+      const before = client.getControllerState();
+      const teardown = client.disconnect();
+      const after = client.getControllerState().then(() => 'sent', (e: RwsError) => e.code);
+      expect(await before).toBe('motoron');
+      await teardown;
+      expect(await after).toBe('NOT_CONNECTED');
+      const urls = requests.map(r => r.url);
+      expect(urls.indexOf('/logout')).toBe(urls.length - 1);
+      expect(urls.filter(u => u.includes('ctrl'))).toHaveLength(1);
+    } finally { server.close(); }
+  });
+
+  it('connect() re-opens the client: requests are served again on the new session', async () => {
+    const { server, port, requests } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      await client.connect();
+      await client.disconnect();
+      await expect(client.getControllerState()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+      await client.connect();
+      expect(await client.getControllerState()).toBe('motoron');
+      const urls = requests.map(r => r.url);
+      expect(urls.filter(u => u.includes('ctrl'))).toHaveLength(1);
+      expect(urls.lastIndexOf('/logout')).toBeLessThan(urls.length - 1);
+    } finally { server.close(); }
+  });
+
+  it('a client that never connected is not closed (connect()-less use keeps working)', async () => {
+    const { server, port } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      expect(await client.getControllerState()).toBe('motoron');
+    } finally { server.close(); }
+  });
+});

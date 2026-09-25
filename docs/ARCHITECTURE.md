@@ -70,9 +70,9 @@ Everything below is exported from `src/index.ts` (the only entry point;
 | Adapters | `RWS1Adapter`, `RWS2Adapter`, `IRWSAdapter` (type) | `src/RWS1Adapter.ts`, `src/RWS2Adapter.ts`, `src/IRWSAdapter.ts` |
 | Managers | `RobotManager` (+ types `RobotState`, `ChangeHandler`, `ProbeResult`, `DiscoveredController`, `ErrorListener`), `MultiRobotManager` (+ `RobotConfig`) | `src/RobotManager.ts`, `src/MultiRobotManager.ts` |
 | Auto-detect | `createClient`, `createAdapter`, `probeHost`, `probeProtocol` (+ types `AnyClient`, `Protocol`, `ConnectOptions`, `DetectProbeResult`) | `src/detect.ts` |
-| Helpers | `XhtmlParser`, `setLogger` (+ `Logger` type) | `src/XhtmlParser.ts`, `src/Logger.ts` |
+| Helpers | `XhtmlParser`, `setLogger` (+ `Logger` type), `JOINT_NOT_PRESENT`, `isJointValuePresent` | `src/XhtmlParser.ts`, `src/Logger.ts`, `src/mechunit.ts` |
 | Errors | `RwsError` (class), `RwsErrorCode` (type) | `src/types.ts:284-314` |
-| Domain types | `RwsClientOptions`, `ControllerState`, `OperationMode`, `ExecutionState`, `ExecutionInfo`, `ExecutionCycle`, `JointTarget`, `RobTarget`, `CartesianFull`, `Signal`, `RapidTask`, `IoNetwork`, `IoDevice`, `SystemInfo`, `ControllerIdentity`, `ControllerClock`, `ElogMessage`, `FileEntry`, `MastershipDomain`, `CollisionDetectionState`, `RapidSymbolProperties`, `RapidSymbolInfo`, `RapidSymbolSearchParams`, `UiInstruction`, `RestartMode`, `SubscriptionResource`, `SubscriptionEvent` | `src/types.ts` |
+| Domain types | `RwsClientOptions`, `ControllerState`, `OperationMode`, `ExecutionState`, `ExecutionInfo`, `ExecutionCycle`, `JointTarget`, `JointTargetFull`, `MechunitDetails`, `RobTarget`, `CartesianFull`, `Signal`, `RapidTask`, `IoNetwork`, `IoDevice`, `SystemInfo`, `ControllerIdentity`, `ControllerClock`, `ElogMessage`, `FileEntry`, `MastershipDomain`, `CollisionDetectionState`, `RapidSymbolProperties`, `RapidSymbolInfo`, `RapidSymbolSearchParams`, `UiInstruction`, `RestartMode`, `SubscriptionResource`, `SubscriptionEvent` | `src/types.ts` |
 
 Deliberately **not** exported: `HttpSession`, `ResourceMapper`, `ResponseParser`,
 `WsSubscriber` (internal RWS1 machinery), and the `@internal` types

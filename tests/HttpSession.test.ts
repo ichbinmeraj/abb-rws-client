@@ -675,3 +675,60 @@ describe('HttpSession - a dead session cookie (live 2026-09-25, IRC5 VC)', () =>
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('HttpSession - close() / reopen()', () => {
+  // RwsClient.disconnect() closes the session in the tick it queues /logout.
+  // Without it a request queued after /logout went out with the dead cookie,
+  // got 401, and the retry signed in a fresh session nobody logged out
+  // (review finding, 2026-09-25).
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('refuses requests queued after close() with NOT_CONNECTED; those queued before still go out, in order', async () => {
+    const session = makeSession({ requestIntervalMs: 0 });
+    const urls: string[] = [];
+    fetchMock.mockImplementation(async (url: string) => { urls.push(url); return makeResponse(200, 'ok'); });
+
+    expect(session.isClosed).toBe(false);
+    const before = session.get('/before');
+    const logout = session.get('/logout');
+    session.close();
+    expect(session.isClosed).toBe(true);
+    const after = session.get('/after');
+
+    await expect(after).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    expect((await before).body).toBe('ok');
+    expect((await logout).body).toBe('ok');
+    expect(urls.map(u => new URL(u).pathname)).toEqual(['/before', '/logout']);
+  });
+
+  it('the refusal is an RwsError and no fetch happens for it', async () => {
+    const session = makeSession({ requestIntervalMs: 0 });
+    session.close();
+    const err = await session.get('/x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RwsError);
+    expect((err as RwsError).code).toBe('NOT_CONNECTED');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reopen() accepts requests again and keeps the session state (no new handshake)', async () => {
+    const session = makeSession({ requestIntervalMs: 0 });
+    fetchMock.mockImplementation(async () => makeResponse(200, 'ok', { 'set-cookie': '-http-session-=abc; Path=/' }));
+    await session.get('/first');
+    const cookie = session.getSessionCookie();
+    session.close();
+    session.reopen();
+    expect(session.isClosed).toBe(false);
+    expect((await session.get('/second')).body).toBe('ok');
+    expect(session.getSessionCookie()).toBe(cookie);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

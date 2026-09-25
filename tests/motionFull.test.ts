@@ -346,3 +346,118 @@ describe('RobotManager motion reads', () => {
     await expect(managerWith(null).getCartesianFull()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
   });
 });
+
+// ─── A description that is not there (both generations) ─────────────────────
+
+describe('RobotManager.getMechunitDetails without the ms-mechunit block', () => {
+  // Both adapters answer {} when the block is absent (RWS 2.0 getState(), RWS
+  // 1.0 a null state). An all-null description is not a description: a caller
+  // that caches it would treat the unit as typeless and axis-less for the whole
+  // connection, with no error to show (review finding, 2026-09-25). Structural
+  // cell S12's rule applies: a response without its block is PARSE_ERROR.
+  const managerWith = (adapter: Record<string, unknown>): RobotManager => connectedManager(adapter);
+
+  it('throws PARSE_ERROR for an empty resource, never an all-null description', async () => {
+    await expect(managerWith({ getMechunitInfo: async () => ({}) }).getMechunitDetails())
+      .rejects.toMatchObject({ code: 'PARSE_ERROR' });
+  });
+
+  it('throws PARSE_ERROR when only non-string members arrived (RW 6 JSON `_links` alone)', async () => {
+    const adapter = { getMechunitInfo: async () => ({ _links: { self: { href: 'x' } } }) };
+    await expect(managerWith(adapter).getMechunitDetails()).rejects.toMatchObject({ code: 'PARSE_ERROR' });
+  });
+
+  it('a single present field is a description - the missing ones stay null (field-level rule unchanged)', async () => {
+    const d = await managerWith({ getMechunitInfo: async () => ({ type: 'TCPRobot' }) }).getMechunitDetails('ROB_2');
+    expect(d).toMatchObject({ name: 'ROB_2', type: 'TCPRobot', axes: null, axesTotal: null, task: null });
+  });
+
+  it('RWS 2.0: an XHTML response without the block ends as PARSE_ERROR at the manager', async () => {
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(200, { 'Content-Type': XHTML_CT });
+      res.end(xhtmlDoc('<li class="something-else" title="ROB_1"><span class="type">TCPRobot</span></li>'));
+    });
+    try {
+      const mgr = connectedManager(new RWS2Adapter(`http://127.0.0.1:${port}`, 'u', 'p'));
+      await expect(mgr.getMechunitDetails()).rejects.toMatchObject({ code: 'PARSE_ERROR' });
+    } finally { server.close(); }
+  });
+
+  it('RWS 1.0: a 204 / empty body ends as PARSE_ERROR at the manager', async () => {
+    const fake = { request: async () => ({ status: 204, body: '' }) };
+    const mgr = connectedManager(new RWS1Adapter(fake as unknown as RwsClient));
+    await expect(mgr.getMechunitDetails()).rejects.toMatchObject({ code: 'PARSE_ERROR' });
+  });
+});
+
+// ─── Reads during and after a teardown ───────────────────────────────────────
+
+describe('RobotManager motion reads once disconnect() has started', () => {
+  // The leak this guards against (review finding, 2026-09-25): a sampler read
+  // issued while the manager was being torn down reached the logged-out
+  // adapter, which signed in a session that nobody logged out. The adapter
+  // object survives disconnectInternal() (only its session ends) and
+  // `_state.connected` is reset only as its LAST step, so the refusal has to
+  // hold from the teardown's first tick onward - that is what the epoch does.
+  function fakeAdapter() {
+    let finishDisconnect!: () => void;
+    const disconnected = new Promise<void>(r => { finishDisconnect = r; });
+    const adapter = {
+      disconnect: vi.fn(() => disconnected),
+      getJointTargetFull: vi.fn(async () => ({ rax: [0, 0, 0, 0, 0, 0], eax: [0, 0, 0, 0, 0, 0] })),
+      getCartesianFull: vi.fn(async () => ({ x: 0, y: 0, z: 0, q1: 1, q2: 0, q3: 0, q4: 0, j1: 0, j4: 0, j6: 0, jx: 0 })),
+      getMechunitInfo: vi.fn(async () => ({ type: 'TCPRobot', axes: '6' })),
+    };
+    return { adapter, finishDisconnect };
+  }
+
+  const expectRefused = async (mgr: RobotManager): Promise<void> => {
+    await expect(mgr.getJointTargetFull()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    await expect(mgr.getCartesianFull()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    await expect(mgr.getMechunitDetails()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+  };
+
+  it('refuses with NOT_CONNECTED from the first tick of the teardown, while state.connected still reads true', async () => {
+    const { adapter, finishDisconnect } = fakeAdapter();
+    const mgr = connectedManager(adapter);
+    await mgr.getJointTargetFull(); // the session is up: reads go through
+    expect(adapter.getJointTargetFull).toHaveBeenCalledTimes(1);
+
+    const teardown = mgr.disconnect();
+    // Not even the adapter's /logout has been queued yet, and the state still
+    // says connected - the reads must already refuse.
+    expect(mgr.state.connected).toBe(true);
+    await expectRefused(mgr);
+
+    // While /logout is in flight (the adapter's disconnect has not resolved).
+    await vi.waitFor(() => expect(adapter.disconnect).toHaveBeenCalledTimes(1));
+    expect(mgr.state.connected).toBe(true);
+    await expectRefused(mgr);
+
+    finishDisconnect();
+    await teardown;
+    expect(mgr.state.connected).toBe(false);
+    await expectRefused(mgr);
+
+    // Nothing reached the adapter after the teardown began.
+    expect(adapter.getJointTargetFull).toHaveBeenCalledTimes(1);
+    expect(adapter.getCartesianFull).not.toHaveBeenCalled();
+    expect(adapter.getMechunitInfo).not.toHaveBeenCalled();
+  });
+
+  it('a session that comes up under a later connect is served again', async () => {
+    const { adapter, finishDisconnect } = fakeAdapter();
+    const mgr = connectedManager(adapter);
+    const teardown = mgr.disconnect();
+    finishDisconnect();
+    await teardown;
+    await expectRefused(mgr);
+
+    // What doConnect() does once its session is up (see connectedManager).
+    const m = mgr as unknown as { _state: { connected: boolean }; sessionEpoch: number | null; connectEpoch: number };
+    m._state.connected = true;
+    m.sessionEpoch = m.connectEpoch;
+    await mgr.getJointTargetFull();
+    expect(adapter.getJointTargetFull).toHaveBeenCalledTimes(1);
+  });
+});
