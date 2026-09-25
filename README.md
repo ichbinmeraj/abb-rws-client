@@ -267,6 +267,7 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **`callServiceRoutine(task, name, args?)`** - invoke a service routine remotely (calibration, brake check, etc.).
 - **`calcJointsFromCartesian(...)`** - inverse kinematics. **`calcCartesianFromJoints(...)`** - forward kinematics.
 - **`setActiveTool(mechunit, name)`**, **`setActiveWobj(mechunit, name)`** - switch active persistent tooldata / wobjdata.
+- **`getJointTargetFull(mechunit?)`**, **`getCartesianFull(mechunit?)`**, **`getMechunitDetails(mechunit?)`** - one-request motion reads for a sampler of your own (joint positions cannot be subscribed to on any generation, so they must be polled): every axis slot incl. external axes, the TCP pose, and the unit's typed description (type, axis count, driving task, mode, active tool/wobj). They throw `NOT_CONNECTED` instead of returning an empty value, and ride the manager's own session, whose request spacing keeps you under the controller's 20 req/s limit.
 - **CFG write** - `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`, on **both** protocols (RWS 2.0 uses `instances/create-default` + the bracket value representation; RWS 1.0 uses the `?action=` forms - handled by the adapters). Each acquires the needed mastership for the duration.
 - **DIPC** - `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients.
 - **`listFileVolumes()`** - every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
@@ -442,6 +443,7 @@ Not available on a virtual controller (they answer 403/404 and surface as typed
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `getJointPositions(mechunit?)` | `JointTarget` | rax_1-rax_6 in degrees (default mechunit: ROB_1) |
+| `getJointTargetFull(mechunit?)` | `JointTargetFull` | Every axis slot: `rax` (rax_1..6) and `eax` (external axes eax_a..f). 9E9 = no axis in that slot - test with `isJointValuePresent()`; unused slots may also read 0, so use the unit's axis count |
 | `getRobTarget(mechunit?, tool?, wobj?)` | `RobTarget` | TCP x/y/z (mm) + q1-q4 quaternion for a chosen tool/wobj |
 | `getCartesianPosition(mechunit?, tool?, wobj?)` | `RobTarget` | RWS 1.0 name for `getRobTarget` |
 | `getCartesianFull(mechunit?)` | `CartesianFull` | TCP pose + j1/j4/j6/jx configuration flags |

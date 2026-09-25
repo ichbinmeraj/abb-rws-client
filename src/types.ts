@@ -68,6 +68,84 @@ export interface CartesianFull extends RobTarget {
   jx: number;
 }
 
+/**
+ * Every axis slot of one mechanical unit, as `GET .../mechunits/{unit}/jointtarget`
+ * reports it: the six robot axes `rax_1..rax_6` AND the six external axes
+ * `eax_a..eax_f`. `JointTarget` keeps only the robot half.
+ *
+ * Values are as RWS reports them: degrees for a revolute axis, millimetres for a
+ * prismatic one (RWS converts from the SI values the motion configuration
+ * stores; the revolute half is live-verified, the prismatic half is inferred -
+ * quirk Q-95).
+ *
+ * `9E9` (`JOINT_NOT_PRESENT`) in a slot means "no axis here" - use
+ * `isJointValuePresent()` rather than comparing for equality. A slot is NOT
+ * guaranteed to carry the marker when it is unused, though: all twelve fields
+ * are sent even for a 6-axis robot with nothing external, and on the RW 7.21
+ * VC the unused `eax_*` slots read `0`, not 9E9 (live-verified 2026-09-23,
+ * reference probe P2). Which slots a unit really uses therefore comes from the
+ * unit's axis count (`MechunitDetails.axes` / `axesTotal`), not from the values.
+ */
+export interface JointTargetFull {
+  /** rax_1..rax_6, in that order. */
+  rax: [number, number, number, number, number, number];
+  /**
+   * eax_a..eax_f, in that order. A field the controller omitted is reported as
+   * `JOINT_NOT_PRESENT` (9E9) - omission is read as "no axis in this slot".
+   */
+  eax: [number, number, number, number, number, number];
+}
+
+/**
+ * A mechanical unit's own description, normalised from
+ * `GET /rw/motionsystem/mechunits/{unit}` on both generations. Every field is
+ * null when the controller did not send it (or sent it empty); `raw` keeps the
+ * resource exactly as received.
+ *
+ * Field spellings differ by representation (ABB errata E11): RW 6 JSON says
+ * `task` and `is-integrated-unitname` / `has-integrated-unitname` where XHTML and
+ * RWS 2.0 say `task-name` and `is-integrated-unit` / `has-integrated-unit`. Both
+ * spellings are read.
+ *
+ * Observed on the RW 7.21 VC (probe P3, 2026-09-23): `type: TCPRobot`, `axes: 6`,
+ * `axes-total: 6`, `mode: Activated`, `status: Synchronized`, `task-name: T_ROB1`,
+ * `coord-system: World`, `is-/has-integrated-unit: NoIntegratedUnit`. Only
+ * `TCPRobot` has been observed as a type; the values for a positioner, a track
+ * or a single external axis are not yet known.
+ */
+export interface MechunitDetails {
+  /** The unit asked for, e.g. ROB_1. */
+  name: string;
+  /** Unit type as reported, e.g. `TCPRobot`. */
+  type: string | null;
+  /** `axes` - the unit's axis count. */
+  axes: number | null;
+  /**
+   * `axes-total`. Equal to `axes` on every unit observed so far; how the two
+   * differ (presumably an integrated external axis such as a track) is not yet
+   * observed.
+   */
+  axesTotal: number | null;
+  /** The RAPID task that drives this unit (`task-name`, RW 6 JSON `task`). */
+  task: string | null;
+  /** `mode`, e.g. Activated / Deactivated. */
+  mode: string | null;
+  /** `status`, e.g. Synchronized. */
+  status: string | null;
+  /** `coord-system` - the unit's current (jog) coordinate system, e.g. World. */
+  coordSystem: string | null;
+  /** `tool-name` - the active tool. */
+  tool: string | null;
+  /** `wobj-name` - the active work object. */
+  wobj: string | null;
+  /** `is-integrated-unit` as reported; `NoIntegratedUnit` when none. */
+  isIntegratedUnit: string | null;
+  /** `has-integrated-unit` as reported; `NoIntegratedUnit` when none. */
+  hasIntegratedUnit: string | null;
+  /** The resource exactly as received. */
+  raw: Record<string, string>;
+}
+
 export interface IoNetwork {
   name: string;
   /** Physical state: 'running' | 'stopped' */

@@ -397,6 +397,31 @@ describe('RwsClient - request shaping against a mock controller', () => {
 
     await expect(client.getActiveUiInstruction()).resolves.toBeNull();
   });
+
+  it('getJointTargetFull GETs the unit jointtarget and keeps the external-axis spans', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+
+    mock.routes.set('GET /rw/motionsystem/mechunits/ROB_1/jointtarget', (res) => {
+      res.writeHead(200, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<li class="ms-jointtarget" title="ROB_1">'
+        + '<span class="rax_1">0</span><span class="rax_2">10</span><span class="rax_3">20</span>'
+        + '<span class="rax_4">0</span><span class="rax_5">30.0000019073486</span><span class="rax_6">0</span>'
+        + '<span class="eax_a">512.5</span><span class="eax_b">9E+09</span><span class="eax_c">9E+09</span>'
+        + '<span class="eax_d">9E+09</span><span class="eax_e">9E+09</span><span class="eax_f">9E+09</span></li>');
+    });
+    mock.routes.set('GET /rw/motionsystem/mechunits/STN_1/jointtarget', (res) => {
+      res.writeHead(404, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<span class="code">-1073445879</span>');
+    });
+
+    await expect(client.getJointTargetFull()).resolves.toEqual({
+      rax: [0, 10, 20, 0, 30.0000019073486, 0],
+      eax: [512.5, 9e9, 9e9, 9e9, 9e9, 9e9],
+    });
+    // An unknown unit surfaces as a typed RwsError, never a zero-filled target.
+    await expect(client.getJointTargetFull('STN_1')).rejects.toBeInstanceOf(RwsError);
+  });
 });
 
 describe('RwsClient - controller-level error taxonomy', () => {

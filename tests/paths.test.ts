@@ -185,4 +185,11 @@ describe('path tables - the traps (symbol inversion, side-channel query-actions)
     expect(buildPath(ALL_TABLES.motion.calcJointsFromCartesian.rws2 as PathSpec, { mechunit: 'ROB_1' }))
       .toBe('/rw/motionsystem/mechunits/ROB_1/joints-from-cartesian');
   });
+  it('getJointTargetFull reads the same jointtarget resource as getJointPositions, both generations', () => {
+    for (const gen of ['rws1', 'rws2'] as const) {
+      const full = buildPath(ALL_TABLES.motion.getJointTargetFull[gen] as PathSpec, { mechunit: 'STN_1' });
+      expect(full).toBe('/rw/motionsystem/mechunits/STN_1/jointtarget');
+      expect(full).toBe(buildPath(ALL_TABLES.motion.getJointPositions[gen] as PathSpec, { mechunit: 'STN_1' }));
+    }
+  });
 });

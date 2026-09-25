@@ -51,6 +51,9 @@ export type { Logger } from './Logger.js';
 // Errors
 export { RwsError } from './types.js';
 
+// Joint-value helpers (the 9E9 "no axis in this slot" marker)
+export { JOINT_NOT_PRESENT, isJointValuePresent } from './mechunit.js';
+
 // Type exports (preserved from v0.6.0 + new additions)
 export type {
   RwsClientOptions,
@@ -91,4 +94,7 @@ export type {
   ModifyPositionOptions,
   DiagnosticsInfo,
   UserRegistration,
+  // Motion sampling additions (2026-09-25)
+  JointTargetFull,
+  MechunitDetails,
 } from './types.js';

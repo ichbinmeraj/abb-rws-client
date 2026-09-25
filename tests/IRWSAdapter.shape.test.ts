@@ -44,6 +44,9 @@ describe('IRWSAdapter shape', () => {
       'searchSignals', 'searchIoDevices', 'renameFile', 'getModuleText',
       'getModuleTextRange', 'checkMotionChangeCount', 'saveEventLogRaw',
       'decompressPath', 'getVirtualTimeTimeslice',
+      // 2026-09-25 motion sampling: the full jointtarget (robot + external axes)
+      // is one resource on both generations.
+      'getJointTargetFull',
     ];
     const c2 = new RwsClient2('https://127.0.0.1:5466', 'u', 'p');
     const inner = new RwsClient({ host: '127.0.0.1', port: 80 });

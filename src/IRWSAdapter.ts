@@ -1,6 +1,6 @@
 import type {
   ControllerState, OperationMode, ExecutionState, ExecutionCycle,
-  ExecutionInfo, CollisionDetectionState, RapidTask, JointTarget,
+  ExecutionInfo, CollisionDetectionState, RapidTask, JointTarget, JointTargetFull,
   CartesianFull, RobTarget, SystemInfo, ControllerIdentity, ControllerClock,
   ElogMessage, Signal, IoNetwork, IoDevice, FileEntry,
   RapidSymbolProperties, RapidSymbolInfo, RapidSymbolSearchParams,
@@ -67,6 +67,15 @@ export interface IRWSAdapter {
 
   // ── Motion ───────────────────────────────────────────────────────────────
   getJointPositions(mechunit?: string): Promise<JointTarget>;
+  /**
+   * Every axis slot of a mechanical unit - `rax_1..rax_6` and `eax_a..eax_f` -
+   * from the same `jointtarget` resource as `getJointPositions`. Implemented on
+   * BOTH generations; optional here only so an existing third-party
+   * implementation of this interface keeps compiling. 9E9 marks an absent axis
+   * (`isJointValuePresent`), but unused slots may also read 0 - see
+   * `JointTargetFull`.
+   */
+  getJointTargetFull?(mechunit?: string): Promise<JointTargetFull>;
   getCartesianFull(mechunit?: string): Promise<CartesianFull>;
   listMechunits(): Promise<string[]>;
 
@@ -387,7 +396,8 @@ export interface IRWSAdapter {
   getMechunitBaseFrame?(mechunit?: string): Promise<{ x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }>;
   /** Set the base frame transform. Requires 'edit' mastership. */
   setMechunitBaseFrame?(mechunit: string, frame: { x: number; y: number; z: number; q1: number; q2: number; q3: number; q4: number }): Promise<void>;
-  /** Per-axis info (count, types, limits). */
+  /** Per-axis info: one entry per axis (`axes/1..N`). On RWS 2.0 each carries
+   *  `axis-status` and `logical-axis`; it does NOT carry joint limits. */
   getMechunitAxes?(mechunit?: string): Promise<Array<Record<string, string>>>;
   /** Permanent joint positions (typically external-axes scenarios). */
   getMechunitPjoints?(mechunit?: string): Promise<Record<string, number>>;

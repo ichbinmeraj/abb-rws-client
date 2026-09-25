@@ -1,7 +1,8 @@
 import { MOTION } from '../paths/index.js';
 import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import * as R2 from '../ResourceMapper2.js';
-import { RwsError, type CartesianFull, type JointTarget, type RobTarget } from '../types.js';
+import { RwsError, type CartesianFull, type JointTarget, type JointTargetFull, type RobTarget } from '../types.js';
+import { toJointTargetFull } from '../mechunit.js';
 import { parse } from './core.js';
 import type { GConstructor, Rws2Base } from './mixin.js';
 
@@ -18,6 +19,18 @@ function motionOps<TBase extends Rws2Base>(Base: TBase) {
         rax_1: +d['rax_1'], rax_2: +d['rax_2'], rax_3: +d['rax_3'],
         rax_4: +d['rax_4'], rax_5: +d['rax_5'], rax_6: +d['rax_6'],
       };
+    }
+
+    /**
+     * Every axis slot of a mechanical unit: `rax_1..rax_6` AND `eax_a..eax_f`
+     * (`getJointPositions` keeps only the robot half). Same resource, one GET.
+     * The twelve fields were live-read on RW 7.21 (hal+json, probe P2
+     * 2026-09-23); unused external slots read 0 there, not 9E9 - see
+     * `JointTargetFull`. Throws PARSE_ERROR when a robot field is missing.
+     */
+    async getJointTargetFull(mechunit = 'ROB_1'): Promise<JointTargetFull> {
+      const p = parse(await this.req('GET', buildPath(MOTION.getJointTargetFull.rws2 as PathSpec, { mechunit })));
+      return toJointTargetFull(p.getState('ms-jointtarget'), `jointtarget of ${mechunit}`);
     }
 
     async getCartesianFull(mechunit = 'ROB_1'): Promise<CartesianFull> {
@@ -390,6 +403,7 @@ function motionOps<TBase extends Rws2Base>(Base: TBase) {
  */
 export interface MotionMethods {
   getJointPositions(mechunit?: string): Promise<JointTarget>;
+  getJointTargetFull(mechunit?: string): Promise<JointTargetFull>;
   getCartesianFull(mechunit?: string): Promise<CartesianFull>;
   listMechunits(): Promise<string[]>;
   getMotionSupervision(mechunit?: string): Promise<{ enabled: boolean; level: number }>;

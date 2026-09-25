@@ -68,6 +68,9 @@ export class HttpSession {
   /** Promise chain that serialises all outbound requests */
   private requestQueue: Promise<void> = Promise.resolve();
 
+  /** Set by close(), cleared by reopen(); see close(). */
+  private closed = false;
+
   /** 5-minute session inactivity timeout (milliseconds) */
   private static readonly SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -93,19 +96,19 @@ export class HttpSession {
   // ─── Public HTTP methods ────────────────────────────────────────────────────
 
   get(path: string): Promise<HttpResponse> {
-    return this.enqueue(() => this.execute('GET', path));
+    return this.enqueue('GET', path, () => this.execute('GET', path));
   }
 
   post(path: string, body?: string): Promise<HttpResponse> {
-    return this.enqueue(() => this.execute('POST', path, body));
+    return this.enqueue('POST', path, () => this.execute('POST', path, body));
   }
 
   put(path: string, body: string | Uint8Array): Promise<HttpResponse> {
-    return this.enqueue(() => this.execute('PUT', path, body));
+    return this.enqueue('PUT', path, () => this.execute('PUT', path, body));
   }
 
   delete(path: string): Promise<HttpResponse> {
-    return this.enqueue(() => this.execute('DELETE', path));
+    return this.enqueue('DELETE', path, () => this.execute('DELETE', path));
   }
 
   /** Returns the current cookie string for use in WebSocket connections */
@@ -132,6 +135,24 @@ export class HttpSession {
     // No-op: preserve cookie + digest state across disconnect/reconnect cycles.
   }
 
+  /**
+   * Refuse every request from now on (NOT_CONNECTED) until `reopen()`.
+   * Requests queued before this call still go out, in order.
+   *
+   * RwsClient.disconnect() calls this in the same tick it queues /logout.
+   * Without it a request queued after /logout went out with the dead cookie,
+   * got 401, and the retry below signed in a fresh session that nobody logged
+   * out - one leaked session per disconnect for any poller whose next read
+   * landed behind /logout (review finding, 2026-09-25).
+   */
+  close(): void { this.closed = true; }
+
+  /** Accept requests again (RwsClient.connect()). */
+  reopen(): void { this.closed = false; }
+
+  /** True between `close()` and `reopen()`. */
+  get isClosed(): boolean { return this.closed; }
+
   // ─── Request queue ──────────────────────────────────────────────────────────
 
   /**
@@ -139,7 +160,15 @@ export class HttpSession {
    * between requests. Error suppression on `this.requestQueue` (not on `result`)
    * ensures queue continues processing even when individual requests fail.
    */
-  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  private enqueue<T>(method: string, path: string, fn: () => Promise<T>): Promise<T> {
+    // Checked when the request is QUEUED, not when it runs: whatever was queued
+    // before close() (the /logout among it) must still go out.
+    if (this.closed) {
+      return Promise.reject(new RwsError(
+        `RWS1 ${method} ${path}: session is closed (disconnected) - call connect() first`,
+        'NOT_CONNECTED',
+      ));
+    }
     const result = this.requestQueue.then(async () => {
       const elapsed = Date.now() - this.lastRequestTime;
       if (this.requestIntervalMs > 0 && elapsed < this.requestIntervalMs) {

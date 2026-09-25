@@ -28,6 +28,7 @@ import type {
   ExecutionInfo,
   ExecutionCycle,
   JointTarget,
+  JointTargetFull,
   RobTarget,
   CartesianFull,
   Signal,
@@ -109,6 +110,7 @@ import {
   parseExecutionState,
   parseExecutionInfo,
   parseJointTarget,
+  parseJointTargetFull,
   parseRobTarget,
   parseCartesianFull,
   parseRapidSymbolValue,
@@ -127,7 +129,7 @@ import {
   parseDirectory,
   parseCollisionDetectionState,
 } from './ResponseParser.js';
-import { RAPID } from './paths/index.js';
+import { RAPID, MOTION } from './paths/index.js';
 import { buildPath, type PathSpec } from './paths/PathSpec.js';
 
 export class RwsClient {
@@ -190,6 +192,7 @@ export class RwsClient {
    * @throws {RwsError} code='AUTH_FAILED' if credentials are incorrect
    */
   async connect(): Promise<void> {
+    this.session.reopen();
     try {
       const { body } = await this.session.get(pathControllerState());
       parseControllerState(body); // validate response is parseable
@@ -211,7 +214,16 @@ export class RwsClient {
     // the session slot in the controller's pool. Without this, orphan mastership can
     // block subsequent clients for several minutes (until the controller times out
     // the session by inactivity). Best-effort - ignore errors.
-    try { await this.session.get('/logout'); } catch { /* ignore */ }
+    //
+    // /logout is queued and the session closed in the same tick: requests queued
+    // earlier go out first, on this session; later ones are refused with
+    // NOT_CONNECTED instead of signing in a session nobody would log out. A
+    // second disconnect() sends nothing.
+    if (!this.session.isClosed) {
+      const loggedOut = this.session.get('/logout');
+      this.session.close();
+      try { await loggedOut; } catch { /* ignore */ }
+    }
     this.session.clearSession();
   }
 
@@ -719,6 +731,25 @@ export class RwsClient {
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`getJointPositions failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
+  /**
+   * Read every axis slot of a mechanical unit: `rax_1..rax_6` AND
+   * `eax_a..eax_f` (`getJointPositions` keeps only the robot half). Same
+   * resource as `getJointPositions`, one GET. `9E9` in a slot means "no axis
+   * here" (`isJointValuePresent`); unused slots may also read 0 - see
+   * `JointTargetFull`.
+   *
+   * @param mechunit - Mechanical unit name; default 'ROB_1'
+   */
+  async getJointTargetFull(mechunit = 'ROB_1'): Promise<JointTargetFull> {
+    try {
+      const { body } = await this.session.get(buildPath(MOTION.getJointTargetFull.rws1 as PathSpec, { mechunit }));
+      return parseJointTargetFull(body);
+    } catch (e) {
+      if (e instanceof RwsError) throw e;
+      throw new RwsError(`getJointTargetFull failed: ${String(e)}`, 'UNKNOWN');
     }
   }
 

@@ -29,6 +29,12 @@ export const MOTION: DomainTable = {
     rws1: { method: 'GET', path: '/rw/motionsystem/mechunits/{mechunit}/jointtarget' },
     note: '1.0 mapper URL-encodes mechunit; 2.0 inline did not (buildPath now encodes both).',
   },
+  getJointTargetFull: {
+    summary: 'Read every axis slot of a mechanical unit (rax_1..6 and eax_a..f).',
+    rws2: { method: 'GET', path: '/rw/motionsystem/mechunits/{mechunit}/jointtarget' },
+    rws1: { method: 'GET', path: '/rw/motionsystem/mechunits/{mechunit}/jointtarget' },
+    note: 'same URL as getJointPositions; also reads the eax_a..eax_f fields (probe P2, 2026-09-23).',
+  },
   getRobTarget: {
     summary: 'Read the current cartesian robtarget of a mechanical unit.',
     // tool/wobj are read-side query params (?tool={tool}&wobj={wobj}); they

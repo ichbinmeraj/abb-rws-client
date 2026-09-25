@@ -7,7 +7,9 @@
  */
 
 import { RwsError } from './types.js';
+import { toJointTargetFull } from './mechunit.js';
 import type {
+  JointTargetFull,
   ControllerState,
   OperationMode,
   ExecutionState,
@@ -221,6 +223,30 @@ export function parseJointTarget(xml: string): JointTarget {
     result[ax] = requireFloat(m[1].trim(), ax);
   }
   return result as JointTarget;
+}
+
+/**
+ * Parse a jointtarget XML response into a JointTargetFull: the six robot axes
+ * AND the six external-axis spans `eax_a..eax_f` that parseJointTarget drops.
+ * XML: <li class="ms-jointtarget" title="ROB_1">
+ *        <span class="rax_1">10.00</span> ... <span class="eax_f">9E+09</span>
+ *      </li>
+ * Robot spans are required (PARSE_ERROR otherwise); an absent eax span reads as
+ * JOINT_NOT_PRESENT (9E9). The eax spans on RW 6 are assumed to use the same
+ * names as the RW 7.21 fields observed in probe P2 - not yet read on RW 6.
+ */
+export function parseJointTargetFull(xml: string): JointTargetFull {
+  const liMatch = xml.match(/<li[^>]*class="[^"]*\bms-jointtarget\b[^"]*"[^>]*>(.*?)<\/li>/is);
+  if (!liMatch) {
+    throw new RwsError('PARSE_ERROR: missing <li class="ms-jointtarget">', 'PARSE_ERROR');
+  }
+  const fields: Record<string, string> = {};
+  for (const m of liMatch[1].matchAll(/<span[^>]*class="([^"]*)"[^>]*>(.*?)<\/span>/gis)) {
+    for (const cls of m[1].split(/\s+/)) {
+      if (cls && fields[cls] === undefined) { fields[cls] = decodeEntities(m[2].trim()); }
+    }
+  }
+  return toJointTargetFull(fields, 'jointtarget');
 }
 
 /**

@@ -22,6 +22,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write" from "another station owns it"; the PC SDK exposes HeldByMe and the
   RWS resource does not, so it is derived from the holder id (case-insensitive).
   Additive - existing consumers of the status object are unaffected.
+- **`getJointTargetFull(mechunit?)`** (both generations; `RwsClient`,
+  `RwsClient2`, `RWS1Adapter`, optional on `IRWSAdapter`, wrapped on
+  `RobotManager`): every axis slot of a mechanical unit - `rax_1..rax_6` AND the
+  external axes `eax_a..eax_f` - as a `JointTargetFull { rax, eax }`. The
+  controller has always sent all twelve fields; `JointTarget` /
+  `getJointPositions` keep only the robot half and are unchanged. One GET of the
+  same `jointtarget` resource. A missing robot field is `PARSE_ERROR`, never an
+  invented zero; a missing external field reads as 9E9.
+- **`JOINT_NOT_PRESENT` (9E9) and `isJointValuePresent(value)`**: the RAPID/RWS
+  "no axis in this slot" marker and a threshold test for it (it can arrive as
+  `9E+09`, `9000000000` or, through a 32-bit float, `8999999488`). Unused slots
+  are not guaranteed to carry it: the RW 7.21 VC reports unused `eax_*` as `0` -
+  which slots a unit uses comes from its axis count.
+- **`RobotManager.getMechunitDetails(mechunit?)`** -> `MechunitDetails`: the
+  mechanical-unit resource typed - `type` (e.g. `TCPRobot`), `axes`,
+  `axesTotal`, the driving RAPID `task`, `mode`, `status`, `coordSystem`,
+  `tool`, `wobj`, the integrated-unit pair, plus `raw`. Normalises the RW 6
+  JSON spellings (`task`, `*-unitname`; ABB errata E11). Absent or malformed
+  fields are null.
+- **`RobotManager.getCartesianFull(mechunit?)`**: the existing adapter read,
+  now reachable through the manager without going through the polled
+  `RobotState`.
+- `getJointTargetFull`, `getMechunitDetails` and `getCartesianFull` on
+  `RobotManager` throw `NOT_CONNECTED` (and `UNSUPPORTED_OPERATION` for an
+  adapter without the read) rather than returning a neutral value, so a
+  sampler never mistakes "no data" for a reading.
 
 ### Fixed
 

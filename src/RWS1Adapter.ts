@@ -1,6 +1,6 @@
 import { RwsClient } from './RwsClient.js';
 import type {
-  ExecutionCycle, JointTarget, RobTarget, RapidSymbolSearchParams,
+  ExecutionCycle, JointTarget, JointTargetFull, RobTarget, RapidSymbolSearchParams,
   RestartMode, MastershipDomain, SubscriptionResource, SubscriptionEvent,
   ElogMessage, ReturnCodeInfo, Signal, SignalSearchExCriteria, IoDevice,
 } from './types.js';
@@ -102,6 +102,8 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── Motion ──────────────────────────────────────────────────────────────
   getJointPositions(u?: string) { return this.client.getJointPositions(u); }
   getCartesianFull(u?: string)  { return this.client.getCartesianFull(u); }
+  /** Every axis slot (rax_1..6 + eax_a..f) of a mechunit - XHTML, same resource as getJointPositions. */
+  getJointTargetFull(u?: string): Promise<JointTargetFull> { return this.client.getJointTargetFull(u); }
   /** Canonical cross-protocol name for getCartesianPosition - same wire call.
    *  Matches RwsClient2.getRobTarget (pose relative to a chosen tool/wobj). */
   getRobTarget(u?: string, tool?: string, wobj?: string): Promise<RobTarget> {

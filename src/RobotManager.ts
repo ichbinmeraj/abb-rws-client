@@ -7,8 +7,10 @@ import type {
   SubscriptionEvent, ConnectionQuality, SubscriptionResource,
   SignalSearchExCriteria, CfgValidateRequest, ModifyPositionOptions,
   DiagnosticsInfo, UserRegistration, MastershipDomain,
+  JointTargetFull, MechunitDetails,
 } from './types.js';
 import { RwsError } from './types.js';
+import { toMechunitDetails } from './mechunit.js';
 import * as https from 'https';
 import * as http from 'http';
 import * as net from 'net';
@@ -170,6 +172,14 @@ export class RobotManager {
   private pollGeneration = 0;
   /** Bumped by disconnect() so an in-flight doConnect() can detect it was cancelled and unwind. */
   private connectEpoch = 0;
+  /**
+   * The connectEpoch the current session came up under; null before the first
+   * connect. disconnectInternal() bumps connectEpoch as its FIRST step, so
+   * `sessionEpoch === connectEpoch` turns false the moment a teardown starts,
+   * while `_state.connected` still reads true until its LAST step. See
+   * `sessionAdapter()`.
+   */
+  private sessionEpoch: number | null = null;
 
   private readonly refreshIntervalMs: number;
   private readonly strictTls: boolean;
@@ -828,6 +838,7 @@ export class RobotManager {
 
     this._state.connected = true;
     this._state.host = host;
+    this.sessionEpoch = epoch;
     Logger.info(`connected to ${host}:${probe.port}`);
     this.notify();
 
@@ -878,6 +889,7 @@ export class RobotManager {
     // can trigger another disconnect cascade. The epoch likewise cancels any
     // in-flight doConnect() so it can't re-install timers/subscriptions.
     this.connectEpoch++;
+    this.sessionEpoch = null; // sampler reads refuse from here on (sessionAdapter)
     this.pollGeneration++;
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     // Release any held motion mastership BEFORE closing the adapter
@@ -1702,6 +1714,93 @@ export class RobotManager {
   async getMechunitBaseFrame(m?: string) { return this.adapter?.getMechunitBaseFrame?.(m) ?? null; }
   async getMechunitAxes(m?: string)      { return this.adapter?.getMechunitAxes?.(m) ?? []; }
   async getMechunitInfo(m?: string)      { return this.adapter?.getMechunitInfo?.(m) ?? {}; }
+
+  // ─── Motion reads for an external sampler (2026-09-25) ──────────────────────
+  // Joint positions are not subscribable on any generation (reference probe P1,
+  // 2026-09-23), so a consumer that wants them live polls these. Each is ONE
+  // request on this manager's own session, so the session's request spacing
+  // (>=55 ms) keeps the sampler and this manager's own polling together under
+  // the controller's <20 req/s ceiling. Unlike the neutral-value reads above,
+  // these THROW when not connected: a sampler must see "no data", never a
+  // plausible-looking empty value.
+  //
+  // "Not connected" includes a teardown in progress (see sessionAdapter): a
+  // read issued while disconnect() is releasing mastership or logging out
+  // would otherwise queue behind /logout, and a request on a logged-out
+  // session makes the controller open a new one that nobody logs out.
+
+  /**
+   * The adapter, but only while this manager's session is up and no teardown
+   * has started - else NOT_CONNECTED. `_state.connected` alone is not enough:
+   * disconnectInternal() resets it only as its last step, after /logout.
+   */
+  private sessionAdapter(what: string): IRWSAdapter {
+    if (!this.adapter || !this._state.connected || this.sessionEpoch !== this.connectEpoch) {
+      throw new RwsError(`${what}: not connected`, 'NOT_CONNECTED');
+    }
+    return this.adapter;
+  }
+
+  /**
+   * Every axis slot of one mechanical unit: `rax_1..rax_6` and `eax_a..eax_f`,
+   * in degrees (revolute) / mm (prismatic) as RWS reports them. Both
+   * generations. `9E9` marks an absent axis (`isJointValuePresent`), but unused
+   * slots may also read 0 - which slots a unit uses comes from
+   * `getMechunitDetails()`, see `JointTargetFull`.
+   * Throws NOT_CONNECTED, UNSUPPORTED_OPERATION (adapter without it), or the
+   * read's own RwsError (PARSE_ERROR when a robot axis field is missing).
+   */
+  async getJointTargetFull(mechunit = 'ROB_1'): Promise<JointTargetFull> {
+    const adapter = this.sessionAdapter('getJointTargetFull');
+    if (!adapter.getJointTargetFull) {
+      throw new RwsError('getJointTargetFull is not available on this adapter', 'UNSUPPORTED_OPERATION');
+    }
+    return adapter.getJointTargetFull(mechunit);
+  }
+
+  /**
+   * TCP pose + configuration of a mechanical unit (`/cartesian`: x/y/z in mm,
+   * q1..q4, cf1/cf4/cf6/cfx as j1/j4/j6/jx). Both generations; one request.
+   * The adapter method was already on `IRWSAdapter`; this exposes it without
+   * going through the polled `RobotState`. Throws NOT_CONNECTED.
+   */
+  async getCartesianFull(mechunit = 'ROB_1'): Promise<CartesianFull> {
+    return this.sessionAdapter('getCartesianFull').getCartesianFull(mechunit);
+  }
+
+  /**
+   * A mechanical unit's own description, typed: unit type (e.g. `TCPRobot`),
+   * axis count (`axes`, `axesTotal`), the RAPID task that drives it, mode,
+   * status, active tool/wobj, coordinate system. One request
+   * (`GET /rw/motionsystem/mechunits/{unit}`), both generations - the RW 6 JSON
+   * spellings (`task`, `*-unitname`, errata E11) are normalised. Fields the
+   * controller did not send are null; `raw` keeps the resource as received.
+   * Throws NOT_CONNECTED or UNSUPPORTED_OPERATION (adapter without
+   * getMechunitInfo), PARSE_ERROR when the response carried none of the
+   * fields above (no `ms-mechunit` block: garbled or truncated), else the
+   * read's own RwsError.
+   */
+  async getMechunitDetails(mechunit = 'ROB_1'): Promise<MechunitDetails> {
+    const adapter = this.sessionAdapter('getMechunitDetails');
+    if (!adapter.getMechunitInfo) {
+      throw new RwsError('getMechunitDetails is not available on this adapter', 'UNSUPPORTED_OPERATION');
+    }
+    const details = toMechunitDetails(mechunit, await adapter.getMechunitInfo(mechunit));
+    // Both adapters answer {} when the block is missing (RWS 2.0 getState, RWS
+    // 1.0 a null state), and an all-null description is not a description: a
+    // caller that caches it would treat the unit as typeless and axis-less for
+    // the whole connection, with no error to show. Same rule as structural cell
+    // S12 (requireState): a response without its block is PARSE_ERROR. Single
+    // missing fields stay null.
+    const described = Object.entries(details).some(([k, v]) => k !== 'name' && k !== 'raw' && v !== null);
+    if (!described) {
+      throw new RwsError(
+        `getMechunitDetails(${mechunit}): response carried no ms-mechunit fields - unparseable or truncated`,
+        'PARSE_ERROR',
+      );
+    }
+    return details;
+  }
 
   // Task details
   async getTaskStructuralChangeCount(t: string) { return this.adapter?.getTaskStructuralChangeCount?.(t) ?? 0; }

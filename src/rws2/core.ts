@@ -137,6 +137,29 @@ export class Rws2Core {
    *  a new session per request (controller's session pool fills in seconds otherwise). */
   private sessionCookie: string | null = null;
 
+  /**
+   * Set by disconnect(), cleared by connect(). While set, every request is
+   * refused with NOT_CONNECTED before it is sent.
+   *
+   * Without it a request made after disconnect() still went out: with Basic
+   * auth and no cookie, which makes the controller open a NEW session, and the
+   * client adopted that session's cookie with nobody left to log it out. A
+   * poller whose next read landed behind /logout leaked one session per
+   * disconnect (review finding, 2026-09-25: a motion sampler reading on a
+   * manager that was being removed). A fresh client that never connected is
+   * not closed, so the connect()-less use the tests and probes rely on still
+   * works.
+   */
+  private closed = false;
+
+  /** The error a request on a closed client is refused with. */
+  private closedError(method: string, path: string): RwsError {
+    return new RwsError(
+      `RWS2 ${method} ${path}: client is disconnected - call connect() first`,
+      'NOT_CONNECTED',
+    );
+  }
+
   /** Signal name → {network, device} - populated by listAllSignals for writeSignal lookups */
   protected readonly sigCoords = new Map<string, { n: string; d: string }>();
 
@@ -255,6 +278,11 @@ export class Rws2Core {
     acceptExtra: number[] = [],
     acceptOverride?: string,
   ): Promise<string> {
+    // Checked BEFORE the slot is taken, and synchronously: disconnect() reserves
+    // the /logout slot and closes in the same tick, so everything queued earlier
+    // goes out ahead of /logout on the session it belongs to, and nothing can
+    // queue behind it.
+    if (this.closed) { throw this.closedError(method, path); }
     await this.takeRequestSlot();
     try {
       return await this.attemptReq(method, path, body, rawBody, rawContentType, acceptExtra, acceptOverride);
@@ -262,6 +290,8 @@ export class Rws2Core {
       if (!isStaleSocketError(e) || !Rws2Core.IDEMPOTENT.has(method.toUpperCase())) {
         throw e;
       }
+      // The retry takes a new slot - behind /logout if the client closed meanwhile.
+      if (this.closed) { throw e; }
       Logger.trace?.('http.req', `RWS2 ${method} ${path} - retrying once on a fresh connection`, {
         protocol: 'rws2', method, path,
       });
@@ -405,6 +435,7 @@ export class Rws2Core {
   // ─── Connection ────────────────────────────────────────────────────────────
 
   async connect(): Promise<void> {
+    this.closed = false;
     const body = await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getSystemInfo.rws2 as PathSpec));
     // Cache the RobotWare version - it decides how write access works: RW7 uses
     // /rw/mastership, RW8 removed it (410 GONE) for the Control Station Service.
@@ -430,7 +461,16 @@ export class Rws2Core {
     // control-station id, then release.)
     if (this.writeAccessHeld) { await this.dropWriteAccess().catch(() => {}); }
     // /logout invalidates the session server-side (frees the slot in the controller's pool).
-    await this.req('GET', '/logout').catch(() => {});
+    // Its slot is reserved synchronously inside req(), and the client closes in
+    // the same tick: every request queued before this point goes out first, on
+    // this session; every later one is refused (see `closed`). A second
+    // disconnect() sends nothing - a /logout without the cookie would itself
+    // open a new session.
+    if (!this.closed) {
+      const loggedOut = this.req('GET', '/logout').catch(() => {});
+      this.closed = true;
+      await loggedOut;
+    }
     this.sessionCookie = null;
     // Registration is session-scoped - the next session must re-register.
     this.controlStationRegistered = false;
@@ -444,6 +484,8 @@ export class Rws2Core {
    *  cached on connect. Fetches if not connected yet. */
   async getRobotWareVersion(): Promise<string> {
     if (this.rwVersionRaw) { return this.rwVersionRaw; }
+    // Never re-open a client its owner disconnected: that session would leak.
+    if (this.closed) { throw this.closedError('GET', '/rw/system'); }
     await this.connect();
     return this.rwVersionRaw ?? '';
   }
