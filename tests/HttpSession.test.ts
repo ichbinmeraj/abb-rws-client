@@ -635,3 +635,43 @@ describe('HttpSession - the timeout must cover the response BODY, not just the h
     expect(after.body).toContain('ok');
   }, 20000);
 });
+
+describe('HttpSession - a dead session cookie (live 2026-09-25, IRC5 VC)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const cookieOf = (call: unknown[]): string => {
+    const h = (call[1] as RequestInit).headers as Record<string, string> | Headers;
+    return (h instanceof Headers ? h.get('cookie') : h?.['Cookie'] ?? h?.['cookie']) ?? '';
+  };
+
+  it('drops the cookie and signs in on a fresh session when 401 persists after the digest handshake', async () => {
+    const session = makeSession({ sessionCookie: '-http-session-=STALE; ABBCX=1' });
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))   // stale cookie, no auth
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))   // digest + stale cookie
+      .mockResolvedValueOnce(makeResponse(200, '{}', { 'set-cookie': '-http-session-=FRESH; path=/' }));
+    const res = await session.get('/rw/system?json=1');
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(cookieOf(fetchMock.mock.calls[1])).toContain('STALE');
+    expect(cookieOf(fetchMock.mock.calls[2])).not.toContain('STALE');
+  });
+
+  it('wrong credentials without a cookie still fail after one handshake (no extra request)', async () => {
+    const session = makeSession({ password: 'wrong' });
+    fetchMock
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }))
+      .mockResolvedValueOnce(makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }));
+    await expect(session.get('/rw/system?json=1')).rejects.toMatchObject({ code: 'AUTH_FAILED' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('wrong credentials with a cookie fail after the fresh-session attempt', async () => {
+    const session = makeSession({ password: 'wrong', sessionCookie: '-http-session-=STALE' });
+    fetchMock.mockImplementation(async () => makeResponse(401, '', { 'www-authenticate': WWW_AUTH_HEADER }));
+    await expect(session.get('/rw/system?json=1')).rejects.toMatchObject({ code: 'AUTH_FAILED' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});

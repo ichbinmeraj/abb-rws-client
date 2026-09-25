@@ -194,6 +194,21 @@ export class HttpSession {
 
       response = await this.rawFetch(method, path, body);
 
+      // A session cookie the controller no longer knows keeps it answering 401
+      // even to correct digest credentials. Live 2026-09-25 (IRC5 VC, RW6.16):
+      // a dead session's cookie, loaded from the shared session file for that
+      // host:port, made every later connect fail as "Authentication failed"
+      // until the entry was deleted by hand. Forget the cookies and
+      // authenticate once more on a fresh session.
+      const retryAuth = response.status === 401 ? response.headers.get('www-authenticate') : null;
+      if (retryAuth && this.cookies.size > 0) {
+        Logger.info(`RWS1 ${method} ${path} → 401 with a session cookie - retrying on a fresh session`);
+        this.cookies.clear();
+        this.digestChallenge = this.parseDigestChallenge(retryAuth);
+        this.nonceCount = 0;
+        response = await this.rawFetch(method, path, body);
+      }
+
       if (response.status === 401) {
         Logger.trace?.('http.err', `RWS1 ${method} ${path} → 401 (auth failed)`, { protocol: 'rws1', method, path });
         throw new RwsError('Authentication failed - check username and password', 'AUTH_FAILED', 401);

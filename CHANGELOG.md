@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   controller. When the expected system id is known, the controller on the
   saved port is now identified first, and a stranger is treated like a dead
   port: recovery runs and finds the right controller elsewhere.
+- **RWS 1.0: a dead session cookie made every later connect fail as
+  "Authentication failed".** `RobotManager` reuses the session cookie saved in
+  `~/.abb-rws-session` for a host:port. Once that session had ended on the
+  controller, the IRC5 answered 401 even to correct digest credentials while
+  the old cookie was sent, so every reconnect failed with `AUTH_FAILED` until
+  the entry was deleted by hand. On a 401 that persists after the digest
+  handshake while a cookie is sent, the client now drops the cookies and signs
+  in once more on a fresh session. Live-verified 2026-09-25 on an RW6.16 VC:
+  with the dead cookie restored, connect succeeds on the fresh session.
 - **A failed recovery reported the dead port's network error instead of why.**
   With the expected system id known, a dead saved port and other controllers
   present but none of them the right one, `connect()` retried the dead port and
