@@ -13,12 +13,15 @@
  * Test infrastructure only - never shipped in the package.
  */
 
-import { describe, afterEach } from 'vitest';
+import fs from 'node:fs';
+import type http from 'node:http';
+import { describe, beforeAll, beforeEach, afterEach } from 'vitest';
 import { RwsClient } from '../../src/RwsClient.js';
 import { RwsClient2 } from '../../src/RwsClient2.js';
 import { RobotManager } from '../../src/RobotManager.js';
 import { RwsError } from '../../src/types.js';
-import { startChaosProxy, type ChaosProxy } from './chaosProxy.js';
+import { startChaosProxy, type ChaosProxy, type ChaosProxyOptions } from './chaosProxy.js';
+import { listenOnPort } from './scriptedHttp.js';
 import {
   controllerFor, TEST_USER, TEST_PASS,
   type Generation, type LiveController,
@@ -28,17 +31,83 @@ import {
 export const STRUCTURAL_ENABLED = process.env.RWS_STRUCTURAL === '1';
 
 /**
+ * RWS_STRUCTURAL_NODE_HTTP=1: every hop an RWS 1.0 client of a cell talks to
+ * directly listens on a port Node's fetch refuses (listenModeFor): the chaos
+ * proxy (ctx.proxy(), and S13's own), S05's header tap and S10's reverse
+ * proxy. So the RWS 1.0 client sends through node:http in every rws1 cell,
+ * as it does for a controller on such a port (an RW6 VC came back on port 7,
+ * 2026-10-22). Without it these hops listen on a port fetch accepts and the
+ * client sends through fetch, which is what it does on every other port; S01
+ * and S02 also run one test each through a refused port either way. RWS 2.0
+ * always sends through node:http, so its cells are unchanged.
+ */
+export const RWS1_NODE_HTTP = process.env.RWS_STRUCTURAL_NODE_HTTP === '1';
+
+/**
+ * Where a hop a `generation` client talks to directly listens: on a port
+ * fetch refuses for rws1 under RWS_STRUCTURAL_NODE_HTTP=1, otherwise on a
+ * free port fetch accepts.
+ */
+export function listenModeFor(generation: Generation): 'fetch-accepted' | 'fetch-refused' {
+  return generation === 'rws1' && RWS1_NODE_HTTP ? 'fetch-refused' : 'fetch-accepted';
+}
+
+/**
+ * Listen `server` on 127.0.0.1 for a hop a `generation` client talks to
+ * directly (a cell's own header tap or reverse proxy), as listenModeFor
+ * says, and return its port.
+ */
+export function listenForClient(server: http.Server, generation: Generation): Promise<number> {
+  return listenOnPort(server, listenModeFor(generation) === 'fetch-refused' ? 'fetch-refused' : 0);
+}
+
+/**
  * Declare a cell. Skips (leaving the cell `untested`, never green) when the
- * suite is not enabled or that generation's controller is not running.
+ * suite is not enabled or that generation's controller is not running. In the
+ * second case every test of the cell is skipped, the ones that only talk to a
+ * mock too, and the reason is recorded (see `recordCellSkip`).
  */
 export function cell(
   cellId: string,
   generation: Generation,
   body: (ctx: CellContext) => void,
 ): void {
+  defineCell(cellId, generation, body, { enabled: STRUCTURAL_ENABLED, find: controllerFor });
+}
+
+/** What `cell()` decides with: the suite switch and the discovery. */
+export interface CellSwitches {
+  enabled: boolean;
+  /** This generation's controller, or null when none is running. */
+  find: (generation: Generation) => Promise<LiveController | null>;
+}
+
+/** `cell()` with its switches given; the harness's own unit test passes a fake discovery. */
+export function defineCell(
+  cellId: string,
+  generation: Generation,
+  body: (ctx: CellContext) => void,
+  switches: CellSwitches,
+): void {
   const title = `${cellId}/${generation}`;
   const run = (): void => {
-    const ctx = makeContext(generation);
+    const ctx = makeContext(title, generation, switches.find);
+    let missing: string | null = null;
+    // Discovery is paced (one probe at a time, at least 1 s apart) and can take
+    // half a minute, so it runs here under its own budget rather than inside the
+    // first test's timeout. The result is cached for the rest of the file.
+    beforeAll(async () => {
+      if (!(await switches.find(generation))) { missing = noControllerReason(generation); }
+    }, 180000);
+    // Without its controller the whole cell is untested, not failing. Every
+    // test is skipped, the mock-only ones too: scripts/structural.mjs counts a
+    // pass in this file as a pass against the controller, so a cell whose
+    // mock-only test passed and whose live half was skipped would read
+    // `verified`, with the controller half never run. Tests that need no
+    // controller belong in the cell's tests/structural/<cell-id>.mock.test.ts
+    // instead, which runs without this gate (and in plain `npm test`) and
+    // which the runner counts apart.
+    beforeEach(t => { if (missing) { ctx.skip(t, missing); } });
     // Cleanup belongs to the HARNESS, not to each cell.
     //
     // Every client that reaches a live controller holds a session slot, and an
@@ -59,16 +128,82 @@ export function cell(
     afterEach(async () => { await ctx.releaseAll(); }, 120000);
     body(ctx);
   };
-  if (!STRUCTURAL_ENABLED) { describe.skip(title, run); return; }
+  if (!switches.enabled) { describe.skip(title, run); return; }
   describe(title, run);
+}
+
+/** The skip reason of a cell whose generation has no controller running. */
+function noControllerReason(generation: Generation): string {
+  return generation === 'rws1'
+    ? 'no RWS 1.0 controller reachable on localhost - start the RW6 VC, or set RWS_TEST_PORT_RW6'
+    : 'no RWS 2.0 controller reachable on localhost - start the RW7 or RW8 VC, or set RWS_TEST_PORT_RW7';
+}
+
+// ─── Skip reasons ────────────────────────────────────────────────────────────
+
+/** One skipped test of a cell, and why. */
+export interface CellSkip {
+  /** The cell title, `<cell-id>/<generation>`. */
+  cell: string;
+  test: string;
+  reason: string;
+}
+
+const skips: CellSkip[] = [];
+
+/** The skips recorded in this test file so far, in order. */
+export function recordedSkips(): readonly CellSkip[] { return skips; }
+
+/**
+ * Record why a test of a cell was skipped. Vitest 1.x has no skip note, so the
+ * reason goes to the console (once per cell and reason) and, when
+ * scripts/structural.mjs names a file in RWS_STRUCTURAL_SKIPS, into that file
+ * as one JSON line; the runner shows the reasons beside the cells it reports.
+ */
+export function recordCellSkip(entry: CellSkip): void {
+  const first = !skips.some(s => s.cell === entry.cell && s.reason === entry.reason);
+  skips.push(entry);
+  if (first) { console.warn(`${entry.cell}: skipped - ${entry.reason}`); }
+  const file = process.env.RWS_STRUCTURAL_SKIPS;
+  if (file) {
+    try { fs.appendFileSync(file, `${JSON.stringify(entry)}\n`); } catch { /* the console has it */ }
+  }
+}
+
+/**
+ * The title of a test that states a property the client does not meet yet,
+ * for vitest's it.fails: `it.fails(knownGap('does X', 'why not yet'), ...)`.
+ * Such a test passes while the gap is open, and scripts/structural.mjs maps
+ * that pass as a failure of the cell, naming the gap, so a cell never reads
+ * verified on a property that does not hold. Once the client is fixed the test
+ * fails ("Expect test to fail"): flip it to it() and drop the marker. The
+ * reason must not contain `]`.
+ */
+export function knownGap(title: string, reason: string): string {
+  return `${title} [known gap: ${reason}]`;
+}
+
+/** The part of vitest's test context a skip needs. */
+export interface SkippableTest {
+  skip: () => void;
+  task: { name: string };
 }
 
 export interface CellContext {
   generation: Generation;
+  /**
+   * Skip the running test, recording the reason. Call it before the test
+   * opens anything: a skipped test's afterEach hooks do not run.
+   */
+  skip: (t: SkippableTest, reason: string) => never;
   /** Resolved once the controller is discovered; call inside the test body. */
   controller: () => Promise<LiveController>;
-  /** Start a chaos proxy in front of this generation's controller. */
-  proxy: () => Promise<ChaosProxy>;
+  /**
+   * Start a chaos proxy in front of this generation's controller. It listens
+   * on a port fetch accepts, or refuses with `{ listen: 'fetch-refused' }`
+   * (the default for rws1 under RWS_STRUCTURAL_NODE_HTTP=1).
+   */
+  proxy: (options?: ChaosProxyOptions) => Promise<ChaosProxy>;
   /** A client speaking this generation, routed through `p`. */
   client: (p: ChaosProxy, opts?: { timeout?: number }) => Promise<AnyClient>;
   /** A RobotManager connected through `p` - use when asserting quality states. */
@@ -83,23 +218,37 @@ export interface CellContext {
 
 export type AnyClient = RwsClient | RwsClient2;
 
-function makeContext(generation: Generation): CellContext {
+function makeContext(
+  title: string,
+  generation: Generation,
+  find: CellSwitches['find'],
+): CellContext {
   let resolved: LiveController | null = null;
   const proxies: ChaosProxy[] = [];
   const clients: AnyClient[] = [];
   const managers: RobotManager[] = [];
 
+  const skip = (t: SkippableTest, reason: string): never => {
+    recordCellSkip({ cell: title, test: t.task.name, reason });
+    t.skip();
+    // t.skip() throws vitest's pending error; this line is for the type checker.
+    throw new Error(`skipped: ${reason}`);
+  };
+
   const controller = async (): Promise<LiveController> => {
     if (resolved) { return resolved; }
-    const c = await controllerFor(generation);
-    if (!c) { throw new Error(`no ${generation} controller reachable`); }
+    // A cell without its controller is skipped before its tests run (see
+    // defineCell), so this throws only if the controller went away mid-file.
+    const c = await find(generation);
+    if (!c) { throw new Error(noControllerReason(generation)); }
     resolved = c;
     return c;
   };
 
-  const proxy = async (): Promise<ChaosProxy> => {
+  const proxy = async (options: ChaosProxyOptions = {}): Promise<ChaosProxy> => {
     const c = await controller();
-    const p = await startChaosProxy(c.host, c.port);
+    const listen = options.listen ?? listenModeFor(generation);
+    const p = await startChaosProxy(c.host, c.port, { listen });
     proxies.push(p);
     return p;
   };
@@ -168,7 +317,7 @@ function makeContext(generation: Generation): CellContext {
     await inBatches(proxies.splice(0), p => p.close());
   };
 
-  return { generation, controller, proxy, client, manager, releaseAll };
+  return { generation, skip, controller, proxy, client, manager, releaseAll };
 }
 
 // ─── Assertion helpers ───────────────────────────────────────────────────────

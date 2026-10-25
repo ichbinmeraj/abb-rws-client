@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-writeaccess-not-held-haljson",
+  "request": {
+    "method": "POST",
+    "path": "/rw/controlstation/writeaccess/release",
+    "body": ""
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073435873, \"msg\":\"rws_resource_controlstation.cpp[412] The control station does not have SPoC. code:-1073435873 icode:-20107\"}}"
+  }
+}

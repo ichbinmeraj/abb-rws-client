@@ -1,6 +1,6 @@
 {
   "protocol": "rws2",
-  "scenario": "404-symbol-overloaded-code-haljson",
+  "scenario": "404-symbol-not-found-haljson",
   "request": {
     "method": "GET",
     "path": "/rw/rapid/symbol/RAPID/T_ROB1/BASE/no_such_var/data"

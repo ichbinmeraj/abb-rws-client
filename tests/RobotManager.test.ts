@@ -4,11 +4,13 @@ import * as os from 'os';
 import * as path from 'path';
 import * as https from 'node:https';
 import { RobotManager } from '../src/RobotManager.js';
+import { RwsError } from '../src/types.js';
 import { MultiRobotManager } from '../src/MultiRobotManager.js';
 import * as MdnsDiscovery from '../src/MdnsDiscovery.js';
 import { RWS1Adapter } from '../src/RWS1Adapter.js';
 import { RWS2Adapter } from '../src/RWS2Adapter.js';
 import { RwsClient } from '../src/RwsClient.js';
+import { Logger } from '../src/Logger.js';
 
 // Re-export the real fs through a plain (spyable) module object - the builtin
 // namespace is frozen under vitest, so vi.spyOn(fs, ...) needs this indirection.
@@ -55,7 +57,7 @@ function makeFakeAdapter() {
     getRapidTasks: vi.fn(async () => [
       { name: 'T_ROB1', type: 'normal', taskstate: 'linked', excstate: 'stopped', active: true, motiontask: true },
     ]),
-    listModules: vi.fn(async () => ['MainModule']),
+    listModules: vi.fn(async (..._args: any[]) => ['MainModule']),
     getJointPositions: vi.fn(async () => ({ rax_1: 0, rax_2: 0, rax_3: 0, rax_4: 0, rax_5: 0, rax_6: 0 })),
     getCartesianFull: vi.fn(async () => ({ x: 0, y: 0, z: 0, q1: 1, q2: 0, q3: 0, q4: 0, j1: 0, j4: 0, j6: 0, jx: 0 })),
     getCollisionDetectionState: vi.fn(async () => 'On'),
@@ -63,7 +65,7 @@ function makeFakeAdapter() {
     getSystemInfo: vi.fn(async () => ({ name: 'vc' })),
     getEventLog: vi.fn(async () => []),
     listMechunits: vi.fn(async () => ['ROB_1']),
-    listAllSignals: vi.fn(async () => []),
+    listAllSignals: vi.fn(async (): Promise<any[]> => []),
     releaseMastership: vi.fn(async () => {}),
   };
 }
@@ -316,6 +318,79 @@ describe('RobotManager polling vs disconnect', () => {
     expect(mgr.state.modules).toEqual([]);
     expect(mgr.state.ctrlstate).toBeNull();
     expect(mgr.state.ioSignals).toEqual([]);
+  });
+});
+
+describe('RobotManager: a poll never overwrites a newer subscription event', () => {
+  // Live 2026-09-24 (RW6.16 VC, via the daemon stream): speed 50 was reported,
+  // then 100 again 0.3 s later - a slow poll that had read 100 before the change
+  // wrote it back after the speedratio event for 50 had arrived.
+  let mgr: RobotManager | null = null;
+  afterEach(async () => { await mgr?.disconnect().catch(() => {}); mgr = null; vi.restoreAllMocks(); });
+
+  /** A manager with live subscriptions whose first poll is held open on listModules. */
+  async function heldPoll(reads: { speed: number; ctrl: string }) {
+    mgr = new RobotManager();
+    const fake = makeFakeAdapter();
+    let emit!: (e: { resource: string; value: string; timestamp: Date }) => void;
+    fake.subscribe = vi.fn(async (_r: unknown, handler: typeof emit) => { emit = handler; return async () => {}; }) as never;
+    fake.getSpeedRatio = vi.fn(async () => reads.speed);
+    fake.getControllerState = vi.fn(async () => reads.ctrl);
+    let releaseModules!: (m: string[]) => void;
+    fake.listModules = vi.fn(() => new Promise<string[]>(r => { releaseModules = r; }));
+    (mgr as any).adapter = fake;
+    (mgr as any).adapterConfig = { host: 'vc-a', username: 'u', password: 'p', port: 80 };
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(DIGEST_PROBE);
+    const connected = mgr.connect('vc-a', 'u', 'p', 80);
+    await vi.waitFor(() => expect(fake.listModules).toHaveBeenCalled());   // poll has read its values, still in flight
+    return { fake, emit, release: () => releaseModules(['MainModule']), connected };
+  }
+
+  it('keeps an event that arrived while the poll was in flight', async () => {
+    const { emit, release, connected } = await heldPoll({ speed: 100, ctrl: 'motoroff' });
+    emit({ resource: 'speedratio', value: '50', timestamp: new Date() });
+    emit({ resource: 'controllerstate', value: 'motoron', timestamp: new Date() });
+    release();
+    await connected;
+    expect(mgr!.state.speedRatio).toBe(50);
+    expect(mgr!.state.ctrlstate).toBe('motoron');
+  });
+
+  it('keeps its own speed write when a poll that read the old value finishes later', async () => {
+    const { fake, release, connected } = await heldPoll({ speed: 100, ctrl: 'motoroff' });
+    (fake as any).setSpeedRatio = vi.fn(async () => {});
+    await mgr!.setSpeedRatio(30);
+    release();
+    await connected;
+    expect(mgr!.state.speedRatio).toBe(30);
+  });
+
+  it('still lets a poll that started after an event replace its value', async () => {
+    const { fake, emit, release, connected } = await heldPoll({ speed: 100, ctrl: 'motoroff' });
+    release();
+    await connected;
+    emit({ resource: 'speedratio', value: '50', timestamp: new Date() });
+    // The controller moves on again with no event this time; the next poll reads it.
+    fake.getSpeedRatio = vi.fn(async () => 60);
+    fake.listModules = vi.fn(async () => ['MainModule']);
+    await (mgr as any).fetchAll((mgr as any).pollGeneration);
+    expect(mgr!.state.speedRatio).toBe(60);
+  });
+});
+
+describe('RobotManager.resetRapid', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('says the task has no main routine when the controller answers 404', async () => {
+    const mgr = new RobotManager();
+    const fake = makeFakeAdapter() as any;
+    fake.requestMastership = vi.fn(async () => {});
+    fake.releaseMastership = vi.fn(async () => {});
+    fake.resetRapid = vi.fn(async () => {
+      throw new RwsError('Resource does not exist on the controller: HTTP 404 from POST /rw/rapid/execution/resetpp', 'RESOURCE_NOT_FOUND', 404);
+    });
+    (mgr as any).adapter = fake;
+    await expect(mgr.resetRapid()).rejects.toMatchObject({ code: 'RESOURCE_NOT_FOUND', message: expect.stringMatching(/no main routine/) });
   });
 });
 
@@ -904,6 +979,332 @@ describe('RobotManager I/O refresh', () => {
     expect(fake.listAllSignals).toHaveBeenCalledTimes(1);
     expect(mgr.state.ioSignals).toHaveLength(130);
     expect(new Set(mgr.state.ioSignals.map(s => s.name)).size).toBe(130);
+    expect(mgr.state.ioSignalsLoaded).toBe(true);
+  });
+});
+
+describe('RobotManager signal table across reconnects (ioSignalsLoaded)', () => {
+  // Up to 1.4.x the table was reloaded when fetchCount === 1 or % 5 === 0, and
+  // fetchCount survived a disconnect: after a reconnect the table read [] until
+  // the next multiple of 5 polls - "no signals" for up to ~20 s on a live link.
+  // Now it is walked at the first poll of every connection, then by the clock.
+  let mgr: RobotManager | null = null;
+  afterEach(async () => { await mgr?.disconnect().catch(() => {}); mgr = null; vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  const SIGNALS = [{ name: 'di_1', value: '0', type: 'DI' as const, lvalue: '0' }];
+
+  function managerWith(fake: ReturnType<typeof makeFakeAdapter>): RobotManager {
+    // A long cadence: only the polls the test runs itself happen.
+    const m = new RobotManager({ refreshIntervalMs: 60000 });
+    (m as any).adapter = fake;
+    (m as any).adapterConfig = { host: 'vc-a', username: 'u', password: 'p', port: 80 };
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(DIGEST_PROBE);
+    return m;
+  }
+
+  it('loads the table on the first poll of every connection', async () => {
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn(async () => SIGNALS) as never;
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(mgr.state.ioSignals).toEqual(SIGNALS);
+    expect(mgr.state.ioSignalsLoaded).toBe(true);
+    // Two more polls on this connection, inside the minute: no walk.
+    await (mgr as any).fetchAll((mgr as any).pollGeneration);
+    await (mgr as any).fetchAll((mgr as any).pollGeneration);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(1);
+
+    await mgr.disconnect();
+    expect(mgr.state.ioSignals).toEqual([]);
+    expect(mgr.state.ioSignalsLoaded).toBe(false);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(2);
+    expect(mgr.state.ioSignals).toEqual(SIGNALS);
+    expect(mgr.state.ioSignalsLoaded).toBe(true);
+  });
+
+  it('a failed load leaves ioSignalsLoaded false and is logged, not swallowed', async () => {
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn(async () => { throw new RwsError('controller busy', 'CONTROLLER_BUSY'); }) as never;
+    const warn = vi.spyOn(Logger, 'warn');
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(mgr.state.connected).toBe(true);
+    expect(mgr.state.ioSignals).toEqual([]);
+    expect(mgr.state.ioSignalsLoaded).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('listAllSignals failed: controller busy'));
+  });
+
+  // The walk is timed by the clock (Date.now), so only Date is faked: the
+  // clock stands still until the test moves it, and every poll is one the
+  // test runs itself.
+  const T0 = Date.parse('2026-10-25T08:00:00Z');
+  function clockAt(seconds: number): void { vi.setSystemTime(T0 + seconds * 1000); }
+  const poll = (m: RobotManager): Promise<void> => (m as any).fetchAll((m as any).pollGeneration);
+
+  it('a failed walk is tried again after 5, 10, 20 and 40 s, then each minute, never on every poll', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    let failing = true;
+    fake.listAllSignals = vi.fn(async () => {
+      if (failing) { throw new RwsError('controller busy', 'CONTROLLER_BUSY'); }
+      return SIGNALS;
+    }) as never;
+    const warn = vi.spyOn(Logger, 'warn').mockImplementation(() => {});
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(1);
+    expect(mgr.state.ioSignalsLoaded).toBe(false);
+
+    // [poll time in s, walks so far]: a poll inside the wait sends nothing.
+    const steps: Array<[number, number]> = [
+      [1, 1], [4.999, 1], [5, 2],            // 5 s after the first failure
+      [10, 2], [14.999, 2], [15, 3],         // then 10 s
+      [34.999, 3], [35, 4],                  // 20 s
+      [74.999, 4], [75, 5],                  // 40 s
+      [134.999, 5], [135, 6],                // 60 s, the cap
+      [194.999, 6], [195, 7],                // and 60 s from then on
+    ];
+    for (const [at, walks] of steps) {
+      clockAt(at);
+      await poll(mgr);
+      expect(fake.listAllSignals, `walks by ${at} s`).toHaveBeenCalledTimes(walks);
+    }
+    const waits = warn.mock.calls.map(c => /read again in (\d+) s$/.exec(String(c[0]))?.[1]);
+    expect(waits).toEqual(['5', '10', '20', '40', '60', '60', '60']);
+    expect(String(warn.mock.calls[0][0])).toMatch(/^listAllSignals failed: controller busy; /);
+    expect(mgr.state.ioSignalsLoaded).toBe(false);
+
+    // A walk that lands ends the backoff: the next is a minute after it.
+    failing = false;
+    clockAt(255);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(8);
+    expect(mgr.state.ioSignals).toEqual(SIGNALS);
+    expect(mgr.state.ioSignalsLoaded).toBe(true);
+    clockAt(314.999);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(8);
+    clockAt(315);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(9);
+  });
+
+  it('loaded: the next walk is 60 s after the last one ended, whatever the number of polls', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    let walks = 0;
+    fake.listAllSignals = vi.fn(async () => {
+      walks++;
+      // The second walk takes 3 s: the minute counts from its end.
+      if (walks === 2) { vi.setSystemTime(Date.now() + 3000); }
+      return SIGNALS;
+    }) as never;
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(walks).toBe(1);
+    // Thirty polls inside the minute: no walk, however many polls run.
+    for (let i = 1; i <= 30; i++) {
+      clockAt(i * 1.99);
+      await poll(mgr);
+    }
+    expect(walks).toBe(1);
+    clockAt(60);
+    await poll(mgr);
+    expect(walks).toBe(2);              // ended at 63 s
+    clockAt(122.999);
+    await poll(mgr);
+    expect(walks).toBe(2);
+    clockAt(123);
+    await poll(mgr);
+    expect(walks).toBe(3);
+  });
+
+  it('refreshIoSignals walks at once and starts the minute again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn(async () => SIGNALS) as never;
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    clockAt(30);
+    await mgr.refreshIoSignals();
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(2);
+    clockAt(60);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(2);
+    clockAt(90);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(3);
+  });
+
+  it('a reconnect inside the backoff walks at its first poll', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn()
+      .mockRejectedValueOnce(new RwsError('controller busy', 'CONTROLLER_BUSY'))
+      .mockResolvedValue(SIGNALS) as never;
+    vi.spyOn(Logger, 'warn').mockImplementation(() => {});
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(mgr.state.ioSignalsLoaded).toBe(false);
+    clockAt(1);
+    await mgr.disconnect();
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(2);
+    expect(mgr.state.ioSignalsLoaded).toBe(true);
+  });
+
+  it('a clock set back does not hold the next walk off, after a walk or inside the backoff', async () => {
+    // A due time further out than the longest wait (60 s) can only come from
+    // a clock set back since it was set: the walk is due at once.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    let failing = false;
+    fake.listAllSignals = vi.fn(async () => {
+      if (failing) { throw new RwsError('controller busy', 'CONTROLLER_BUSY'); }
+      return SIGNALS;
+    }) as never;
+    vi.spyOn(Logger, 'warn').mockImplementation(() => {});
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(1);   // due at 60 s
+    clockAt(-3600);                                         // an hour back
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(2);   // due 60 s from here
+    clockAt(-3541);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(2);
+    clockAt(-3540);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(3);
+
+    failing = true;
+    clockAt(-3480);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(4);   // failed: due in 5 s
+    clockAt(-7200);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(5);   // failed again: due in 10 s
+    clockAt(-7191);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(5);
+    clockAt(-7190);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(6);
+  });
+
+  // The poll's walk and a refreshIoSignals() at the same time: each walk is a
+  // promise the test settles itself.
+  function pendingWalks(fake: ReturnType<typeof makeFakeAdapter>) {
+    const walks: Array<{ resolve: (s: typeof SIGNALS) => void; reject: (e: unknown) => void }> = [];
+    fake.listAllSignals = vi.fn(() => new Promise((resolve, reject) => { walks.push({ resolve, reject }); })) as never;
+    return walks;
+  }
+  const NEWER = [{ name: 'di_1', value: '1', type: 'DI' as const, lvalue: '1' }];
+
+  it('a poll walk that fails after a refreshIoSignals landed leaves the refresh\'s minute', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn(async () => SIGNALS) as never;
+    const warn = vi.spyOn(Logger, 'warn').mockImplementation(() => {});
+    mgr = managerWith(fake);
+    await mgr.connect('vc-a', 'u', 'p', 80);
+
+    const walks = pendingWalks(fake);
+    clockAt(60);
+    const polled = poll(mgr);                       // the poll's walk starts
+    await vi.waitFor(() => expect(walks).toHaveLength(1));
+    const refreshed = mgr.refreshIoSignals();       // and the refresh's
+    await vi.waitFor(() => expect(walks).toHaveLength(2));
+    clockAt(62);
+    walks[1].resolve(NEWER);
+    await refreshed;                                // due at 122 s
+    walks[0].reject(new RwsError('controller busy', 'CONTROLLER_BUSY'));
+    await polled;
+
+    expect(mgr.state.ioSignals).toEqual(NEWER);
+    expect(mgr.state.ioSignalsLoaded).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^listAllSignals failed: controller busy; another read of the signal table landed meanwhile/));
+    // No retry 5 s after the failure: the next walk is the refresh's minute.
+    fake.listAllSignals = vi.fn(async () => NEWER) as never;
+    clockAt(68);
+    await poll(mgr);
+    clockAt(121.999);
+    await poll(mgr);
+    expect(fake.listAllSignals).not.toHaveBeenCalled();
+    clockAt(122);
+    await poll(mgr);
+    expect(fake.listAllSignals).toHaveBeenCalledTimes(1);
+  });
+
+  it('a walk that lands after a later-started one has landed keeps the newer table', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clockAt(0);
+    const fake = makeFakeAdapter();
+    fake.listAllSignals = vi.fn(async () => SIGNALS) as never;
+    mgr = managerWith(fake);
+    await mgr.connect('vc-a', 'u', 'p', 80);
+
+    // The poll's walk first, the refresh's second; the refresh lands first.
+    let walks = pendingWalks(fake);
+    clockAt(60);
+    const polled = poll(mgr);
+    await vi.waitFor(() => expect(walks).toHaveLength(1));
+    const refreshed = mgr.refreshIoSignals();
+    await vi.waitFor(() => expect(walks).toHaveLength(2));
+    walks[1].resolve(NEWER);
+    await refreshed;
+    walks[0].resolve(SIGNALS);
+    await polled;
+    expect(mgr.state.ioSignals).toEqual(NEWER);
+
+    // The refresh's walk first, the poll's second; the poll lands first.
+    walks = pendingWalks(fake);
+    clockAt(200);
+    const refreshed2 = mgr.refreshIoSignals();
+    await vi.waitFor(() => expect(walks).toHaveLength(1));
+    const polled2 = poll(mgr);
+    await vi.waitFor(() => expect(walks).toHaveLength(2));
+    walks[1].resolve(SIGNALS);
+    await polled2;
+    walks[0].resolve(NEWER);
+    await refreshed2;
+    expect(mgr.state.ioSignals).toEqual(SIGNALS);
+  });
+
+  it('refreshIoSignals does not mark the next connection loaded with an old read', async () => {
+    const fake = makeFakeAdapter();
+    mgr = managerWith(fake);
+    await mgr.connect('vc-a', 'u', 'p', 80);
+
+    let release!: (s: typeof SIGNALS) => void;
+    fake.listAllSignals = vi.fn(() => new Promise(r => { release = r; })) as never;
+    const refresh = mgr.refreshIoSignals();
+    await mgr.disconnect();
+    release(SIGNALS);
+    await refresh;
+
+    expect(mgr.state.ioSignals).toEqual([]);
+    expect(mgr.state.ioSignalsLoaded).toBe(false);
+  });
+
+  it('every default state literal carries ioSignalsLoaded: false', () => {
+    expect(new RobotManager().state.ioSignalsLoaded).toBe(false);
+    expect(new MultiRobotManager().state.ioSignalsLoaded).toBe(false);
   });
 });
 
@@ -923,6 +1324,9 @@ describe('RobotManager.parseListeningPorts (locale-independent listening scan)',
 
   // Same machine, German Windows: the State column is translated ("ABHÖREN"),
   // which is exactly what the old /LISTENING/ filter would have missed entirely.
+  // Hand-written (synthetic) from a documented German netstat sample; the same
+  // rows as console code-page bytes are in tests/fixtures/listening-ports/
+  // win-netstat-ano-de-cp850.txt.
   const GERMAN = [
     'Aktive Verbindungen',
     '',
@@ -961,6 +1365,79 @@ describe('RobotManager.parseListeningPorts (locale-independent listening scan)',
   it('returns nothing for empty or junk output', () => {
     expect(RobotManager.parseListeningPorts('', 'win32')).toEqual([]);
     expect(RobotManager.parseListeningPorts('not netstat output at all', 'win32')).toEqual([]);
+  });
+
+  // The implementation before the discovery modules, verbatim, as the reference: every input it
+  // read ports from must give exactly the same list now.
+  function previousParse(output: string, platform: NodeJS.Platform): number[] {
+    const ports = new Set<number>();
+    const addLocalPort = (localAddr: string): void => {
+      const m = localAddr.match(/:(\d{1,5})$/);
+      if (!m) { return; }
+      const p = Number(m[1]);
+      if (p > 0 && p < 65536) { ports.add(p); }
+    };
+    for (const line of output.split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (platform === 'win32') {
+        if (cols[0] !== 'TCP' || cols.length < 3 || !cols[2].endsWith(':0')) { continue; }
+        addLocalPort(cols[1]);
+      } else {
+        for (const c of cols) {
+          if (/^(?:0\.0\.0\.0|127\.0\.0\.1|\[::1?\]|\*):\d{1,5}$/.test(c)) { addLocalPort(c); }
+        }
+      }
+    }
+    return [...ports];
+  }
+
+  const FIX = new URL('./fixtures/listening-ports/', import.meta.url);
+  const fixture = (name: string): string => fs.readFileSync(new URL(name, FIX)).toString('latin1');
+  const NET_TOOLS = [
+    'Active Internet connections (only servers)',
+    'Proto Recv-Q Send-Q Local Address           Foreign Address         State',
+    'tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN',
+    'tcp        0      0 127.0.0.1:631           0.0.0.0:*               LISTEN',
+  ].join('\n');
+
+  const INPUTS: Array<[string, string, NodeJS.Platform]> = [
+    ['English netstat', ENGLISH, 'win32'],
+    ['German netstat', GERMAN, 'win32'],
+    ['ss', SS, 'linux'],
+    ['ss on darwin', SS, 'darwin'],
+    ['Linux net-tools netstat', NET_TOOLS, 'linux'],
+    ['fixture win-netstat-ano', fixture('win-netstat-ano.txt'), 'win32'],
+    ['fixture win-netstat-ano-p-tcp', fixture('win-netstat-ano-p-tcp.txt'), 'win32'],
+    ['fixture win-netstat-ano-de-cp850', fixture('win-netstat-ano-de-cp850.txt'), 'win32'],
+    ['fixture ss-modern', fixture('ss-modern.txt'), 'linux'],
+    ['fixture ss-old', fixture('ss-old.txt'), 'linux'],
+    ['fixture ss-no-state', fixture('ss-no-state.txt'), 'linux'],
+    ['fixture ss-netid-estab', fixture('ss-netid-estab.txt'), 'linux'],
+  ];
+
+  for (const [label, text, platform] of INPUTS) {
+    it(`gives the same ports as before for ${label}`, () => {
+      const before = previousParse(text, platform);
+      expect(before.length, 'the reference reads ports from this input').toBeGreaterThan(0);
+      expect(RobotManager.parseListeningPorts(text, platform)).toEqual(before);
+    });
+  }
+
+  it('keeps the LAN-only Windows listener, as before (the port list is only a list of ports)', () => {
+    expect(RobotManager.parseListeningPorts(fixture('win-netstat-ano.txt'), 'win32')).toContain(139);
+  });
+
+  it('reads /proc/net/tcp and macOS netstat text by content, which gave nothing before', () => {
+    const proc = fixture('proc-net-tcp.txt');
+    const proc6 = fixture('proc-net-tcp6.txt');
+    const mac = fixture('macos-netstat.txt');
+    expect(previousParse(proc, 'linux')).toEqual([]);
+    expect(previousParse(mac, 'darwin')).toEqual([]);
+    expect(RobotManager.parseListeningPorts(proc, 'linux').sort((a, b) => a - b)).toEqual([22, 53, 5474]);
+    expect(RobotManager.parseListeningPorts(proc6, 'linux').length).toBeGreaterThan(0);
+    expect(RobotManager.parseListeningPorts(mac, 'darwin')).toEqual(expect.arrayContaining([80, 88, 9403, 631]));
+    // On Windows the content sniffing does not apply.
+    expect(RobotManager.parseListeningPorts(proc, 'win32')).toEqual([]);
   });
 });
 
@@ -1041,7 +1518,7 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
       // setPPToCursor and stepRapid post to the mastership-gated execution/pcp
       // family, so they acquire and release around the op like startRapid does.
       ['requestMastership', ['rapid']],
-      ['setPPToCursor', ['T_ROB1', 'MainModule', 12, 0]],
+      ['setPPToCursor', ['T_ROB1', 'MainModule', 12, 0, undefined]],
       ['releaseMastership', ['rapid']],
       ['requestMastership', ['rapid']],
       ['stepRapid', ['T_ROB1', 'over']],
@@ -1078,6 +1555,8 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     const fake = makeFakeAdapter() as any;
     fake.requestMastership = vi.fn(async () => {});
     fake.jog = vi.fn(async () => {});
+    // The jog pre-flight reads the mode fresh from the controller.
+    fake.getOperationMode = vi.fn(async () => 'MANR');
     (mgr as any).adapter = fake;
     (mgr as any)._state.opmode = 'MANR';
     (mgr as any)._state.ctrlstate = 'motoron';
@@ -1102,6 +1581,8 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     const fake = makeFakeAdapter() as any;
     fake.requestMastership = vi.fn(async () => {});
     fake.jog = vi.fn(async () => {});
+    // The jog pre-flight reads the mode fresh from the controller.
+    fake.getOperationMode = vi.fn(async () => 'MANR');
     (mgr as any).adapter = fake;
     (mgr as any)._state.opmode = 'MANR';
     (mgr as any)._state.ctrlstate = 'motoron';
@@ -1117,7 +1598,7 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     expect((mgr as any).jogReleaseTimer).toBeNull();
   });
 
-  it('triggerVisionJob refuses to run a different job than named on a one-arg (RWS 1.0) adapter', async () => {
+  it('triggerVisionJob refuses to run a different job than named on a one-arg adapter', async () => {
     const mgr = new RobotManager();
     const fake = makeFakeAdapter() as any;
     const calls: unknown[][] = [];
@@ -1126,10 +1607,10 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     await mgr.triggerVisionJob('cam1', 'JobB');
     expect(calls).toEqual([['cam1', 'JobB']]);
 
-    const rws1ish = makeFakeAdapter() as any;
-    rws1ish.triggerVisionJob = async (system: string) => { calls.push([system]); };
-    (mgr as any).adapter = rws1ish;
-    await expect(mgr.triggerVisionJob('cam1', 'JobB')).rejects.toThrow(/active job only/);
+    const oneArg = makeFakeAdapter() as any;
+    oneArg.triggerVisionJob = async (system: string) => { calls.push([system]); };
+    (mgr as any).adapter = oneArg;
+    await expect(mgr.triggerVisionJob('cam1', 'JobB')).rejects.toThrow(/takes no job name/);
     expect(calls).toHaveLength(1); // the wrong-job call never went to the wire
   });
 
@@ -1138,6 +1619,7 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     (mgr as any).adapter = makeFakeAdapter(); // none of the optional ops present
 
     await expect(mgr.listBreakpoints('T_ROB1')).resolves.toEqual([]);
+    await expect(mgr.listServiceRoutines('T_ROB1')).resolves.toEqual([]);
     await expect(mgr.getVisionSystemInfo('cam1')).resolves.toEqual({});
     await expect(mgr.listVisionJobs('cam1')).resolves.toEqual([]);
     await expect(mgr.listSafetyZones()).resolves.toEqual([]);
@@ -1176,5 +1658,398 @@ describe('RobotManager wrapper-surface completion (1.3.1)', () => {
     await expect(mgr.releaseMastership('rapid')).rejects.toThrow(/Not connected/);
     await expect(mgr.stepRapid('T_ROB1', 'into')).rejects.toThrow(/not connected/);
     await expect(mgr.pollRmmp()).resolves.toBe('unsupported'); // read degrades even unconnected
+  });
+});
+
+describe('RobotManager port recovery picks the SAME controller', () => {
+  // Spies on static methods outlive a test unless restored - one test's fake
+  // chooser silently decided the next test's recovery.
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // Reproduces 2026-09-23: three VCs on one PC; the RW7 entry's saved port went
+  // stale, recovery took the first RWS 2.0 controller found - the RW8 VC.
+  const RW8 = { port: 5466, useHttps: true, authType: 'basic' as const };
+  const RW7 = { port: 9403, useHttps: true, authType: 'basic' as const };
+  const RW6 = { port: 33806, useHttps: false, authType: 'digest' as const };
+  const ids: Record<number, string> = { 5466: '{DDDEA751-93CE-4DAC-8D85-55725137AF66}', 9403: '{A3BE1993-3FA0-4D46-93FF-7FA2D8086C81}' };
+  const identify = async (c: { port: number }) => ids[c.port] ?? null;
+
+  it('adopts the candidate whose system id matches, even when another answers first', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW8, RW7, RW6], 'basic', ids[9403], identify);
+    expect(r.match).toEqual(RW7);
+  });
+
+  it('compares system ids without braces or case', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW8, RW7], 'basic', 'a3be1993-3fa0-4d46-93ff-7fa2d8086c81', identify);
+    expect(r.match).toEqual(RW7);
+  });
+
+  it('adopts nothing when no candidate has the expected id', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW8], 'basic', ids[9403], identify);
+    expect(r.match).toBeNull();
+  });
+
+  it('treats a candidate it cannot identify as not a match', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW7], 'basic', ids[9403], async () => { throw new Error('401'); });
+    expect(r.match).toBeNull();
+  });
+
+  it('never crosses protocol generation, even as a fallback', async () => {
+    const r = await RobotManager.chooseRecoveryCandidate([RW6], 'basic', null, identify);
+    expect(r.match).toBeNull();
+  });
+
+  it('without an id, adopts a single candidate of the generation but refuses to guess between two', async () => {
+    expect((await RobotManager.chooseRecoveryCandidate([RW7, RW6], 'basic', null, identify)).match).toEqual(RW7);
+    expect((await RobotManager.chooseRecoveryCandidate([RW8, RW7], 'basic', null, identify)).match).toBeNull();
+  });
+
+  function stubRws2() {
+    vi.spyOn(RWS2Adapter.prototype, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'getSessionCookie').mockReturnValue(null);
+    vi.spyOn(RWS2Adapter.prototype, 'subscribe').mockRejectedValue(new Error('no ws'));
+    vi.spyOn(RobotManager.prototype as any, 'fetchAll').mockResolvedValue(undefined);
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);      // saved port is dead
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8, RW7]);
+    // Never the real listening-port scan here: it would probe whatever listens on this PC.
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    vi.spyOn(RobotManager.prototype as any, 'identifyCandidate')
+      .mockImplementation(async (_h: unknown, c: unknown) => ids[(c as { port: number }).port] ?? null);
+  }
+
+  it('connect() recovers to the expected controller, not the first one found', async () => {
+    const mgr = new RobotManager();
+    stubRws2();
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9999, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9403');
+    await mgr.disconnect();
+  });
+
+  it('connect() keeps the saved port rather than guess between two controllers', async () => {
+    const mgr = new RobotManager();
+    stubRws2();
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9999, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9999');
+    await mgr.disconnect();
+  });
+
+  it('on localhost, a VC on a standard port does not hide a moved VC on another port', async () => {
+    // Live 2026-09-23: the RW6 VC moved 33806 -> 50959 while the RW8 VC sat on
+    // standard port 5466; the moved RW6 was never offered to the identity check.
+    const RW6_MOVED = { port: 50959, useHttps: false, authType: 'digest' as const };
+    const mgr = new RobotManager();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8]);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([
+      { host: '127.0.0.1', ...RW8 }, { host: '127.0.0.1', ...RW6_MOVED },
+    ]);
+    const seen: number[][] = [];
+    vi.spyOn(RobotManager, 'chooseRecoveryCandidate').mockImplementation(async cands => {
+      seen.push(cands.map(c => c.port));
+      return { match: null, reason: 'stop here' };
+    });
+    await mgr.connect('127.0.0.1', 'u', 'p', 33806, false).catch(() => {});
+    expect(seen[0]).toEqual([5466, 50959]);   // the standard-port hit plus the moved VC, once each
+    await mgr.disconnect();
+  });
+
+  it('treats a different controller on the saved port like a dead port, and recovers', async () => {
+    // Live 2026-09-23: the RW7 entry's saved 9403 was taken by another VC after
+    // a restart; the RW7 had moved to 9404.
+    const STRANGER_ID = '{D9E18C83-0000-0000-0000-000000000000}';
+    const RW7_MOVED = { port: 9404, useHttps: true, authType: 'basic' as const };
+    const mgr = new RobotManager();
+    stubRws2();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(RW7);          // 9403 answers...
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8, RW7]);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([{ host: '127.0.0.1', ...RW7_MOVED }]);
+    vi.spyOn(RobotManager.prototype as any, 'identifyCandidate').mockImplementation(async (_h: unknown, c: unknown) => {
+      const port = (c as { port: number }).port;
+      return port === 9403 ? STRANGER_ID : port === 9404 ? ids[9403] : ids[port] ?? null;   // ...as a stranger
+    });
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9403, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9404');
+    await mgr.disconnect();
+  });
+
+  it('refuses to connect when the saved port holds a stranger and the controller is nowhere', async () => {
+    // Live 2026-09-23: the RW7 VC was off and another VC held its 9403. Falling
+    // back to the saved port would have connected straight to the stranger.
+    const mgr = new RobotManager();
+    stubRws2();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(RW7);
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue([RW8, RW7]);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    vi.spyOn(RobotManager.prototype as any, 'identifyCandidate').mockImplementation(async (_h: unknown, c: unknown) =>
+      (c as { port: number }).port === 9403 ? '{D9E18C83-0000-0000-0000-000000000000}' : ids[(c as { port: number }).port] ?? null);
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await expect(mgr.connect('127.0.0.1', 'u', 'p', 9403, true)).rejects.toMatchObject({ code: 'PROTOCOL_DETECT_FAILED' });
+    expect(rws2CtorArgs).toHaveLength(0);   // no adapter was ever pointed at the stranger
+    expect(mgr.state.connected).toBe(false);
+  });
+
+  it('says why when the saved port is dead and no candidate is the expected controller', async () => {
+    // Live 2026-09-24: the RW6 entry's VC was off, another RW6 system ran on a
+    // new port; the caller saw only the dead saved port's "fetch failed".
+    const mgr = new RobotManager();
+    stubRws2();                                                  // saved port dead; candidates RW8, RW7
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    const OFF_ID = '{F2E08F07-3F27-4DE5-82CC-74A72537F492}';    // neither candidate
+    mgr.setExpectedSystemId(OFF_ID);
+    rws2CtorArgs.length = 0;
+    const err = await mgr.connect('127.0.0.1', 'u', 'p', 9999, true).catch(e => e);
+    expect(err).toMatchObject({ code: 'PROTOCOL_DETECT_FAILED' });
+    expect(err.message).toContain(`controller ${OFF_ID} not found on 127.0.0.1`);
+    expect(err.message).toContain('saved port 9999 is not responding');
+    expect(err.message).toContain('none of 2 candidate(s)');
+    expect(rws2CtorArgs).toHaveLength(0);                       // nothing was pointed at any port
+    expect(mgr.state.connected).toBe(false);
+  });
+
+  it('uses the saved port without scanning when it answers as the expected controller', async () => {
+    const mgr = new RobotManager();
+    stubRws2();
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(RW7);
+    const scan = vi.spyOn(RobotManager, 'detectAllControllers');
+    mgr.setExpectedSystemId(ids[9403]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 9403, true);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9403');
+    expect(scan).not.toHaveBeenCalled();
+    await mgr.disconnect();
+  });
+
+  it('MultiRobotManager passes a config entry\'s expected id to its manager', () => {
+    const multi = new MultiRobotManager();
+    multi.addRobot({ id: 'rw7', name: 'RW7', host: '127.0.0.1', port: 9403, useHttps: true, username: 'u', password: 'p', expectedSystemId: ids[9403] });
+    expect((multi.entries[0].manager as any).expectedSystemId).toBe(ids[9403]);
+  });
+});
+
+describe('RobotManager port recovery: the scheme of the saved port', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  const RW6 = { port: 39127, useHttps: false, authType: 'digest' as const };
+  const RW7 = { port: 9403, useHttps: true, authType: 'basic' as const };
+  const RW8 = { port: 9805, useHttps: true, authType: 'basic' as const };
+  const ids: Record<number, string> = { 39127: '{6}', 9403: '{7}', 9805: '{8}' };
+
+  function stub(candidates: Array<{ port: number; useHttps: boolean; authType: 'digest' | 'basic' }>) {
+    vi.spyOn(RWS2Adapter.prototype, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'getSessionCookie').mockReturnValue(null);
+    vi.spyOn(RWS2Adapter.prototype, 'subscribe').mockRejectedValue(new Error('no ws'));
+    vi.spyOn(RobotManager.prototype as any, 'fetchAll').mockResolvedValue(undefined);
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);
+    vi.spyOn(RobotManager, 'detectAllControllers').mockResolvedValue(candidates);
+    vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    return vi.spyOn(RobotManager.prototype as any, 'identifyCandidate')
+      .mockImplementation(async (_h: unknown, c: unknown) => ids[(c as { port: number }).port] ?? null);
+  }
+
+  for (const saved of [5466, 9805]) {
+    it(`a saved ${saved} without its scheme is an RWS 2.0 port: the RWS 2.0 candidate is adopted, never the RWS 1.0 one`, async () => {
+      const mgr = new RobotManager();
+      stub(saved === 9805 ? [RW6, RW7] : [RW6, RW8]);
+      rws2CtorArgs.length = 0;
+      await mgr.connect('127.0.0.1', 'u', 'p', saved);
+      expect(rws2CtorArgs[0][0]).toBe(`https://127.0.0.1:${saved === 9805 ? 9403 : 9805}`);
+      await mgr.disconnect();
+    });
+  }
+
+  it('a saved 80 without its scheme: protocol unknown, so the system id decides across both protocols', async () => {
+    const mgr = new RobotManager();
+    stub([RW6, RW8]);
+    mgr.setExpectedSystemId(ids[9805]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 80);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:9805');
+    await mgr.disconnect();
+  });
+
+  it('a saved 80 kept with no candidate: probed once more, and only then HTTPS is guessed (logged)', async () => {
+    const warn = vi.spyOn(Logger, 'warn');
+    const mgr = new RobotManager();
+    stub([]);
+    const probe = vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 80);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:80');
+    expect(warn.mock.calls.some(c => String(c[0]).includes('guessing HTTPS'))).toBe(true);
+    await mgr.disconnect();
+  });
+
+  it('a saved 80 kept: when the second probe answers, its scheme is used, not a guess', async () => {
+    const mgr = new RobotManager();
+    stub([]);
+    vi.spyOn(RobotManager, 'probeSpecificPort')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ port: 80, useHttps: true, authType: 'basic' });
+    rws2CtorArgs.length = 0;
+    await mgr.connect('127.0.0.1', 'u', 'p', 80);
+    expect(rws2CtorArgs[0][0]).toBe('https://127.0.0.1:80');
+    await mgr.disconnect();
+  });
+
+  it('chooseRecoveryCandidate with an unknown protocol (null): same rules over every candidate', async () => {
+    const identify = async (c: { port: number }) => ids[c.port] ?? null;
+    expect((await RobotManager.chooseRecoveryCandidate([RW6], null, null, identify)).match).toEqual(RW6);
+    const two = await RobotManager.chooseRecoveryCandidate([RW6, RW8], null, null, identify);
+    expect(two.match).toBeNull();
+    expect(two.reason).toMatch(/neither the protocol nor a system id/);
+    expect((await RobotManager.chooseRecoveryCandidate([RW6, RW8], null, ids[39127], identify)).match).toEqual(RW6);
+    expect((await RobotManager.chooseRecoveryCandidate([], null, null, identify)).reason).toBe('no RWS candidate among 0');
+  });
+
+  it('auto-detect names the ports it tried, from the port table', async () => {
+    const mgr = new RobotManager();
+    vi.spyOn(RobotManager, 'detectController').mockResolvedValue(null);
+    const err = await mgr.connect('192.0.2.10', 'u', 'p').catch(e => e);
+    expect(err).toMatchObject({ code: 'PROTOCOL_DETECT_FAILED' });
+    expect(err.message).toContain('443 (https), 80 (https, http), 5466 (https)');
+    expect(err.message).not.toContain('28447, 9403.');
+  });
+});
+
+describe('RobotManager port recovery on another machine', () => {
+  // A host that is not this PC (RFC 5737 address). The scan is mocked at the realm-aware level.
+  afterEach(() => { vi.restoreAllMocks(); });
+  const HOST = '192.0.2.10';
+  const OMNI = { port: 443, useHttps: true, authType: 'basic' as const };
+  const FOREIGN = { port: 80, useHttps: true, authType: 'basic' as const };
+  const PLAIN_BASIC = { port: 80, useHttps: false, authType: 'basic' as const };
+
+  function stub(detailed: Array<{ result: { port: number; useHttps: boolean; authType: 'basic' | 'digest' }; realm?: string }>) {
+    vi.spyOn(RWS2Adapter.prototype, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(RWS2Adapter.prototype, 'getSessionCookie').mockReturnValue(null);
+    vi.spyOn(RWS2Adapter.prototype, 'subscribe').mockRejectedValue(new Error('no ws'));
+    vi.spyOn(RobotManager.prototype as any, 'fetchAll').mockResolvedValue(undefined);
+    vi.spyOn(RobotManager, 'probeSpecificPort').mockResolvedValue(null);
+    vi.spyOn(RobotManager as any, 'detectAllDetailed').mockResolvedValue(detailed);
+    const local = vi.spyOn(RobotManager, 'discoverLocalControllers').mockResolvedValue([]);
+    const identify = vi.spyOn(RobotManager.prototype as any, 'identifyCandidate').mockResolvedValue('{OMNI}');
+    return { identify, local };
+  }
+
+  it('logs in only to candidates whose 401 realm is the ABB realm, never Basic over plain HTTP', async () => {
+    const mgr = new RobotManager();
+    // The ineligible ones first: identify would reach them before the ABB one.
+    const { identify, local } = stub([
+      { result: FOREIGN, realm: 'router' },
+      { result: PLAIN_BASIC, realm: 'validusers@robapi.abb' },
+      { result: OMNI, realm: 'validusers@robapi.abb' },
+    ]);
+    mgr.setExpectedSystemId('{OMNI}');
+    rws2CtorArgs.length = 0;
+    await mgr.connect(HOST, 'u', 'p', 9999, true);
+    expect(identify.mock.calls.map(c => (c[1] as { port: number; useHttps: boolean }))).toEqual([OMNI]);
+    expect(rws2CtorArgs[0][0]).toBe(`https://${HOST}:443`);
+    expect(local).not.toHaveBeenCalled();     // no listening-port scan for another machine
+    await mgr.disconnect();
+  });
+
+  it('without a system id, a candidate from another realm is never adopted', async () => {
+    const mgr = new RobotManager();
+    stub([{ result: FOREIGN, realm: 'router' }]);
+    rws2CtorArgs.length = 0;
+    await mgr.connect(HOST, 'u', 'p', 9999, true);
+    // Nothing eligible: the saved port is kept, the foreign 401 is not taken for the robot.
+    expect(rws2CtorArgs[0][0]).toBe(`https://${HOST}:9999`);
+    await mgr.disconnect();
+  });
+});
+
+describe('onSubscriptionEvent tap (slice 5)', () => {
+  const fire = (mgr: RobotManager, resource: string, value = '1') =>
+    (mgr as any).handleSubscriptionEvent({ resource, value, timestamp: new Date(0) });
+
+  it('forwards events for resources the manager does not consume (a signal)', () => {
+    const mgr = new RobotManager();
+    (mgr as any)._state.connected = true;
+    const seen: string[] = [];
+    mgr.onSubscriptionEvent(e => seen.push(`${e.resource}=${e.value}`));
+    fire(mgr, '/rw/iosystem/signals/Local/DRV_1/do_test;state', '1');
+    expect(seen).toEqual(['/rw/iosystem/signals/Local/DRV_1/do_test;state=1']);
+  });
+
+  it('also passes through events the manager consumes itself, before state is updated', () => {
+    const mgr = new RobotManager();
+    (mgr as any)._state.connected = true;
+    const seen: string[] = [];
+    mgr.onSubscriptionEvent(e => seen.push(e.resource));
+    fire(mgr, 'speedratio', '50');
+    expect(seen).toEqual(['speedratio']);
+    expect(mgr.state.speedRatio).toBe(50);   // the manager still applied it
+  });
+
+  it('a throwing tap does not break the manager or other taps', () => {
+    const mgr = new RobotManager();
+    (mgr as any)._state.connected = true;
+    const seen: string[] = [];
+    mgr.onSubscriptionEvent(() => { throw new Error('boom'); });
+    mgr.onSubscriptionEvent(e => seen.push(e.resource));
+    fire(mgr, 'controllerstate', 'motoron');
+    expect(seen).toEqual(['controllerstate']);
+    expect(mgr.state.ctrlstate).toBe('motoron');
+  });
+
+  it('a signal whose name starts with opmode, execution or speedratio never touches manager state', () => {
+    const mgr = new RobotManager();
+    (mgr as any)._state.connected = true;
+    Object.assign((mgr as any)._state, { opmode: 'AUTO', execstate: 'stopped', speedRatio: 100 });
+    const seen: string[] = [];
+    mgr.onSubscriptionEvent(e => seen.push(e.resource));
+    fire(mgr, '/rw/iosystem/signals/opmode_sel;state', '0');
+    fire(mgr, '/rw/iosystem/signals/Local/DRV_1/execution_done;state', '1');
+    fire(mgr, '/rw/iosystem/signals/speedratio_ao;state', '1');
+    fire(mgr, '/rw/rapid/execution;rapidexeccycle', 'forever');
+    expect(mgr.state.opmode).toBe('AUTO');
+    expect(mgr.state.execstate).toBe('stopped');
+    expect(mgr.state.speedRatio).toBe(100);
+    // The tap still sees every one of them, unrenamed.
+    expect(seen).toEqual([
+      '/rw/iosystem/signals/opmode_sel;state',
+      '/rw/iosystem/signals/Local/DRV_1/execution_done;state',
+      '/rw/iosystem/signals/speedratio_ao;state',
+      '/rw/rapid/execution;rapidexeccycle',
+    ]);
+  });
+
+  it('still applies the panel resources by href (RWS 1.0) and by friendly name (RWS 2.0)', () => {
+    const mgr = new RobotManager();
+    (mgr as any)._state.connected = true;
+    fire(mgr, '/rw/panel/opmode', 'MANR');
+    fire(mgr, '/rw/rapid/execution;ctrlexecstate', 'running');
+    fire(mgr, '/rw/panel/ctrlstate', 'motoron');
+    fire(mgr, 'speedratio', '25');
+    fire(mgr, 'coldetstate', 'TRIGGERED');
+    expect(mgr.state.opmode).toBe('MANR');
+    expect(mgr.state.execstate).toBe('running');
+    expect(mgr.state.ctrlstate).toBe('motoron');
+    expect(mgr.state.speedRatio).toBe(25);
+    expect(mgr.state.coldetstate).toBe('TRIGGERED');
+  });
+
+  it('delivers nothing while disconnected, and stops after the returned untap', () => {
+    const mgr = new RobotManager();
+    const seen: string[] = [];
+    const untap = mgr.onSubscriptionEvent(e => seen.push(e.resource));
+    fire(mgr, 'speedratio', '10');            // not connected: dropped
+    expect(seen).toEqual([]);
+    (mgr as any)._state.connected = true;
+    fire(mgr, 'speedratio', '20');
+    untap();
+    fire(mgr, 'speedratio', '30');
+    expect(seen).toEqual(['speedratio']);
   });
 });

@@ -169,9 +169,10 @@ export function lockOperationMode(pin: string, permanent: boolean): { path: stri
   };
 }
 
-/** Path + body to unlock the operation mode selector. */
-export function unlockOperationMode(): { path: string; body: string } {
-  return { path: p1('unlockOperationMode'), body: '' };
+/** Path + body to unlock the operation mode selector with the PIN the lock
+ *  set (the form's one field on RW 6.16.03; the body used to be empty). */
+export function unlockOperationMode(pin: string): { path: string; body: string } {
+  return { path: p1('unlockOperationMode'), body: `pin=${encodeURIComponent(pin)}` };
 }
 
 // ─── RAPID UI instructions ───────────────────────────────────────────────────
@@ -186,7 +187,9 @@ export function activeUiInstruction(): string {
  * Used to respond programmatically to TPReadNum, TPReadFK, etc.
  *
  * @param stackurl - Full stack URL from the UiInstruction.stack field (e.g. 'RAPID/T_ROB1/%$104')
- * @param uiparam  - Parameter name: 'Result', 'TPFK1' … 'TPFK5', 'TPCompleted', etc.
+ * @param uiparam  - Parameter name, one of the instruction's own (TPReadNum on
+ *   RW 6.16.03: 'TPAnswer', then 'TPCompleted'); the live list is at
+ *   GET /rw/rapid/uiinstr/active/params/{stackurl}.
  * @param value    - New value (e.g. '42', 'TRUE', '0')
  */
 export function setUiInstructionParam(
@@ -224,7 +227,19 @@ export function deactivateAllRapidTasks(): { path: string; body: string } {
 
 /**
  * Path + body to search RAPID symbols across a task.
- * POST /rw/rapid/symbols?action=search-symbol
+ * POST /rw/rapid/symbols?action=search-symbols (plural: the singular
+ * `search-symbol` is refused 400 -1073445879 for every body on RW 6.16.03).
+ *
+ * RW 6.16.03 accepts `task=` but ignores it, and a search at `blockurl=RAPID`
+ * (even with recursive=TRUE) does not reach task symbols, so the scope comes
+ * from `blockurl`: `RAPID/{task}` when the caller gives none. `view=block`,
+ * `symtyp=any` and `recursive=TRUE` are defaulted as on the RWS 2.0 side;
+ * without `symtyp` only the module entries come back. `task=` is still sent
+ * (harmless). Live-verified 2026-09-29 on RW 6.16.03 (6.16.3007) via
+ * `?json=1` captures with a literal '/' in `blockurl`. This exact request
+ * (XHTML Accept, no `json=1`, `blockurl` percent-encoded as `RAPID%2FT_ROB1`,
+ * fields in this order) is the one the client sends, and it has run on
+ * RW 6.16.03; the loadmod form body already carries '%2F' on RWS 1.0.
  */
 export function searchRapidSymbols(params: {
   task: string;
@@ -238,13 +253,13 @@ export function searchRapidSymbols(params: {
 }): { path: string; body: string } {
   const parts: string[] = [];
   parts.push(`task=${encodeURIComponent(params.task)}`);
-  if (params.view)      parts.push(`view=${encodeURIComponent(params.view)}`);
+  parts.push(`view=${encodeURIComponent(params.view || 'block')}`);
   if (params.vartyp)    parts.push(`vartyp=${encodeURIComponent(params.vartyp)}`);
-  if (params.symtyp)    parts.push(`symtyp=${encodeURIComponent(params.symtyp)}`);
+  parts.push(`symtyp=${encodeURIComponent(params.symtyp || 'any')}`);
   if (params.dattyp)    parts.push(`dattyp=${encodeURIComponent(params.dattyp)}`);
   if (params.regexp)    parts.push(`regexp=${encodeURIComponent(params.regexp)}`);
-  if (params.blockurl)  parts.push(`blockurl=${encodeURIComponent(params.blockurl)}`);
-  if (params.recursive !== undefined) parts.push(`recursive=${params.recursive}`);
+  parts.push(`blockurl=${encodeURIComponent(params.blockurl || `RAPID/${params.task}`)}`);
+  parts.push(`recursive=${params.recursive === undefined ? 'TRUE' : String(params.recursive)}`);
   return {
     path: buildPath(RAPID.searchRapidSymbols.rws1 as PathSpec),
     body: parts.join('&'),
@@ -437,8 +452,11 @@ export function clearAllElogs(): { path: string; body: string } {
  * Use '$HOME/' prefix to target the controller home directory.
  *
  * Each segment is percent-encoded so names with spaces, '#', '%', etc. survive
- * URL parsing. The '$' of IRC5 volume roots ($HOME, $TEMP, …) stays literal -
- * the controller rejects '%24'.
+ * URL parsing. The '$' of IRC5 volume roots ($HOME, $TEMP, …) stays literal,
+ * which works; '%24' is accepted too (GET, PUT and DELETE via %24HOME and
+ * %24TEMP, live-verified 2026-09-29 on RW 6.16.03). What RWS 1.0 refuses is
+ * the volume name with no '$' at all, on GET and on directory create (PUT,
+ * DELETE and loadmod accept it).
  */
 export function fileServicePath(remotePath: string): string {
   const normalised = remotePath.replace(/^\//, '');
@@ -508,7 +526,7 @@ export function copyFile(sourcePath: string, destPath: string): { path: string; 
 /**
  * Path + body to rename a file in place. RWS 1.0 renames via a POST to the file's
  * fileservice path with `fs-action=rename` and a bare-filename `fs-newname` (the
- * same in-directory form as copy). Live-verified on IRC5 RW6.16 (2026-08-11): 204.
+ * same in-directory form as copy). Live-verified on the RobotWare 6.16 virtual controller (2026-08-11): 204.
  * @param sourcePath - Existing file path, e.g. '$HOME/A.mod'.
  * @param newName    - New bare filename in the same directory (a directory
  *                     component is stripped).
@@ -546,14 +564,22 @@ function signalPath(network: string, device: string, name: string): string {
   if (network && device) {
     return buildPath(IO.readSignal.rws1 as PathSpec, { network, device, name });
   }
-  return `/rw/iosystem/signals/${encodeURIComponent(name)}`;
+  return buildPath(IO.readSignalByName.rws1 as PathSpec, { name });
 }
 
 /**
  * Path + body to search signals by criteria on RWS 1.0. Uses the query-action
  * form `POST /rw/iosystem/signals?action=signal-search`; criteria AND-compose and
- * `name` is a substring match, same semantics as RWS 2.0. Live-verified on IRC5
- * RW6.16 (2026-08-11): returns the same `ios-signal-li` list as listAllSignals.
+ * `name` is a case-insensitive PREFIX match, same semantics as RWS 2.0 (the
+ * "substring" wording up to 2026-09-29 was wrong: on RW 6.16, 2026-09-27,
+ * `name=S` returned the 14 of 62 signals that start with S, `RAKE` found
+ * nothing and `drv1brake` found the same 3 as `DRV1BRAKE`). `device`, `network`
+ * and `category` match whole values, device and category ignoring case (on
+ * RW 6.16 only `device` was exercised: `PAN` 0 hits, `panel` and `PANEL` 42;
+ * the `network` and `category` evidence is from RW 7.21 and 8.1.1 over RWS
+ * 2.0); `*` matches nothing; an empty body returns every signal, and the
+ * controller does the filtering. Live-verified on the RobotWare 6.16 virtual controller (2026-08-11): returns the same
+ * `ios-signal-li` list as listAllSignals.
  */
 export function searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): { path: string; body: string } {
   const parts: string[] = [];
@@ -566,8 +592,10 @@ export function searchSignals(criteria: { name?: string; device?: string; networ
 }
 
 /**
- * Path to list all I/O signals (paginated).
- * @param start  - Starting index (default 0)
+ * Path of the first page of the I/O signal list. Later pages are the ones the
+ * controller links from each page (`rel="next"`), which RwsClient.listAllSignals
+ * follows as given.
+ * @param start  - `start` of the request (default 0)
  * @param limit  - Max results per page (default 100)
  */
 export function allSignals(start = 0, limit = 100): string {

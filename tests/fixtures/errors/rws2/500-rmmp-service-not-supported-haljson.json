@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "500-rmmp-service-not-supported-haljson",
+  "request": {
+    "method": "GET",
+    "path": "/users/rmmp",
+    "body": ""
+  },
+  "response": {
+    "status": 500,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:5466/\" } } ,\"status\" : {\"code\":-1073445885, \"msg\":\"rapi_user_resource.cpp[1088] Unspecified Error -1073445885 -1\"}}"
+  }
+}

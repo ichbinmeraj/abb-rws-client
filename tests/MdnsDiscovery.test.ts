@@ -175,18 +175,18 @@ describe('MdnsDiscovery', () => {
         'VC=',
       ])
       .in('ar')
-      .a('DESKTOP-VC.local', '192.168.70.149')
+      .a('DESKTOP-VC.local', '10.0.0.20')
       .build();
 
     const promise = discover(fake);
-    fake.emitMessage(pkt, '192.168.70.149');
+    fake.emitMessage(pkt, '10.0.0.20');
     const found = await promise;
 
     expect(found).toHaveLength(1);
     expect(found[0]).toEqual({
       instanceName: 'RobotWebServices_Omni1',
       systemName: 'Omni1',
-      host: '192.168.70.149',
+      host: '10.0.0.20',
       port: 5466,
       rwVersion: '7.21.0',
       sysGuid: '{8a3e0f9e-1111-2222-3333-444455556666}',
@@ -241,8 +241,8 @@ describe('MdnsDiscovery', () => {
       .build();
 
     const promise = discover(fake);
-    fake.emitMessage(pkt1, '192.168.70.149');
-    fake.emitMessage(pkt2, '192.168.70.149');
+    fake.emitMessage(pkt1, '10.0.0.20');
+    fake.emitMessage(pkt2, '10.0.0.20');
     const found = await promise;
     expect(found).toHaveLength(1);
     expect(found[0].probableProtocol).toBe('rws2');
@@ -345,9 +345,9 @@ describe('MdnsDiscovery', () => {
     await discoverControllersMdns({
       timeoutMs: 10,
       socketFactory: () => fake,
-      interfaceAddrs: ['192.168.70.149', '10.0.0.5'],
+      interfaceAddrs: ['10.0.0.20', '10.0.0.5'],
     });
-    expect(fake.multicastInterfaces).toEqual(['192.168.70.149', '10.0.0.5']);
+    expect(fake.multicastInterfaces).toEqual(['10.0.0.20', '10.0.0.5']);
     // 2 queries × (1 default send + 2 interface sends) = 6
     expect(fake.sent).toHaveLength(6);
   });

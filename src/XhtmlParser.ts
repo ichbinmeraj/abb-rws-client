@@ -13,12 +13,34 @@ export class XhtmlParser {
 
   /** Returns an array of span-value maps, one per <li class="liClass"> in the document. */
   getAllStates(liClass: string): Array<Record<string, string>> {
+    return this.collect(new RegExp(`<li class="(?:${liClass})"([^>]*)>([\\s\\S]*?)</li>`, 'g'), false);
+  }
+
+  /**
+   * Every `<li class="...">` entry in the document, whatever its class, in
+   * document order. Each map carries the class as `_type` (the key the HAL JSON
+   * representation uses) next to `_title`, `_href` and the span fields. For
+   * resources whose item classes are not recorded yet, so nothing is dropped.
+   * Entries are matched flat: a nested `<li>` ends its parent at the first
+   * `</li>`, unlike HalJsonParser.getAllEntries, which lists nested children
+   * separately. No body read so far through this method nests.
+   */
+  getAllEntries(): Array<Record<string, string>> {
+    return this.collect(/<li class="([^"]+)"([^>]*)>([\s\S]*?)<\/li>/g, true);
+  }
+
+  /**
+   * Attributes and inner markup are the last two groups of `liRe`, read from
+   * the end so a capturing group inside a caller's `liClass` cannot shift them.
+   * With `withType`, group 1 is the class.
+   */
+  private collect(liRe: RegExp, withType: boolean): Array<Record<string, string>> {
     const results: Array<Record<string, string>> = [];
-    const liRe = new RegExp(`<li class="${liClass}"([^>]*)>([\\s\\S]*?)</li>`, 'g');
     for (const m of this.html.matchAll(liRe)) {
-      const attrs = m[1];
-      const inner = m[2];
+      const attrs = m[m.length - 2] ?? '';
+      const inner = m[m.length - 1] ?? '';
       const fields: Record<string, string> = {};
+      if (withType) { fields['_type'] = m[1]; }
 
       const titleM = attrs.match(/title="([^"]*)"/);
       if (titleM) { fields['_title'] = titleM[1]; }

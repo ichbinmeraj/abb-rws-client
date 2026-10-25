@@ -235,6 +235,11 @@ describe('ResourceMapper', () => {
       expect(path).toBe('/rw/iosystem/signals/Local/DRV_1/DO_1?action=set');
       expect(path).not.toContain(';state');
     });
+
+    it('uses the flat path, encoded, when network and device are empty', () => {
+      expect(setSignal('', '', 'doBwdOnPath').path).toBe('/rw/iosystem/signals/doBwdOnPath?action=set');
+      expect(setSignal('', '', 'a/b').path).toBe('/rw/iosystem/signals/a%2Fb?action=set');
+    });
   });
 
   describe('subscriptions', () => {
@@ -306,7 +311,7 @@ describe('ResourceMapper - action builders (path + form body)', () => {
     ['restartController(istart)',     restartController('istart'),    '/rw/panel?action=restart',                'restart-mode=istart'],
     ['restartController(pstart)',     restartController('pstart'),    '/rw/panel?action=restart',                'restart-mode=pstart'],
     ['restartController(bstart)',     restartController('bstart'),    '/rw/panel?action=restart',                'restart-mode=bstart'],
-    ['unlockOperationMode()',         unlockOperationMode(),          '/rw/panel/opmode?action=unlock',          ''],
+    ['unlockOperationMode(1234)',     unlockOperationMode('1234'),    '/rw/panel/opmode?action=unlock',          'pin=1234'],
     ['activateRapidTask(T_ROB2)',     activateRapidTask('T_ROB2'),    '/rw/rapid/tasks/T_ROB2?action=activate',  ''],
     ['deactivateRapidTask(T_ROB2)',   deactivateRapidTask('T_ROB2'),  '/rw/rapid/tasks/T_ROB2?action=deactivate', ''],
     ['activateAllRapidTasks()',       activateAllRapidTasks(),        '/rw/rapid/tasks?action=activate',         ''],
@@ -404,14 +409,27 @@ describe('setRapidSymbol', () => {
       'value=%5B1%2C0%2C0%2C0%5D',
     );
   });
+
+  it('encodes a percent sign once only: RW 6.16.03 keeps the value as written', () => {
+    expect(setRapidSymbol('T_ROB1', 'user', 's1', '"%41%25"').body).toBe('value=%22%2541%2525%22');
+  });
 });
 
 describe('searchRapidSymbols', () => {
-  it('builds a minimal body from the required task param', () => {
+  it('uses the plural search-symbols action and scopes to the task by blockurl', () => {
+    // RW 6.16.03: the singular action is refused for every body, and task= is
+    // ignored, so the defaults must carry the scope and the symbol kinds.
     expect(searchRapidSymbols({ task: 'T_ROB1' })).toEqual({
-      path: '/rw/rapid/symbols?action=search-symbol',
-      body: 'task=T_ROB1',
+      path: '/rw/rapid/symbols?action=search-symbols',
+      body: 'task=T_ROB1&view=block&symtyp=any&blockurl=RAPID%2FT_ROB1&recursive=TRUE',
     });
+  });
+
+  it('keeps an explicit blockurl, view and symtyp over the defaults', () => {
+    const { body } = searchRapidSymbols({
+      task: 'T_ROB1', view: 'scope', symtyp: 'prc', blockurl: 'RAPID/T_ROB1/Module1',
+    });
+    expect(body).toBe('task=T_ROB1&view=scope&symtyp=prc&blockurl=RAPID%2FT_ROB1%2FModule1&recursive=TRUE');
   });
 
   it('appends optional filters in a stable order with recursive last', () => {
@@ -430,9 +448,11 @@ describe('searchRapidSymbols', () => {
     );
   });
 
-  it('includes recursive=false explicitly but omits it when undefined', () => {
-    expect(searchRapidSymbols({ task: 'T1', recursive: false }).body).toBe('task=T1&recursive=false');
-    expect(searchRapidSymbols({ task: 'T1' }).body).not.toContain('recursive');
+  it('sends recursive=false explicitly and defaults it to TRUE when undefined', () => {
+    expect(searchRapidSymbols({ task: 'T1', recursive: false }).body).toBe(
+      'task=T1&view=block&symtyp=any&blockurl=RAPID%2FT1&recursive=false',
+    );
+    expect(searchRapidSymbols({ task: 'T1' }).body).toContain('recursive=TRUE');
   });
 });
 

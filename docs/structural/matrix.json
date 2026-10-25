@@ -1,9 +1,10 @@
 {
-  "$comment": "Structural coverage matrix - ground truth for docs/tasks/structural-coverage-loop.md. Every cell must end verified | manual-only | excluded, never untested. Generated Phase 0, 2026-08-09.",
+  "$comment": "Structural coverage matrix - ground truth for npm run structural. Every cell must end verified | manual-only | excluded, never untested. Generated Phase 0, 2026-08-09. automation: auto (tests against a controller, plus a mock half in tests/structural/<cell-id>.mock.test.ts for some cells, which fails the cell when it fails and never verifies it alone), mock (tests against an in-process mock only, which verify the cell), manual (a written procedure).",
   "generatedAt": "2026-08-09",
   "controllers": {
-    "rws1": { "label": "IRC5 RW6.16.3007", "transport": "http+digest", "port": 35112 },
-    "rws2": { "label": "OmniCore RW7.21.0 / RW8.1.1", "transport": "https+basic", "port": 9805 }
+    "$comment": "What the cells run against; nothing reads this block. One controller per generation, found by discovery on this PC every run (tests/helpers/liveControllers.ts): the lowest RobotWare major, then the lowest port. VC ports move on every restart, so none is fixed here; RWS_TEST_PORT_RW6 / RWS_TEST_PORT_RW7 name one.",
+    "rws1": { "label": "IRC5 virtual controller, RobotWare 6.16.03", "transport": "http+digest, through fetch, or node:http on a port fetch refuses" },
+    "rws2": { "label": "OmniCore virtual controller, RobotWare 7.21.4, or 8.2.1 when no RobotWare 7 one runs", "transport": "https+basic, through node:http" }
   },
   "statusValues": ["untested", "verified", "manual-only", "excluded"],
   "cells": [
@@ -12,6 +13,7 @@
       "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
       "properties": [
         "plain GET mid-flight -> typed RwsError, never an uncaught throw",
+        "the same through node:http, the RWS 1.0 transport on a port fetch refuses (the proxy listens on one)",
         "mastership-guarded POST mid-flight -> mastership released or reacquirable, no stuck hold",
         "file transfer mid-flight -> typed error, no partial file silently accepted",
         "quality reflects the drop (stale or polling), never stays live"
@@ -34,6 +36,7 @@
       "properties": [
         "heartbeat detects within 2x ping interval",
         "frozen socket is terminated, reconnect path runs",
+        "the same with the HTTP legs through node:http, the RWS 1.0 transport on a port fetch refuses",
         "onLost fires at most once if the budget is exhausted",
         "onRestored fires after recovery"
       ]
@@ -51,18 +54,19 @@
 
     {
       "id": "S03-warm-restart", "scenario": "Controller warm restart",
-      "generation": "rws1", "automation": "auto", "destructive": 1, "status": "untested",
+      "generation": "rws1", "automation": "auto", "destructive": 1, "status": "excluded",
+      "note": "Excluded while rw6 is on the test suites' never-restart list (tests/helpers/restartPolicy.ts: the RW6 VC did not come back from a warm restart on 2026-10-24): the cell skips on rws1 whatever RWS_STRUCTURAL_ALLOW_RESTART says. Set the status back to untested when rw6 leaves the list.",
       "properties": [
         "mid-session: silent re-auth, consumer sees no error",
         "mid-subscription: subscriber re-registers, events resume",
         "mid-mastership-hold: hold is not falsely believed after restart",
-        "RWS port may DRIFT on IRC5 (new RobVC process) - client or test must rediscover",
-        "UPDATE 2026-08-10: the ~5 s setup abort is FIXED (commit 289b59e wraps the pre-restart connect()/getSpeedRatio in a CONTROLLER_BUSY retry). The cell now runs the full ~19 min and reaches the real post-restart assertions. Remaining failure: the post-restart speedratio=42 SUBSCRIPTION EVENT does not arrive within the window (expectSpeedEvent, soft assertion). This is timing-sensitive, not a deterministic client bug - rws2 PASSED this exact cell in an earlier isolated run; a freshly-rebooted VC can lag on WebSocket event delivery. Options for whoever picks this up: widen the post-restart event window well past the current bound, OR assert re-registration by the group id / a fresh read rather than by event arrival (the write is already confirmed to land via pollLive). Do NOT keep re-running - each attempt is two multi-minute VC restarts."
+        "RWS port may DRIFT on IRC5 (new RobVC process) - client or test must rediscover"
       ]
     },
     {
       "id": "S03-warm-restart", "scenario": "Controller warm restart",
       "generation": "rws2", "automation": "auto", "destructive": 1, "status": "untested",
+      "note": "Runs on RobotWare 7 only: rw8 is on the test suites' never-restart list (tests/helpers/restartPolicy.ts: a restart resets the pendant's Remote Access), so with an RW8 VC as the RWS 2.0 controller the cell skips and stays untested. Arm it with RWS_STRUCTURAL_ALLOW_RESTART=1 and the RW7 VC as the RWS 2.0 controller (RWS_TEST_PORT_RW7).",
       "properties": [
         "mid-session: fresh session cookie adopted (old one is dead)",
         "mid-subscription: re-POST + WS upgrade with the NEW cookie, not the stale one",
@@ -105,16 +109,17 @@
       "id": "S05-session-slot-pressure", "scenario": "Session-slot pressure over reconnect cycles",
       "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
       "properties": [
-        "EXCLUDED sub-property: 'controller session count flat' is NOT OBSERVABLE on RWS 2.0. The cell's own premise guard demonstrated it: connecting a client leaves GET /users unchanged (2 -> 2), so that list enumerates users, not sessions. A measurement that cannot see one deliberate session cannot see twenty accidental ones, and the test correctly refuses to assert a leak it cannot detect rather than reporting a false 'flat'.",
-        "credentials are not re-sent once a session cookie is held",
-        "subscription re-POST rides the existing session (no new session per subscribe)",
-        "OPEN: the two properties above need a mock HTTPS server to assert - a TCP chaos proxy cannot read TLS headers, so wire-level claims are unobservable through it on this generation"
+        "EXCLUDED sub-property: 'controller session count flat' is NOT OBSERVABLE on RWS 2.0. No RWS 2.0 resource lists or counts sessions: GET /users answers the same two links (rmmp, grant-exists) whoever is logged in, which is why connecting a client left the count at 2 (2 -> 2). The session-count test is skipped on rws2 with that reason, and the count is left out of the subscribe and RobotManager tests; every disconnect's accepted GET /logout and no 503 during churn are asserted at the header tap.",
+        "credentials are not re-sent once a session cookie is held, asserted at the header tap (since 1.5.1, which sends the Basic credentials only until a session cookie is held and again after a 401 to it; a known gap before)",
+        "subscription re-POST rides the existing session (no new session per subscribe): the session cookie the client holds, which it adopts from a subscription answer's Set-Cookie, is the same after 6 subscribe/unsubscribe cycles",
+        "The header tap is a plaintext hop between the client and the chaos proxy, so the request headers are readable on this generation although the controller is HTTPS"
       ]
     },
 
     {
       "id": "S06-401-storm", "scenario": "401 storm / credentials changed mid-session",
       "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Its mock half (the storm against a mock controller) is tests/structural/S06-401-storm.mock.test.ts, which runs in npm test too.",
       "properties": [
         "typed AUTH_FAILED, not a generic error",
         "no infinite retry loop",
@@ -124,6 +129,7 @@
     {
       "id": "S06-401-storm", "scenario": "401 storm / credentials changed mid-session",
       "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Its mock half (the storm against a mock controller) is tests/structural/S06-401-storm.mock.test.ts, which runs in npm test too.",
       "properties": [
         "typed AUTH_FAILED, not a generic error",
         "no infinite retry loop",
@@ -189,6 +195,7 @@
     {
       "id": "S10-503-storm", "scenario": "503 storm / backpressure",
       "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Its mock half (the storm against a mock controller) is tests/structural/S10-503-storm.mock.test.ts, which runs in npm test too.",
       "properties": [
         "CONTROLLER_BUSY typed",
         "backpressure holds under the <20 req/s ceiling",
@@ -198,6 +205,7 @@
     {
       "id": "S10-503-storm", "scenario": "503 storm / backpressure",
       "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Its mock half (the storm against a mock controller) is tests/structural/S10-503-storm.mock.test.ts, which runs in npm test too.",
       "properties": [
         "CONTROLLER_BUSY typed",
         "backpressure holds under the <20 req/s ceiling",
@@ -207,7 +215,8 @@
 
     {
       "id": "S11-event-flood", "scenario": "Subscription event flood",
-      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "generation": "rws1", "automation": "mock", "destructive": 0, "status": "untested",
+      "note": "Runs against an in-process mock controller only (tests/structural/S11-event-flood.mock.test.ts, in npm test too): a flood of thousands of events cannot be provoked on a controller: toggling I/O is disruptive, and at ABB's recommended 20 requests a second at most it yields a few hundred events.",
       "properties": [
         "no unbounded buffering",
         "events delivered in order",
@@ -216,7 +225,8 @@
     },
     {
       "id": "S11-event-flood", "scenario": "Subscription event flood",
-      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "generation": "rws2", "automation": "mock", "destructive": 0, "status": "untested",
+      "note": "Runs against an in-process mock controller only (tests/structural/S11-event-flood.mock.test.ts, in npm test too): a flood of thousands of events cannot be provoked on a controller: toggling I/O is disruptive, and at ABB's recommended 20 requests a second at most it yields a few hundred events.",
       "properties": [
         "no unbounded buffering",
         "events delivered in order",
@@ -227,6 +237,7 @@
     {
       "id": "S12-malformed", "scenario": "Malformed / truncated responses",
       "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Its mock half (broken payloads in intact framing, a stalled body) is tests/structural/S12-malformed.mock.test.ts, which runs in npm test too.",
       "properties": [
         "parsers never throw uncaught",
         "every failure is a typed RwsError (PARSE_ERROR family)",
@@ -236,6 +247,7 @@
     {
       "id": "S12-malformed", "scenario": "Malformed / truncated responses",
       "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Its mock half (broken payloads in intact framing, a stalled body) is tests/structural/S12-malformed.mock.test.ts, which runs in npm test too.",
       "properties": [
         "parsers never throw uncaught (XHTML and hal+json paths)",
         "every failure is a typed RwsError (PARSE_ERROR family)",
@@ -306,6 +318,27 @@
       ],
       "note": "Occupies the machine ~24 h; scheduling is a human checkpoint per the task doc.",
       "manualProcedure": "1. Restart both VCs so no session backlog is carried in.\n2. `node scripts/soak.mjs --minutes 1440` (add `--rss-drift-mb` / `--handle-growth` to override the thresholds).\n3. Leave the machine otherwise idle - the run holds a manager against each generation and injects a fault every 15 s.\n\nThresholds are fixed BEFORE the run, in the script, so the verdict cannot be rationalised afterwards:\n- **RSS drift** <= 75 MB from a POST-WARMUP baseline (warm-up excluded because the first minute is lazy imports and JIT, which never recur).\n- **Handle growth** <= 5 for any single active-handle kind. Sockets and timers are what leak here; one socket in TIME_WAIT is noise, sustained growth is not.\n- **Uncaught exceptions** exactly 0. Any unhandled rejection fails the soak outright regardless of memory.\n- **Final state** must match an INDEPENDENT client's reading, not the manager's own cached view.\n\nOutput lands in `docs/structural/soak-<timestamp>.json`. A scaled run is written with `scaled: true` and is evidence the harness works, NOT the acceptance run."
+    },
+
+    {
+      "id": "S16-timed-out-write", "scenario": "Write whose answer never arrives, then the read-back",
+      "generation": "rws1", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Added 2026-10-11 with the client's read-back of an unanswered request and the disconnect order. The cell cuts the answer to a speed-ratio write through the chaos proxy and reads the value back; it restores what it found.",
+      "properties": [
+        "write with the answer cut -> typed RwsError (NETWORK_ERROR), never an uncaught throw",
+        "the read-back decides: the same client reads what the controller holds once the network is healthy",
+        "no stranded mastership: the next write through the same session succeeds"
+      ]
+    },
+    {
+      "id": "S16-timed-out-write", "scenario": "Write whose answer never arrives, then the read-back",
+      "generation": "rws2", "automation": "auto", "destructive": 0, "status": "untested",
+      "note": "Added 2026-10-11 with the client's read-back of an unanswered request and the disconnect order. The cell cuts the answer to a speed-ratio write through the chaos proxy and reads the value back; it restores what it found.",
+      "properties": [
+        "write with the answer cut -> typed RwsError (NETWORK_ERROR), never an uncaught throw",
+        "the read-back decides: the same client reads what the controller holds once the network is healthy",
+        "no stranded write access: the next write through the same session succeeds, and no lock is left counted as held"
+      ]
     }
   ]
 }

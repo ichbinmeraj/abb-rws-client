@@ -22,6 +22,14 @@
  * each parser expects and can be told to blast. Nothing here touches a VC or
  * consumes a controller session; that is deliberate, not an omission.
  *
+ * So the whole cell needs no controller, and it runs in plain `npm test` as
+ * well as in `npm run structural`, where the runner maps it onto the
+ * S11-event-flood cells by its describe title (`<cell-id>/<generation>`).
+ * The matrix marks those cells `"automation": "mock"`, the one case where
+ * tests against a mock make a cell verified (scripts/structural.mjs). Until
+ * 1.5.1 it sat behind RWS_STRUCTURAL=1 and a live discovery, so it never ran
+ * in `npm test` and was skipped whenever no controller was running.
+ *
  * The two generations are driven through their real code paths:
  *   - RWS 1.0: WsSubscriber, with a stand-in HttpSession for the two
  *     registration legs it needs (POST /subscription, DELETE /subscription/{id})
@@ -41,17 +49,18 @@
  * gets to run; without that the only queue that grows is the test's own.
  */
 
-import { it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import * as http from 'node:http';
-import type { AddressInfo, Socket } from 'node:net';
+import type { Socket } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket as ServerWebSocket } from 'ws';
 import { RwsClient2 } from '../../src/RwsClient2.js';
 import { WsSubscriber } from '../../src/WsSubscriber.js';
 import type { HttpSession } from '../../src/HttpSession.js';
 import type { SubscriptionEvent, SubscriptionResource } from '../../src/types.js';
-import { cell, until } from '../helpers/structuralHarness.js';
+import { until } from '../helpers/structuralHarness.js';
 import { snapshot, compare, type ResourceSnapshot } from '../helpers/leakProbe.js';
+import { listenOnPort } from '../helpers/scriptedHttp.js';
 
 // ─── Tuning ──────────────────────────────────────────────────────────────────
 
@@ -261,8 +270,9 @@ async function startFloodServer(): Promise<FloodServer> {
     ws.on('error', () => undefined);
   });
 
-  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  port = (server.address() as AddressInfo).port;
+  // A free port fetch accepts: on a refused one the RWS 1.0 subscriber's
+  // session would send through node:http without a word (listenOnPort).
+  port = await listenOnPort(server);
 
   const live = (): ServerWebSocket | null => {
     for (let i = sockets.length - 1; i >= 0; i--) {
@@ -496,7 +506,7 @@ afterEach(async () => {
 });
 
 for (const generation of ['rws1', 'rws2'] as const) {
-  cell('S11-event-flood', generation, () => {
+  describe(`S11-event-flood/${generation}`, () => {
     it('every event in a flood reaches the handler exactly once and in order', async () => {
       const server = await startFloodServer();
       const o: Open = { server };

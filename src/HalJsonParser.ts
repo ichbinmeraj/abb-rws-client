@@ -29,8 +29,42 @@ export class HalJsonParser {
 
   constructor(body: string) {
     let parsed: JsonNode | null = null;
-    try { parsed = JSON.parse(body) as JsonNode; } catch { parsed = null; }
+    try {
+      parsed = JSON.parse(body) as JsonNode;
+    } catch {
+      // One known malformation is repaired: a comma right before a closing
+      // brace or bracket. RW 6.16.03 answers `GET .../mechunits/ROB_1/smbdata?json=1`
+      // with `"sensor_memory_axis_cal_data_status":"3", } ] }` (2026-10-01).
+      try { parsed = JSON.parse(HalJsonParser.dropTrailingCommas(body)) as JsonNode; } catch { parsed = null; }
+    }
     this.root = parsed;
+  }
+
+  /**
+   * `text` without the commas that stand right before a `}` or `]` (white
+   * space between allowed), outside string literals: a value such as
+   * `"a, }"` is left as it is. Everything else is unchanged, so a body that
+   * is malformed in another way still fails to parse.
+   */
+  static dropTrailingCommas(text: string): string {
+    let out = '';
+    let inString = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inString) {
+        out += c;
+        if (c === '\\' && i + 1 < text.length) { out += text[++i]; } else if (c === '"') { inString = false; }
+        continue;
+      }
+      if (c === '"') { inString = true; out += c; continue; }
+      if (c === ',') {
+        let j = i + 1;
+        while (j < text.length && /\s/.test(text[j])) { j++; }
+        if (text[j] === '}' || text[j] === ']') { continue; }
+      }
+      out += c;
+    }
+    return out;
   }
 
   /** Cheap sniff used to pick a parser: HAL bodies are single JSON objects. */
@@ -48,6 +82,22 @@ export class HalJsonParser {
     const results: Array<Record<string, string>> = [];
     this.walk(this.root, obj => {
       if (obj['_type'] === type) { results.push(HalJsonParser.flatten(obj)); }
+    });
+    return results;
+  }
+
+  /**
+   * Every typed resource in the document, whatever its `_type`, in document
+   * order, with `_type` kept in each map (XhtmlParser.getAllEntries analogue).
+   * A nested typed child is its own entry here; the XHTML parser cuts a parent
+   * at its first nested `</li>`, so the two can differ for nested resources.
+   * No body read so far through getAllEntries nests.
+   */
+  getAllEntries(): Array<Record<string, string>> {
+    const results: Array<Record<string, string>> = [];
+    this.walk(this.root, obj => {
+      const type = obj['_type'];
+      if (typeof type === 'string') { results.push({ _type: type, ...HalJsonParser.flatten(obj) }); }
     });
     return results;
   }
@@ -114,11 +164,17 @@ export class HalJsonParser {
     }
   }
 
-  /** Scalar fields → strings; `_title` kept; self link exposed as `_href` (XHTML parity). */
+  /**
+   * Scalar fields → strings; `_title` kept; self link exposed as `_href` (XHTML parity).
+   * `_value` is kept too: RW 6.16.03 puts a `ctrl-env` entry's value there in
+   * the RWS 1.0 `?json=1` form (2026-10-18).
+   */
   private static flatten(obj: JsonObject): Record<string, string> {
     const fields: Record<string, string> = {};
     const title = obj['_title'];
     if (typeof title === 'string') { fields['_title'] = title; }
+    const value = obj['_value'];
+    if (typeof value === 'string') { fields['_value'] = value; }
     const links = obj['_links'];
     if (links && typeof links === 'object' && !Array.isArray(links)) {
       const self = (links as JsonObject)['self'];

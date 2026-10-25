@@ -18,6 +18,10 @@ function panelOps<TBase extends Rws2Base>(Base: TBase) {
       return (d['ctrlstate'] ?? 'init') as ControllerState;
     }
 
+    /** Set the motor state. Sent as is: no mastership or write access is taken
+     *  here, and ABB's RWS 2.0 reference lists no mastership prerequisite for
+     *  the ctrl-state resource. `RobotManager.setMotorsOff` sends 'motoroff'
+     *  first and takes access only when the controller refuses it as not held. */
     setControllerState(state: 'motoron' | 'motoroff'): Promise<void> {
       const { path, body } = R2.setControllerState(state);
       return this.req('POST', path, body).then(() => {});
@@ -39,25 +43,40 @@ function panelOps<TBase extends Rws2Base>(Base: TBase) {
      * Set the speed ratio (0-100). Live-verified format on OmniCore VC RW7.21
      * via scripts/probe-speedratio.js (2026-05-07):
      *   ✓ POST /rw/panel/speedratio?action=setspeedratio  body speed-ratio=N
-     *     (RWS 1.0 wire format - OmniCore kept the legacy path)
+     *     (read at the time as "RWS 1.0 wire format - OmniCore kept the legacy
+     *     path"; that reading was wrong, see the 2026-09-27 lines below)
      *     Requires `edit` mastership: 403 "user does not have required
      *     mastership" without it.
      *   ✗ POST /rw/panel/speedratio  body speedratio=N  → 400 "Invalid input form data"
      *   ✗ POST /rw/panel/speedratio/set                 → 404 (path doesn't exist)
+     * Re-verified 2026-09-27 on RW 7.21 and RW 8.1.1 (AUTO, edit mastership /
+     * write access held, value restored afterwards):
+     *   ✓ POST /rw/panel/speedratio  body speed-ratio=N  → 204, value changes
+     *     (the documented plain POST; the controller's own OPTIONS form is
+     *     `action="speedratio"` with input `speed-ratio`, 0-100)
+     *   ✓ POST /rw/panel/speedratio?action=nosuchaction  body speed-ratio=N → 204
+     *     (the `action` query is not checked at all)
+     *   ✗ speedratio=N → 400 with or without the action; /set → 404 (as before)
+     * So the 2026-05-07 ✓ line held because of the field name, not the action:
+     * OmniCore did not keep a legacy `?action=` requirement, the query is
+     * ignored. The request this method sends carries the action from the path
+     * table and works; it is not changed.
+     * Raw-logged again 2026-09-29 on RW 7.21.4+417 and 8.2.1+1023: this exact
+     * request (`?action=setspeedratio`, `speed-ratio=N`) and
+     * `?action=nosuchaction` → 204; `speedratio=N` → 400 and `/set` → 404 on
+     * both. Without the hold the write is refused 403 -1073445859 on 7.21.4
+     * and 403 -1073435873 on 8.2.1.
      *
-     * Acquires `edit` mastership internally and releases it after.
+     * Holds `edit` mastership (RW8: write access) around the write. A hold this
+     * session already has, a caller's included, is reused and not ended.
      */
     async setSpeedRatio(ratio: number): Promise<void> {
       // Build (and therefore validate) before taking write access: a rejected
       // argument should cost no controller round trip, and on RW8 a failure to
       // take write access would otherwise mask the real complaint.
       const { path, body } = R2.setSpeedRatio(ratio);
-      await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
-      try {
-        await this.req('POST', path, body);
-      } finally {
-        await this.releaseMastership('rapid').catch(() => {});
-      }
+      // 'rapid' is renamed to 'edit' internally
+      await this.withAccess(['rapid'], () => this.req('POST', path, body));
     }
 
     async getCollisionDetectionState(): Promise<CollisionDetectionState> {
@@ -65,19 +84,39 @@ function panelOps<TBase extends Rws2Base>(Base: TBase) {
       return (p.getState('pnl-coldetstate')['coldetstate'] ?? 'INIT') as CollisionDetectionState;
     }
 
+    /** Answered 204 on RobotWare 7.21.4, 8.1.1 and 8.2.1 virtual controllers (2026-10-10). */
     lockOperationMode(pin: string, permanent = false): Promise<void> {
       // POST /rw/panel/opmode/lock with pin and permanent flag
       const { path, body } = R2.lockOperationMode(pin, permanent);
       return this.req('POST', path, body).then(() => {});
     }
 
-    unlockOperationMode(): Promise<void> {
-      const { path } = R2.unlockOperationMode();
-      return this.req('POST', path).then(() => {});
+    /** Unlock the operation-mode selector with the PIN the lock set. The
+     *  controller form (RW 7.21.4, 8.2.1) and Rev L require `pin`; without
+     *  one, `RwsError` `INVALID_ARGUMENT` is thrown before anything is sent
+     *  (the method used to post an empty body). The parameter is optional in
+     *  the signature only for source compatibility. Answered 204 on RobotWare
+     *  7.21.4, 8.1.1 and 8.2.1 virtual controllers (2026-10-10).
+     */
+    unlockOperationMode(pin?: string): Promise<void> {
+      if (typeof pin !== 'string' || pin.trim() === '') {
+        return Promise.reject(new RwsError('RWS2 unlockOperationMode: the PIN the lock set is needed (the controller form requires pin)', 'INVALID_ARGUMENT'));
+      }
+      const { path, body } = R2.unlockOperationMode(pin);
+      return this.req('POST', path, body).then(() => {});
     }
 
-    /** Acknowledge a pending operation-mode switch (after the mode selector is turned).
-     *  OPTIONS-verified 2026-08-04 (RW7.21). @param wireMode target mode, e.g. 'auto'. */
+    /**
+     * Acknowledge a pending change of operating mode: POST
+     * `/rw/panel/opmode/acknowledge` with `opmode`, the resource ABB's RWS 2.0
+     * pages document for confirming a mode change.
+     *
+     * The confirmation is the person's at the FlexPendant;
+     * `RobotManager.setOperationMode` does not send it.
+     *
+     * @param wireMode target mode, e.g. 'auto'.
+     * @experimental Built from ABB's documented form.
+     */
     acknowledgeOperationMode(wireMode: string): Promise<void> {
       const { path, body } = R2.acknowledgeOperationMode(wireMode);
       return this.req('POST', path, body).then(() => {});
@@ -110,13 +149,25 @@ function panelOps<TBase extends Rws2Base>(Base: TBase) {
      * of the documented protocol quirks of RWS 2.0.
      *
      * Side note: the controller pops up a confirmation dialog on the FlexPendant
-     * after the call returns 200 OK; the operator must approve before the mode
-     * actually flips. There is no API path to bypass this - UAS-grant changes
-     * are FlexPendant-only by design.
+     * after the call returns 200 OK; the operator approves it at the FlexPendant
+     * before the mode flips, and this client does not send that confirmation.
+     *
+     * RobotWare 8: the switch is sent inside control-station write access,
+     * taken here when this session does not hold it already (a hold of the
+     * caller's or of RobotManager is reused, nothing more is requested). ABB
+     * lists setting operating modes among what needs write access (PC SDK,
+     * Control Station), and RW 8.2.1 refused the bare switch with 403
+     * -1073435873 "User does not have write access", with and without the
+     * station registered (2026-10-12). With the hold, RW 8.2.1 took the switch to
+     * MANR from the adapter and to AUTO through RobotManager, one write-access
+     * request and release each (2026-10-13). RobotWare 7 sends it as before,
+     * with no mastership of its own (RobotManager holds edit for a switch to Auto).
      */
     setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
       const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manf';
-      return this.req('POST', buildPath(PANEL.setOperationMode.rws2 as PathSpec), { opmode: wire }).then(() => {});
+      const send = (): Promise<void> => this.req('POST', buildPath(PANEL.setOperationMode.rws2 as PathSpec), { opmode: wire }).then(() => {});
+      const major = Number((this.cachedRobotWareVersion() ?? '').split('.')[0]);
+      return major >= 8 ? this.withAccess(['rapid'], send) : send();
     }
 
     /**
@@ -163,6 +214,11 @@ function panelOps<TBase extends Rws2Base>(Base: TBase) {
      *   POST /rw/panel/enable-switch  body `state=on|off` → 204.
      * This endpoint's polarity is direct (no inversion). In AUTO the controller
      * accepts the call as a no-op; driving motors on requires manual mode.
+     * ABB says the VC switches the motors on implicitly, but on RW 7.21.4 in
+     * MANR the controller state went from guardstop to motoroff and never read
+     * motoron (read at 0.5, 1, 2 and 5 s, 2026-10-13); holding Enable on the
+     * virtual FlexPendant did give motoron. On RobotWare 8 the guard stop after
+     * a mode change needs Reset at the pendant before Enable.
      */
     simEnableSwitch(on: boolean): Promise<void> {
       return this.simPost('simEnableSwitch', buildPath(PANEL.simEnableSwitch.rws2 as PathSpec), { state: on ? 'on' : 'off' });
@@ -223,26 +279,45 @@ function panelOps<TBase extends Rws2Base>(Base: TBase) {
      *
      * Note the path: the resource lives UNDER `ctrl-state`, not beside it.
      * `/rw/panel/keyless-motoron` - the shape most notes record - answers 404 on
-     * every generation. Live-read 2026-08-09 on RW7.21 and RW8.1.1; absent on
-     * RWS 1.0 (404), which has no Keyless Mode Switch resource at all.
+     * every generation. Live-read 2026-08-09 on RW7.21 and RW8.1.1. RWS 1.0
+     * has it elsewhere: ABB's RWS 1.0 manual (Rev M, "Keyless motor ON")
+     * documents `POST /rw/cfg?action=keyless` with `state=run`, which
+     * `RWS1Adapter.setKeylessMotorOn` sends.
      *
-     * Built from the live form but NOT executed against the VCs: it energises the
-     * drives. Reversible with `setControllerState('motoroff')`.
+     * It energises the drives. Reversible with `setControllerState('motoroff')`.
+     * Run against RWS 2.0 (RobotWare 7.21.4).
+     *
+     * Holds `edit` mastership (RW8: write access) around the POST, as
+     * `RobotManager.setMotorsOn` does for the ordinary motors-on. ABB's RWS
+     * pages list no prerequisite for this resource; whether the controller
+     * needs any hold here is not established, so the hold a motors-on takes
+     * is taken.
      */
     async setKeylessMotorOn(): Promise<void> {
-      await this.req('POST', buildPath(PANEL.setKeylessMotorOn.rws2 as PathSpec));
+      await this.withAccess(['rapid'], () => this.req('POST', buildPath(PANEL.setKeylessMotorOn.rws2 as PathSpec)));
     }
 
     /**
      * Simulated EXTERNAL emergency stop. POST /rw/panel/external-emergency-stop,
-     * form field `state` (live-read 2026-08-09). Sibling of the already-covered
+     * form field `state`, values `on` (circuit closed) and `off` (circuit
+     * open, the stop is active); the older `active` / `reset` names are
+     * mapped to off / on. Sibling of the already-covered
      * e-stop simulation; this one models the external circuit rather than the
      * pendant button.
      *
      * Absent on RWS 1.0 - the IRC5 controllers answer 404 for this path.
      */
-    async setExternalEmergencyStop(state: 'active' | 'reset'): Promise<void> {
-      await this.req('POST', buildPath(PANEL.setExternalEmergencyStop.rws2 as PathSpec), { state });
+    async setExternalEmergencyStop(state: 'on' | 'off' | 'active' | 'reset'): Promise<void> {
+      // The form field is the circuit, not the stop: `on` = closed (no stop,
+      // the controller reads motoroff), `off` = open (the controller reads
+      // emergencystop). The controller's own OPTIONS form lists on and off, and
+      // ABB's sample call sends state=on (RWS 2.0 Rev L, Panel Service). The
+      // client used to send active and reset, which RW 7.21.4 and 8.2.1 refuse
+      // with 400 -1073445879 "Invalid state value" (recorded 2026-10-11); they
+      // are still accepted here and mapped: active = off, reset = on. After
+      // off, only on clears the stop on the VC.
+      const wire = state === 'active' ? 'off' : state === 'reset' ? 'on' : state;
+      await this.req('POST', buildPath(PANEL.setExternalEmergencyStop.rws2 as PathSpec), { state: wire });
     }
   };
 }
@@ -261,7 +336,7 @@ export interface PanelMethods {
   setSpeedRatio(ratio: number): Promise<void>;
   getCollisionDetectionState(): Promise<CollisionDetectionState>;
   lockOperationMode(pin: string, permanent?: boolean): Promise<void>;
-  unlockOperationMode(): Promise<void>;
+  unlockOperationMode(pin?: string): Promise<void>;
   acknowledgeOperationMode(wireMode: string): Promise<void>;
   getOperationModeLockState(): Promise<string>;
   setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void>;

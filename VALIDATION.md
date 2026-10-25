@@ -6,7 +6,7 @@ Procedures for validating `abb-rws-client` against a real ABB IRC5 controller or
 
 - ABB RobotStudio installed (free virtual controller option)  
   OR access to a physical IRC5 controller on the network
-- Node.js 21+ (or Node 18 with `--experimental-websocket`)
+- Node.js 20+ (`engines` in `package.json`: `>=20`)
 - Package built: `npm run build`
 
 ## Test Harness

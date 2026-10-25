@@ -71,7 +71,8 @@ const HEAP_LIMIT_BYTES = 48 * 1024 * 1024;
 /**
  * Connections the proxy may still hold once the churn has settled. Both clients
  * keep HTTP connections alive by design (RWS 1.0 rides the global undici pool,
- * RWS 2.0 its own keep-alive agents), so the honest bar is a small
+ * or a keep-alive agent of its own on a port fetch refuses; RWS 2.0 its own
+ * keep-alive agents), so the honest bar is a small
  * CYCLE-INDEPENDENT constant: a socket leaked per cycle would sit near 50 here.
  */
 const MAX_OPEN_CONNECTIONS = 4;
@@ -198,8 +199,10 @@ for (const generation of ['rws1', 'rws2'] as const) {
     it('50 connect/disconnect cycles leak no sockets, timers or controller sessions', async () => {
       // ONE proxy for the whole run, deliberately. A proxy per cycle would add a
       // listener and a fresh ORIGIN each time, and RWS 1.0 runs on the global
-      // undici pool, which is keyed by origin and never freed - churning ports
-      // would report growth that belongs to the test, not to the client.
+      // undici pool on every port fetch accepts, which is keyed by origin and
+      // never freed - churning ports would report growth that belongs to the
+      // test, not to the client. (On a port fetch refuses it has a keep-alive
+      // agent per session, emptied when the session closes.)
       const proxy = await ctx.proxy();
       // `live` holds whichever client is mid-cycle. Registered BEFORE the proxy
       // so afterEach drains it first and its GET /logout still has a route: a
@@ -253,7 +256,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       // binding limit is NOT the 70-session pool, which 51 sessions could never
       // fill. It is the PER-IP cap: 5 sessions (or 15 connections) from one
       // address, official for both generations
-      // (reference/VC_VS_REAL_CONTROLLERS.md §2), over which the controller
+      // (observed on virtual controllers), over which the controller
       // answers 503 and both clients raise CONTROLLER_BUSY. Every cycle above
       // ran from 127.0.0.1, so a disconnect() that did not free its session
       // breaks the churn around the sixth cycle - the completed-cycle count
@@ -295,7 +298,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       const heap: number[] = [];
 
       // The warm-up cycle inside measureCycles absorbs the lazy `ws` load (a
-      // dynamic import on RWS 2.0, createRequire on RWS 1.0) so the module graph
+      // dynamic import on both generations) so the module graph
       // is not billed as growth.
       const cycle = async (): Promise<void> => {
         const stop = await subscribeOnce(client, () => { lost++; });
@@ -315,7 +318,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       // Controller-side groups. There is no "list subscriptions" resource in
       // either protocol, so the count is not directly readable - but the ceiling
       // is low and official: a client may hold at most TEN subscription groups
-      // (reference/VC_VS_REAL_CONTROLLERS.md §3). One group leaked per cycle
+      // (observed on virtual controllers). One group leaked per cycle
       // therefore makes the ELEVENTH subscribe fail, which rejects that cycle,
       // rejects measureCycles, and stops the sample array short - which is
       // precisely what assertHeapNotMonotonic's completed-cycle check just

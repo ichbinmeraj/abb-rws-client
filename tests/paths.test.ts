@@ -33,7 +33,7 @@ describe('path tables - structural integrity', () => {
     const bad: string[] = [];
     for (const { domain, operation, generation, spec } of specs) {
       const where = `${domain}.${operation}.${generation}`;
-      if (!['GET', 'POST', 'PUT', 'DELETE'].includes(spec.method)) { bad.push(`${where}: bad method ${spec.method}`); }
+      if (!['GET', 'POST', 'PUT', 'DELETE', 'HEAD'].includes(spec.method)) { bad.push(`${where}: bad method ${spec.method}`); }
       if (!spec.path.startsWith('/')) { bad.push(`${where}: path must start with / (${spec.path})`); }
       if (/\/\//.test(spec.path)) { bad.push(`${where}: double slash in ${spec.path}`); }
       if (spec.path.includes('?')) { bad.push(`${where}: query string in path (use action) ${spec.path}`); }
@@ -42,7 +42,7 @@ describe('path tables - structural integrity', () => {
       const close = (spec.path.match(/\}/g) ?? []).length;
       if (open !== close) { bad.push(`${where}: unbalanced braces in ${spec.path}`); }
       // A GET/DELETE with body fields is suspicious.
-      if ((spec.method === 'GET') && spec.fields?.length) { bad.push(`${where}: GET with fields`); }
+      if ((spec.method === 'GET' || spec.method === 'HEAD') && spec.fields?.length) { bad.push(`${where}: GET with fields`); }
     }
     expect(bad, bad.join('\n')).toEqual([]);
   });
@@ -115,6 +115,11 @@ describe('path tables - exact URLs (RWS 2.0)', () => {
     expect(R2.restoreBackup('b').path).toBe('/ctrl/backup/restore');
     expect(R2.checkRestore('b').path).toBe('/ctrl/backup/check-restore');
   });
+  it('io signal writes: full path, and bare name for a signal with no device', () => {
+    expect(R2.setSignalValue('Net', 'Dev', 'do1', '1').path).toBe('/rw/iosystem/signals/Net/Dev/do1/set-value');
+    expect(R2.setSignalValueByName('SCnCBC1', '1')).toEqual({ path: '/rw/iosystem/signals/SCnCBC1/set-value', body: { lvalue: '1' } });
+    expect(R2.signalByName('IIO_do8')).toBe('/rw/iosystem/signals/IIO_do8');
+  });
   it('mastership + control station', () => {
     expect(R2.requestMastership('edit').path).toBe('/rw/mastership/edit/request');
     expect(R2.releaseMastership('edit').path).toBe('/rw/mastership/edit/release');
@@ -172,17 +177,46 @@ describe('path tables - the traps (symbol inversion, side-channel query-actions)
     expect(buildPath(ALL_TABLES.rapid.getRapidSymbolProperties.rws1 as PathSpec, P))
       .toBe('/rw/rapid/symbol/properties/RAPID/T_ROB1/user/reg1');
   });
-  it('RWS 1.0 jog / IK / FK CamelCase query-actions (digestPost side channel)', () => {
+  it('RWS 1.0 jog / IK / FK CamelCase query-actions (FK is ABB\'s CalcPoseFromJoints, live-verified 2026-09-30 on RW 6.16.03)', () => {
     expect(buildPath(ALL_TABLES.motion.jog.rws1 as PathSpec)).toBe('/rw/motionsystem?action=jog');
     expect(buildPath(ALL_TABLES.motion.calcCartesianFromJoints.rws1 as PathSpec, { mechunit: 'ROB_1' }))
-      .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcRobTFromJoints');
+      .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcPoseFromJoints');
+    expect(ALL_TABLES.motion.calcCartesianFromJoints.rws1?.fields)
+      .toEqual(['tool_frame_position', 'tool_frame_orientation', 'rob_joints', 'ext_joints', 'robot_fixed_object', 'elog_at_error']);
+    expect(ALL_TABLES.motion.calcJointsFromCartesian.rws1?.fields).not.toContain('wobj_frame_position');
     expect(buildPath(ALL_TABLES.motion.calcJointsFromCartesian.rws1 as PathSpec, { mechunit: 'ROB_1' }))
       .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcJointsFromPose');
   });
-  it('RWS 2.0 FK keeps its CamelCase query-action; IK moved to a subresource', () => {
+  it('RWS 2.0 FK and IK are ABB\'s subresources, with the fields of the controllers\' forms (RW 7.21.4 and 8.2.1)', () => {
     expect(buildPath(ALL_TABLES.motion.calcCartesianFromJoints.rws2 as PathSpec, { mechunit: 'ROB_1' }))
-      .toBe('/rw/motionsystem/mechunits/ROB_1?action=CalcRobTFromJoints');
+      .toBe('/rw/motionsystem/mechunits/ROB_1/pose-from-joints');
+    expect(ALL_TABLES.motion.calcCartesianFromJoints.rws2?.fields)
+      .toEqual(['tool_frame_position', 'tool_frame_orientation', 'rob_joints', 'ext_joints', 'robot_fixed_object', 'elog_at_error', 'absolute_accuracy']);
     expect(buildPath(ALL_TABLES.motion.calcJointsFromCartesian.rws2 as PathSpec, { mechunit: 'ROB_1' }))
       .toBe('/rw/motionsystem/mechunits/ROB_1/joints-from-cartesian');
+    const ik = ALL_TABLES.motion.calcJointsFromCartesian.rws2?.fields ?? [];
+    expect(ik).toHaveLength(11);
+    expect(ik).toContain('absolute_accuracy');
+    // The form's trailing spaces are not carried; no form lists wobj_frame_*.
+    expect(ik.every(f => f === f.trim())).toBe(true);
+    expect(ik.some(f => f.startsWith('wobj_frame'))).toBe(false);
+  });
+
+  it('RWS 1.0 DIPC create is the query-action dipc-create with the fields RW 6.16.03 takes (201, live-verified 2026-09-30)', () => {
+    const t = ALL_TABLES.cfgElogDipc;
+    expect(buildPath(t.createDipcQueue.rws1 as PathSpec)).toBe('/rw/dipc?action=dipc-create');
+    expect(t.createDipcQueue.rws1?.fields).toEqual(['dipc-queue-name', 'dipc-queue-size', 'dipc-max-msg-size']);
+    expect(t.createDipcQueue.rws1?.fields).toEqual(t.createDipcQueue.rws2?.fields);
+    expect(buildPath(t.sendDipcMessage.rws1 as PathSpec, { queue: 'Q1' })).toBe('/rw/dipc/Q1?action=dipc-send');
+    expect(t.sendDipcMessage.rws1?.fields).toContain('dipc-userdef');
+    expect(buildPath(t.readDipcMessage.rws1 as PathSpec, { queue: 'Q1' })).toBe('/rw/dipc/Q1?action=dipc-read');
+    expect(buildPath(t.removeDipcQueue.rws1 as PathSpec, { queue: 'Q1' })).toBe('/rw/dipc/Q1');
+  });
+  it('getJointTargetFull reads the same jointtarget resource as getJointPositions, both generations', () => {
+    for (const gen of ['rws1', 'rws2'] as const) {
+      const full = buildPath(ALL_TABLES.motion.getJointTargetFull[gen] as PathSpec, { mechunit: 'STN_1' });
+      expect(full).toBe('/rw/motionsystem/mechunits/STN_1/jointtarget');
+      expect(full).toBe(buildPath(ALL_TABLES.motion.getJointPositions[gen] as PathSpec, { mechunit: 'STN_1' }));
+    }
   });
 });

@@ -1,0 +1,13 @@
+{
+  "protocol": "rws2",
+  "scenario": "500-symbol-write-buffer-overflow-xhtml",
+  "request": {
+    "method": "POST",
+    "path": "/rw/rapid/symbol/RAPID/T_ROB1/ZZ_PROBE/zz_a10k/data"
+  },
+  "response": {
+    "status": 500,
+    "contentType": "application/xhtml+xml;v=2.0",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><base href=\"https://127.0.0.1:5466/rw/rapid/\"/></head><body><div class=\"status\"><span class=\"code\">-1073445865</span><span class=\"msg\">ERROR: da_rapid_symbol.cpp[424]: org_code: -529 new_code: 0xc0048417; </span></div></body></html>"
+  }
+}

@@ -5,7 +5,11 @@ import { createClient, RwsClient2 } from 'abb-rws-client';
 
 const client = await createClient({
   host: process.env.RWS_HOST || '127.0.0.1',
-  // username/password default to 'Admin' / 'robotics' (built-in admin account, full UAS grants)
+  // The client logs in once, as this user: a refused login throws AUTH_FAILED and no
+  // other account is tried. An IRC5 ships with 'Default User' (set RWS_USER); the
+  // defaults are 'Admin' / 'robotics'.
+  username: process.env.RWS_USER || 'Admin',
+  password: process.env.RWS_PASSWORD || 'robotics',
 });
 
 console.log(`Connected via ${client instanceof RwsClient2 ? 'RWS 2.0' : 'RWS 1.0'}`);

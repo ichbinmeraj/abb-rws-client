@@ -44,7 +44,7 @@ import {
 import { MultiRobotManager } from '../../src/MultiRobotManager.js';
 import type { RobotManager, RobotState } from '../../src/RobotManager.js';
 import type { ConnectionQuality } from '../../src/types.js';
-import { cell, until, assertQualityHonest } from '../helpers/structuralHarness.js';
+import { cell, until, assertQualityHonest, listenModeFor } from '../helpers/structuralHarness.js';
 
 const ROBOT_A = 'robot-a';
 const ROBOT_B = 'robot-b';
@@ -114,8 +114,8 @@ afterEach(async () => {
   const entries = open.splice(0);
   // Heal every proxy BEFORE disconnecting. A disconnect through a refusing proxy
   // cannot put GET /logout on the wire, and a session nobody logs out sits in
-  // the controller's pool until it times out - on this rig that pool is the
-  // scarce resource (~200 careless requests once wedged a VC permanently).
+  // the controller's pool until it times out. The pool is capped, so a client
+  // that leaks sessions locks itself out.
   for (const o of entries) {
     o.proxy?.refuseNew(false);
     o.proxy?.setCorruption({ kind: 'none' });
@@ -139,7 +139,8 @@ afterEach(async () => {
 async function joinFleet(
   multi: MultiRobotManager, id: string, controller: LiveController,
 ): Promise<FleetMember> {
-  const proxy = await startChaosProxy(controller.host, controller.port);
+  // As ctx.proxy(): on a port fetch refuses for rws1 under RWS_STRUCTURAL_NODE_HTTP=1.
+  const proxy = await startChaosProxy(controller.host, controller.port, { listen: listenModeFor(controller.generation) });
   // Registered before ANYTHING that can throw, so afterEach still closes the
   // listener (and later logs the session out) when setup fails half-way.
   const slot: { proxy?: ChaosProxy; manager?: RobotManager } = { proxy };

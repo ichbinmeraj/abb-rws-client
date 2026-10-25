@@ -148,6 +148,14 @@ function makeScriptedWs(script: Array<'open' | 'fail'>, opts: { autoPong?: boole
       this.onclose?.({ wasClean: false });
     }
 
+    /**
+     * Test trigger: a close frame from the "controller". The ws package
+     * answers it with its own, so the close event reads as clean.
+     */
+    serverCloseClean(): void {
+      this.onclose?.({ wasClean: true });
+    }
+
     /** Test trigger: deliver an event frame. */
     serverMessage(data: string): void {
       this.onmessage?.({ data });
@@ -293,6 +301,19 @@ describe('WsSubscriber - subscription resource paths', () => {
   it('subscribes signals on ;state', async () => {
     expect(await pathFor({ type: 'signal', name: 'NET/DEV/di_1' }))
       .toBe('/rw/iosystem/signals/NET/DEV/di_1;state');
+  });
+
+  it('refuses a signal name that would add form fields, before posting anything', async () => {
+    // The name goes into the body verbatim; '&resources=2&2=...' used to bind
+    // a second resource the caller never asked for.
+    const { session, bodies } = makeBodyCapturingSession();
+    const { FakeWs } = makeFakeWs('open');
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    for (const name of ['di_1&resources=2&2=/rw/panel/ctrlstate', 'di=1', 'Local/../di_1']) {
+      await expect(subscriber.subscribe([{ type: 'signal', name }], () => undefined))
+        .rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    }
+    expect(bodies).toHaveLength(0);
   });
 
   it('prefixes persistent variables with the RAPID domain', async () => {
@@ -451,6 +472,41 @@ describe('WsSubscriber - onRestored', () => {
   });
 });
 
+describe('WsSubscriber - a clean close the client did not ask for', () => {
+  it('reconnects as after a drop, and gives up with onLost when it cannot; its own close does not reconnect', async () => {
+    // Until 1.5.1 a close the controller started (a close frame, which the
+    // ws package answers, so the event reads as clean) neither reconnected
+    // nor fired onLost: the stream stopped and RobotManager stayed `live`.
+    const { session } = makeFakeSession();
+    const { FakeWs, instances } = makeScriptedWs(['open', 'open', 'fail']);
+    const subscriber = new WsSubscriber(session, '127.0.0.1', 1, FakeWs);
+    const onRestored = vi.fn();
+    const onLost = vi.fn();
+
+    const unsubscribe = await subscriber.subscribe(['execution'], () => undefined, {
+      onRestored, onLost, reconnectBaseMs: 5, maxReconnectAttempts: 2,
+    });
+    (instances[0] as { serverCloseClean(): void }).serverCloseClean();
+    await until(() => onRestored.mock.calls.length === 1);
+    expect(instances).toHaveLength(2);
+    expect(instances[1].url).toBe(instances[0].url);
+
+    // Every later open fails: after the attempts, onLost once.
+    (instances[1] as { serverCloseClean(): void }).serverCloseClean();
+    await until(() => onLost.mock.calls.length === 1);
+    expect(onRestored).toHaveBeenCalledTimes(1);
+
+    // The client's own close (the handle) is not a lost stream.
+    const { FakeWs: OwnWs, instances: own } = makeScriptedWs(['open']);
+    const other = new WsSubscriber(makeFakeSession().session, '127.0.0.1', 1, OwnWs);
+    const stop = await other.subscribe(['execution'], () => undefined, { reconnectBaseMs: 5 });
+    await stop();
+    await wait(30);
+    expect(own).toHaveLength(1);
+    await unsubscribe();
+  });
+});
+
 describe('WsSubscriber - backoff schedule', () => {
   it('doubles from the base and caps at the ceiling', async () => {
     const { backoffDelay } = await import('../src/WsSubscriber.js');
@@ -527,5 +583,71 @@ describe('WsSubscriber - heartbeat', () => {
     expect(first.terminated).toBe(false);
     expect(instances).toHaveLength(1);
     await unsubscribe();
+  });
+});
+
+describe('WsSubscriber - loading the ws package', () => {
+  // Each test loads a fresh copy of the module, so the 'ws' constructor it keeps
+  // after the first load does not carry over, and mocks 'ws' for that copy.
+  // The fresh copy has its own RwsError class, so errors are checked by code.
+  afterEach(() => {
+    vi.doUnmock('ws');
+    vi.resetModules();
+  });
+
+  it('a ws package that cannot be loaded fails the subscribe with UNSUPPORTED_OPERATION before anything is sent', async () => {
+    // No socket can open in this process, so nothing is posted (no group
+    // created and deleted again), and RobotManager does not try the
+    // subscribe again on the connection, as it would after a NETWORK_ERROR.
+    vi.resetModules();
+    vi.doMock('ws', () => { throw new Error('Cannot find module ws'); });
+    const { WsSubscriber: Fresh } = await import('../src/WsSubscriber.js');
+    const { session, deletes, posts } = makeFakeSession();
+    const subscriber = new Fresh(session, '127.0.0.1', 1);
+
+    const err = await subscriber.subscribe(['execution'], () => undefined).then(() => null, (e: unknown) => e);
+    expect(err).toMatchObject({ name: 'RwsError', code: 'UNSUPPORTED_OPERATION' });
+    expect(String((err as Error).message)).toContain('"ws" package');
+    expect(posts.count).toBe(0);
+    expect(deletes).toEqual([]);
+  });
+
+  it('loads ws once: a second subscription reuses the constructor', async () => {
+    vi.resetModules();
+    const loads = { count: 0 };
+    const { FakeWs, captured } = makeFakeWs('open');
+    vi.doMock('ws', () => { loads.count++; return { default: FakeWs, WebSocket: FakeWs }; });
+    const { WsSubscriber: Fresh } = await import('../src/WsSubscriber.js');
+    const { session } = makeFakeSession();
+    const subscriber = new Fresh(session, '127.0.0.1', 1);
+
+    const stop1 = await subscriber.subscribe(['execution'], () => undefined);
+    const stop2 = await subscriber.subscribe(['speedratio'], () => undefined);
+    expect(captured).toHaveLength(2);
+    expect(captured[0].options.headers['Cookie']).toBe(COOKIE);
+    expect(loads.count).toBe(1);
+    await stop1();
+    await stop2();
+  });
+
+  it('loads ws before the create: nothing is posted while it loads', async () => {
+    vi.resetModules();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { FakeWs, captured } = makeFakeWs('open');
+    vi.doMock('ws', async () => { await gate; return { default: FakeWs, WebSocket: FakeWs }; });
+    const { WsSubscriber: Fresh } = await import('../src/WsSubscriber.js');
+    const { session, posts } = makeFakeSession();
+    const subscriber = new Fresh(session, '127.0.0.1', 1);
+
+    const pending = subscriber.subscribe(['execution'], () => undefined);
+    await wait(20);
+    expect(posts.count).toBe(0);
+    release();
+
+    const stop = await pending;
+    expect(posts.count).toBe(1);
+    expect(captured).toHaveLength(1);
+    await stop();
   });
 });

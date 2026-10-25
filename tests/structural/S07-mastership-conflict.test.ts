@@ -238,10 +238,8 @@ for (const generation of ['rws1', 'rws2'] as const) {
         }
         if (!proxy) { t.skip(); return; }
 
-        // Fixed control-station ids (braced GUIDs - other forms are rejected).
-        // Registration is session-scoped, so if a run ever died holding SPoC the
-        // only way back is to register the SAME id again and release; a random
-        // per-instance id would make that impossible.
+        // Fixed control-station ids (braced GUIDs - other forms are rejected),
+        // so every run registers as the same two stations.
         const mk = (id: string): RwsClient2 => new RwsClient2(baseUrl, TEST_USER, TEST_PASS, {
           timeout: 8000,
           controlStation: { name: 'abb-rws-client-structural', id, pincode: '1234' },
@@ -273,12 +271,15 @@ for (const generation of ['rws1', 'rws2'] as const) {
     it('quality stays truthful while only WRITE access is contended (S14 cross-cutting)', async () => {
       const proxy = await ctx.proxy();
       // Poll gently. This cell needs a manager that is merely CONNECTED while a
-      // second client contends for write access - the polling rate is incidental.
-      // At 300 ms the manager alone peaks near 14 req/s (measured), and a second
-      // client on the same IRC5 pushes the pair past the controller's <20 req/s
-      // ceiling, which answers 503 and fails the cell for a property it is not
-      // testing. Each client paces itself correctly; nothing coordinates across
-      // clients, and nothing can.
+      // second client contends for write access - the polling rate is incidental,
+      // and a slow poll keeps the manager's own requests out of what the test
+      // measures. Each client paces itself below ABB's recommended 20 requests a
+      // second; nothing coordinates across clients, and nothing can. (A 503 this
+      // test met on RWS 1.0 on 2026-08-09 was first put down to the clients'
+      // combined request rate with the manager polling at 300 ms. It kept
+      // appearing with the manager at 1500 ms, so the rate was not its
+      // cause: it is the session load STRUCTURAL.md describes under "Running the
+      // loop".)
       const manager = await ctx.manager(proxy, { refreshIntervalMs: 1500 });
       const holderClient = await ctx.client(proxy, { timeout: 8000 });
       const probeClient = await ctx.client(proxy, { timeout: 8000 });

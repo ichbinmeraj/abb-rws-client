@@ -8,42 +8,61 @@
  *      closes before opening, subscribe() rejects and best-effort DELETEs the
  *      registration so the controller-side subscription slot is not leaked
  *   4. Parse incoming XML event messages → emit typed SubscriptionEvent objects
- *   5. Auto-reconnect when an established stream drops: capped exponential backoff
+ *   5. Auto-reconnect when an established stream drops (any close the client
+ *      did not ask for, a clean one included): capped exponential backoff
  *      (1 s doubling to 30 s, 6 attempts ~ 61 s by default, all tunable via
  *      WsSubscribeOptions). Each attempt first retries the stored poll URL -
- *      unlike RWS 2.0, IRC5 poll URLs are REUSABLE after a drop (live-verified
- *      2026-08-02 on RW6.16 VC: reopen of the same /poll/{id} upgrades fine) -
+ *      IRC5 poll URLs are reusable after a drop (live-verified 2026-08-02 on
+ *      RW6.16 VC: reopen of the same /poll/{id} upgrades fine; RWS 2.0 poll
+ *      URLs also reopen while their group lives, 7.21.4 and 8.2.1,
+ *      2026-09-29). On RW 6.16.03, while the client owns any group, /poll/{id}
+ *      upgrades for any id, even a deleted or never-created one, and answers
+ *      404 only once the client owns no group (2026-09-29; which events such
+ *      a socket then carries was not tested) -
  *      then falls back to re-POSTing /subscription (controller restarts
  *      invalidate the old registration). onRestored fires after every successful
  *      reconnect so the consumer can resync; onLost fires exactly once when the
  *      budget is exhausted. Reconnects ride the same HTTP session: IRC5 sessions
  *      are identified by the -http-session- cookie and survive TCP connection
- *      churn (ABBCX is re-issued per connection; live-verified 2026-08-02).
+ *      churn (live-verified 2026-08-02). ABBCX names the controller's client,
+ *      not the connection: RW 6.16.03 issues a new one only when its client
+ *      is gone, as after a drop, where it answers the first request under a
+ *      new client and sets the new ABBCX on that answer, even an error answer
+ *      (live 2026-10-22).
  *   6. Heartbeat: ws protocol ping each pingIntervalMs; the IRC5 WS answers
- *      RFC6455 pings (live-verified 2026-08-02; app-level 'PING' text gets no
- *      reply, that is RWS 2.0 only). An unanswered ping at the next tick
+ *      RFC6455 pings (live-verified 2026-08-02). No text frame is ever sent:
+ *      on RW 6.16.03 a text 'PING' or 'ping' closes the socket at once with
+ *      1008 "Client cannot send data." (the group survives), as on RWS 2.0
+ *      (live-verified 2026-09-29). An unanswered ping at the next tick
  *      terminates the half-open socket so the reconnect path runs.
+ *   7. Partial binds: a create that drops a panel resource held elsewhere in
+ *      the other spelling is re-created once with that spelling (see
+ *      `register`). Any other resource the controller drops is listed on the
+ *      handle as `unbound`, so the caller can poll it.
  *
  * Always connects through the 'ws' package: the RWS upgrade request must carry the
  * session Cookie header, and native (undici) WebSocket has no headers option - it
  * silently ignores the ws-style third constructor argument, so the handshake goes
- * out unauthenticated. Live-verified 2026-07-08 against IRC5 RW6.16: native WS is
+ * out unauthenticated. Live-verified 2026-07-08 against the RobotWare 6.16 virtual controller: native WS is
  * rejected with HTTP 403, 'ws' with the same Cookie opens and delivers events.
  */
 
-import { createRequire } from 'module';
 import type { HttpSession } from './HttpSession.js';
-import type { SubscriptionResource, SubscriptionEvent } from './types.js';
+import type { AnySubscriptionResource, SubscriptionEvent } from './types.js';
 import { RwsError, stripRapidDomain } from './types.js';
 import { subscriptions } from './ResourceMapper.js';
 import { parseSubscriptionId } from './ResponseParser.js';
 import { Logger } from './Logger.js';
+import { assertSignalName } from './signalName.js';
+import { addedResourcePaths, distinctPaths, subscriptionFrameEntries } from './subscriptionKinds.js';
 
 const DEFAULT_RECONNECT_BASE_MS = 1000;
 const DEFAULT_RECONNECT_CAP_MS = 30000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 6;
 const DEFAULT_PING_INTERVAL_MS = 10000;
 const DEFAULT_OPEN_TIMEOUT_MS = 8000;
+/** Added to the session's timeout for the group create only (see createGroup). */
+const CREATE_GROUP_EXTRA_MS = 5000;
 
 /** ws-package extras beyond the WHATWG WebSocket surface, used for the heartbeat. */
 interface WsHeartbeatCapable {
@@ -98,21 +117,40 @@ type WebSocketCtor = new (
   options: { headers: Record<string, string>; handshakeTimeout?: number },
 ) => WebSocket;
 
+/** The 'ws' constructor once loaded; later subscriptions reuse it without waiting. */
+let wsPackageCtor: WebSocketCtor | undefined;
+
 /**
- * Resolve the 'ws' package constructor. Never returns native globalThis.WebSocket -
+ * Load the 'ws' package constructor. Never returns native globalThis.WebSocket -
  * it cannot send the Cookie header the controller requires for WS auth.
+ *
+ * A dynamic `import('ws')`, as the RWS 2.0 client loads it. The earlier
+ * `createRequire(import.meta.url)` failed inside a CommonJS bundle (the VS Code
+ * extension's esbuild bundle turns `import.meta` into `{}`, and
+ * `createRequire(undefined)` throws), so there every RWS 1.0 subscription failed
+ * with NETWORK_ERROR and RobotManager fell back to polling.
+ *
+ * A package that cannot be loaded is `UNSUPPORTED_OPERATION` since 1.5.1: no
+ * subscription can open in this process, so RobotManager does not try the
+ * subscribe again on the connection (a NETWORK_ERROR would be retried each
+ * minute). subscribe() loads it before anything is sent.
  */
-function resolveWebSocket(): WebSocketCtor {
+async function resolveWebSocket(): Promise<WebSocketCtor> {
+  if (wsPackageCtor) { return wsPackageCtor; }
+  const notLoaded = (): RwsError => new RwsError(
+    'The "ws" package is required for RWS 1.0 subscriptions but could not be loaded.',
+    'UNSUPPORTED_OPERATION',
+  );
+  let mod: { default?: unknown; WebSocket?: unknown };
   try {
-    const require = createRequire(import.meta.url);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return require('ws') as any;
+    mod = await import('ws') as unknown as { default?: unknown; WebSocket?: unknown };
   } catch {
-    throw new RwsError(
-      'The "ws" package is required for RWS 1.0 subscriptions but could not be loaded.',
-      'NETWORK_ERROR',
-    );
+    throw notLoaded();
   }
+  const ctor = typeof mod.default === 'function' ? mod.default : mod.WebSocket;
+  if (typeof ctor !== 'function') { throw notLoaded(); }
+  wsPackageCtor = ctor as WebSocketCtor;
+  return wsPackageCtor;
 }
 
 // ─── Path builder for subscription resources ─────────────────────────────────
@@ -123,20 +161,23 @@ function withRapidDomain(name: string): string {
 }
 
 /**
- * Map a SubscriptionResource to its RWS 1.0 event path (with ;state suffix where needed).
+ * Map a subscription resource to its RWS 1.0 event paths (with ;state suffix where needed):
+ * one path, except mastership of every domain, which is one per domain (see addedResourcePaths).
  * Paths are NOT percent-encoded - semicolons must be literal in the subscription body.
  */
-function resourceToPath(resource: SubscriptionResource): string {
-  if (resource === 'execution')     return '/rw/rapid/execution;ctrlexecstate';
-  if (resource === 'controllerstate') return '/rw/panel/ctrlstate;ctrlstate';
-  if (resource === 'operationmode') return '/rw/panel/opmode;opmode';
-  if (resource === 'speedratio')    return '/rw/panel/speedratio;speedratio';
-  if (resource === 'coldetstate')   return '/rw/panel/coldetstate;coldetstate';
-  if (resource === 'uiinstr')       return '/rw/rapid/uiinstr;uievent';
+export function resourcePaths(resource: AnySubscriptionResource): string[] {
+  if (resource === 'execution')     return ['/rw/rapid/execution;ctrlexecstate'];
+  if (resource === 'controllerstate') return ['/rw/panel/ctrlstate;ctrlstate'];
+  if (resource === 'operationmode') return ['/rw/panel/opmode;opmode'];
+  if (resource === 'speedratio')    return ['/rw/panel/speedratio;speedratio'];
+  if (resource === 'coldetstate')   return ['/rw/panel/coldetstate;coldetstate'];
+  if (resource === 'uiinstr')       return ['/rw/rapid/uiinstr;uievent'];
   if (resource.type === 'signal') {
     // Convention: name can be 'network/device/signalname' (3 parts) for a physical signal,
-    // or just 'signalname' for virtual/flat signals.
-    return `/rw/iosystem/signals/${resource.name};state`;
+    // or just 'signalname' for virtual/flat signals. Checked first, as on RWS 2.0:
+    // it goes into the body unencoded, where a '&' or '=' would add form fields.
+    assertSignalName(resource.name);
+    return [`/rw/iosystem/signals/${resource.name};state`];
   }
   if (resource.type === 'persvar') {
     // RAPID persistent variable subscription path (full path: RAPID/task/module/symbol).
@@ -144,16 +185,21 @@ function resourceToPath(resource: SubscriptionResource): string {
     // 400 "Resource does not exist on the controller" (live-verified 2026-08 on
     // RW6.16). Callers may pass it either way - RWS 2.0 takes the bare form, so
     // normalize here and the same resource object works on both protocols.
-    return `/rw/rapid/symbol/data/${withRapidDomain(resource.name)};value`;
+    return [`/rw/rapid/symbol/data/${withRapidDomain(resource.name)};value`];
   }
   if (resource.type === 'taskchange') {
-    return `/rw/rapid/tasks/${encodeURIComponent(resource.task)};taskchange`;
+    return [`/rw/rapid/tasks/${encodeURIComponent(resource.task)};taskchange`];
   }
   if (resource.type === 'execycle') {
-    return '/rw/rapid/execution;rapidexeccycle';
+    return ['/rw/rapid/execution;rapidexeccycle'];
   }
   if (resource.type === 'elog') {
-    return `/rw/elog/${resource.domain}`;
+    return [`/rw/elog/${resource.domain}`];
+  }
+  if (resource.type === 'mastership' || resource.type === 'motionerrorstate') {
+    // Rev M: /rw/mastership/{domain}, one per domain for every domain, and the
+    // motion system's errorstate;erroreventchange (see addedResourcePaths).
+    return addedResourcePaths(resource, 'rws1') as string[];
   }
   // TypeScript exhaustiveness check
   const _: never = resource;
@@ -164,16 +210,61 @@ function resourceToPath(resource: SubscriptionResource): string {
 /**
  * Build the application/x-www-form-urlencoded body for POST /subscription.
  * Paths are NOT percent-encoded; the semicolons are literal as expected by RWS.
+ *
+ * `resources=<i>` is repeated once PER resource - it names a resource index, it
+ * is not a count. A single `resources=N` makes the controller bind only
+ * resource N and silently drop the rest, while still answering 201. A path
+ * two resources map to is sent once.
  */
-function buildSubscriptionBody(resources: SubscriptionResource[]): string {
-  const parts: string[] = [`resources=${resources.length}`];
-  resources.forEach((resource, index) => {
+export function buildSubscriptionBody(resources: AnySubscriptionResource[]): string {
+  return distinctPaths(resources.flatMap(resourcePaths)).map((path, index) => {
     const i = index + 1;
-    const path = resourceToPath(resource);
     // Do NOT encodeURIComponent the path - RWS expects literal semicolons
-    parts.push(`${i}=${path}&${i}-p=1`);
-  });
-  return parts.join('&');
+    return `resources=${i}&${i}=${path}&${i}-p=1`;
+  }).join('&');
+}
+
+// ─── Partial binds (RWS 1.0 panel spellings) ─────────────────────────────────
+
+/**
+ * The panel resources the controller accepts in two spellings, bare
+ * (`/rw/panel/opmode`) and suffixed (`/rw/panel/opmode;opmode`).
+ */
+const PANEL_TWO_SPELLINGS = new Set(['ctrlstate', 'opmode', 'speedratio', 'coldetstate']);
+
+/**
+ * The resource URIs a create-subscription answer names as refused: one
+ * `<div class="status">` block per refused resource, whose self link is the
+ * URI as sent. On RW 6.16.03 a multi-resource create still answers 201 when
+ * one resource is refused; only that resource is dropped, and it is named
+ * only in such a block (code -1073445866, "Invalid resource URI in Create
+ * Subscription request"). Live-verified 2026-09-29.
+ */
+export function refusedSubscriptionResources(responseBody: string): string[] {
+  const out: string[] = [];
+  for (const [, block] of responseBody.matchAll(/<div class="status">([\s\S]*?)<\/div>/g)) {
+    const href = block.match(/<a[^>]*href="([^"]+)"[^>]*rel="self"/)?.[1];
+    if (href) { out.push(href.replace(/&amp;/g, '&')); }
+  }
+  return out;
+}
+
+/** The other spelling of a two-spelling panel resource, or null for any other URI. */
+export function otherPanelSpelling(uri: string): string | null {
+  const m = /^\/rw\/panel\/([a-z]+)(?:;([a-z]+))?$/.exec(uri);
+  if (!m || !PANEL_TWO_SPELLINGS.has(m[1])) { return null; }
+  if (m[2] === undefined) { return `/rw/panel/${m[1]};${m[1]}`; }
+  return m[2] === m[1] ? `/rw/panel/${m[1]}` : null;
+}
+
+/** The subscription body with each `N=<from>` resource entry swapped to `N=<to>`. */
+function swapSubscriptionResources(body: string, swaps: Array<[string, string]>): string {
+  let out = body;
+  for (const [from, to] of swaps) {
+    const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(^|&)(\\d+)=${esc}(?=&|$)`), (_all, lead: string, n: string) => `${lead}${n}=${to}`);
+  }
+  return out;
 }
 
 // ─── XML event parsing ────────────────────────────────────────────────────────
@@ -186,30 +277,12 @@ function buildSubscriptionBody(resources: SubscriptionResource[]): string {
  *       <span class="excstate">running</span>
  *     </li>
  *   </ul></div></body></html>
+ * One event per entry: its link (or, for ABB's linkless mastership entry,
+ * `/rw/mastership/{title}`; see subscriptionFrameEntries) and its first
+ * field's value, '' when it has none.
  */
-function parseWsMessage(data: string): SubscriptionEvent[] {
-  const events: SubscriptionEvent[] = [];
-
-  // Extract all <li> blocks in the message
-  const liPattern = /<li[^>]*>(.*?)<\/li>/gis;
-  let liMatch: RegExpExecArray | null;
-
-  while ((liMatch = liPattern.exec(data)) !== null) {
-    const block = liMatch[1];
-
-    // Extract resource URL from the <a href="..."> anchor
-    const hrefMatch = block.match(/<a[^>]*href="([^"]+)"/i);
-    if (!hrefMatch) continue;
-    const resource = hrefMatch[1];
-
-    // Extract value from the first <span> in this block
-    const spanMatch = block.match(/<span[^>]*>(.*?)<\/span>/is);
-    const value = spanMatch ? spanMatch[1].trim() : '';
-
-    events.push({ resource, value, timestamp: new Date() });
-  }
-
-  return events;
+export function parseWsMessage(data: string): SubscriptionEvent[] {
+  return subscriptionFrameEntries(data).map(e => ({ resource: e.resource, value: e.value ?? '', timestamp: new Date() }));
 }
 
 // ─── WsSubscriber ─────────────────────────────────────────────────────────────
@@ -217,6 +290,7 @@ function parseWsMessage(data: string): SubscriptionEvent[] {
 interface ActiveSubscription {
   id: string;
   body: string;       // registration body, kept for re-POST after a controller restart
+  unbound: readonly string[]; // what the group held now left out (register), read by the handle
   wsUrl: string;
   deleteUrl: string;  // HTTP URL used to DELETE the subscription on close
   ws: WebSocket | null;
@@ -251,37 +325,33 @@ export class WsSubscriber {
    * best-effort deleting the subscription registered by the POST - otherwise the
    * caller believes it has live events while the controller streams to nobody.
    *
+   * The returned function carries `unbound`: the resources the controller
+   * left out of the group it holds now (see `register`), read live, since a
+   * re-registration after a controller restart is judged on its own answer.
+   * No event comes for them; RobotManager polls the ones it reads.
+   *
    * @param resources - Array of resources to subscribe to
    * @param handler   - Called for each incoming event
    * @returns         - Async function that cancels the subscription and closes the WebSocket
    */
   async subscribe(
-    resources: SubscriptionResource[],
+    resources: AnySubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
     opts: WsSubscribeOptions = {},
-  ): Promise<() => Promise<void>> {
-    // Step 1: POST /subscription to register resources
-    const body = buildSubscriptionBody(resources);
-    const response = await this.session.post(subscriptions(), body);
-
-    if (response.status !== 201) {
-      throw new RwsError(
-        `Subscription POST returned ${response.status}, expected 201`,
-        'UNKNOWN',
-        response.status,
-      );
-    }
-
-    const locationHeader = response.headers.get('location');
-    if (!locationHeader) {
-      throw new RwsError('Subscription POST missing Location header', 'UNKNOWN');
-    }
+  ): Promise<(() => Promise<void>) & { readonly unbound: readonly string[] }> {
+    // The WebSocket constructor first: without the 'ws' package no socket can
+    // open, and nothing is sent (no group created and deleted again).
+    if (!this.wsCtor) { await resolveWebSocket(); }
+    // Step 1: POST /subscription to register resources (with the one-time
+    // re-create in the other spelling when a panel resource was dropped)
+    const { location: locationHeader, body, unbound } = await this.register(buildSubscriptionBody(resources), 'POST');
 
     const { id: subscriptionId, wsUrl, deleteUrl } = this.parseLocation(locationHeader);
 
     const sub: ActiveSubscription = {
       id: subscriptionId,
       body,
+      unbound,
       wsUrl,
       deleteUrl,
       ws: null,
@@ -306,11 +376,11 @@ export class WsSubscriber {
       this.subscriptions.delete(subscriptionId);
       // Free the controller-side slot registered by the POST - best-effort
       await this.session.delete(sub.deleteUrl).catch(() => undefined);
-      throw err;
+      throw this.explainSecondSocket(err, sub);
     }
 
     // Return unsubscribe function
-    return async () => {
+    const stop = async (): Promise<void> => {
       sub.closed = true;
       if (sub.reconnectTimer) {
         clearTimeout(sub.reconnectTimer);
@@ -326,6 +396,27 @@ export class WsSubscriber {
       // Best-effort DELETE - ignore errors (controller may have already cleaned up)
       await this.session.delete(sub.deleteUrl).catch(() => undefined);
     };
+    return Object.defineProperty(stop, 'unbound', { get: () => sub.unbound, enumerable: true }) as
+      typeof stop & { readonly unbound: readonly string[] };
+  }
+
+  /**
+   * A WebSocket that failed before opening while this session has another
+   * subscription's WebSocket open. ABB's RWS 1.0 allows one WebSocket per
+   * session (more are refused, Rev M), and RW 6.16.03 failed a second one
+   * before it opened, beside RobotManager's own (2026-10-21). The error says
+   * so and names the open group; its code is kept. Any other failure is
+   * returned as it is.
+   */
+  private explainSecondSocket(err: unknown, sub: ActiveSubscription): unknown {
+    const open = [...this.subscriptions.values()].find(s => s !== sub && !s.closed && s.ws !== null);
+    if (!open || !(err instanceof RwsError)) { return err; }
+    return new RwsError(
+      `${err.message}. This session already has the WebSocket of subscription ${open.id} open, and ABB's RWS 1.0 allows one `
+        + `WebSocket per session: add the resources to that group (updateSubscriptionGroup on /subscription/${open.id}), `
+        + 'or subscribe from a session of its own.',
+      err.code, err.httpStatus, err.rwsDetail, err.controllerCode, err.controllerMsg, err.refusal, err.responseBody,
+    );
   }
 
   /** Close all active subscriptions */
@@ -359,7 +450,7 @@ export class WsSubscriber {
    *   subscriber was configured with, so subscriptions keep working when the
    *   controller is reached through NAT/port-forwarding (and lets tests
    *   interpose a proxy). Live-verified 2026-08-02 on RW6.16 VC
-   *   (probe-sub-delete.mjs): Location is an absolute ws://host:port/poll/{id}
+   *   (a probe script): Location is an absolute ws://host:port/poll/{id}
    *   carrying the controller's own authority.
    * - deleteUrl is always `/subscription/{id}` as a PATH. Two reasons, both
    *   live-verified 2026-08-02 on RW6.16 VC: DELETE on the poll URL → 404
@@ -394,25 +485,123 @@ export class WsSubscriber {
    */
   private async reRegister(sub: ActiveSubscription): Promise<void> {
     await this.session.delete(sub.deleteUrl).catch(() => undefined);
-    const response = await this.session.post(subscriptions(), sub.body);
-    if (response.status !== 201) {
-      throw new RwsError(
-        `Subscription re-POST returned ${response.status}, expected 201`,
-        'UNKNOWN',
-        response.status,
-      );
-    }
-    const locationHeader = response.headers.get('location');
-    if (!locationHeader) {
-      throw new RwsError('Subscription re-POST missing Location header', 'UNKNOWN');
-    }
+    // The old group is let go: until the new one is created nothing is
+    // held, so `unbound` names nothing (not the last group's).
+    sub.unbound = [];
+    const { location: locationHeader, body, unbound } = await this.register(sub.body, 're-POST');
     const { id, wsUrl, deleteUrl } = this.parseLocation(locationHeader);
     this.subscriptions.delete(sub.id);
     sub.id = id;
+    sub.body = body;
+    sub.unbound = unbound;
     sub.wsUrl = wsUrl;
     sub.deleteUrl = deleteUrl;
     this.subscriptions.set(id, sub);
     Logger.trace?.('subscription', `re-registered as subscription ${id}`);
+  }
+
+  /**
+   * One POST /subscription: a 201 with a Location, or an RwsError.
+   *
+   * This one request gets CREATE_GROUP_EXTRA_MS on top of the session's
+   * timeout (5 s by default, so 10 s; HttpSession's `holdMs`). On RW 6.16.03
+   * the create is by far the slowest request a connection sends: 0.8 s at
+   * the median and at most 1.1 s over 90 creates in four functional runs
+   * (2026-10-22 to 2026-10-25), where the median of the other 10856 requests
+   * was 18 ms. In a connect of three controllers at once (2026-10-25) no
+   * answer to RobotManager's create came within the 5 s timeout, three times
+   * out of three, while the connect's other requests were answered. A create
+   * the client gives up on may still leave a group on the controller: on RW
+   * 7.21.4 (RWS 2.0) an unanswered create left a listed group for 25-35 s
+   * that could not be deleted meanwhile (2026-09-29). Whether an RWS 1.0
+   * create the controller completes after the client gave up leaves a
+   * group, and for how long, was not probed; ABB's RWS 1.0 allows two groups
+   * per client. The RWS 2.0 subscribe POST waits 10 s for its answer by
+   * default too.
+   *
+   * The cost: requests go one at a time per session, so a create that is
+   * never answered holds the requests behind it (the poll, a write, the
+   * disconnect's /logout) for up to 10 s, each time it is sent (a 401 or a
+   * 503 sends it once more). RobotManager subscribes again while it has no
+   * event stream, so this can recur on a connection: after three unanswered
+   * creates in a row it waits 10 minutes between tries.
+   */
+  private async createGroup(body: string, what: string): Promise<{ location: string; responseBody: string }> {
+    const response = await this.session.post(subscriptions(), body, CREATE_GROUP_EXTRA_MS);
+    if (response.status !== 201) {
+      throw new RwsError(
+        `Subscription ${what} returned ${response.status}, expected 201`,
+        'UNKNOWN',
+        response.status,
+      );
+    }
+    const location = response.headers.get('location');
+    if (!location) {
+      throw new RwsError(`Subscription ${what} missing Location header`, 'UNKNOWN');
+    }
+    return { location, responseBody: response.body ?? '' };
+  }
+
+  /**
+   * Register a group and check that every panel resource was bound. Returns
+   * the Location and the body that bound (kept for later re-registrations).
+   *
+   * RW 6.16.03 accepts /rw/panel/{ctrlstate,opmode,speedratio,coldetstate}
+   * bare or `;suffix`, but while any live group (another client's, or this
+   * session's own) holds one of them in one spelling, a create naming it in
+   * the other spelling drops it: a multi-resource create still answers 201,
+   * and the dropped resource is named only in a status block of the 201 body.
+   * The same spelling co-exists, so the group is deleted and created once
+   * more with the refused resource in the other spelling; that binds all of
+   * them (live-verified 2026-09-29). If a panel resource is still refused,
+   * the group is deleted and this throws, so the caller falls back to polling
+   * rather than trusting a group that never sends that resource's events.
+   * That drops the whole group, the event log and execution state included,
+   * not only the refused resource: RobotManager then polls everything at the
+   * fast rate. Another refused resource (not a panel one) is logged and the
+   * group is kept without it; it is returned as `unbound` (the URI as sent),
+   * from the answer of the group that is kept, and the subscribe handle
+   * lists it, so RobotManager polls what no event will bring. RW 6.16.03 left
+   * `/rw/elog/0` out of the manager's group this way for a whole run, every
+   * create answering 201 (2026-10-22); before 1.5.0 only the
+   * log line said so, and the event log went stale with the quality still
+   * `live`.
+   */
+  private async register(body: string, what: string): Promise<{ location: string; body: string; unbound: readonly string[] }> {
+    const first = await this.createGroup(body, what);
+    const refused = refusedSubscriptionResources(first.responseBody);
+    if (refused.length === 0) { return { location: first.location, body, unbound: [] }; }
+
+    const swaps: Array<[string, string]> = [];
+    const others: string[] = [];
+    for (const uri of refused) {
+      const other = otherPanelSpelling(uri);
+      if (other) { swaps.push([uri, other]); } else {
+        others.push(uri);
+        Logger.warn(`RWS 1.0 subscription: the controller did not bind ${uri}`);
+      }
+    }
+    if (swaps.length === 0) { return { location: first.location, body, unbound: Object.freeze(others) }; }
+
+    Logger.info(`RWS 1.0 subscription: ${swaps.map(s => s[0]).join(', ')} held in the other spelling elsewhere - re-creating with ${swaps.map(s => s[1]).join(', ')}`);
+    await this.session.delete(this.parseLocation(first.location).deleteUrl).catch(() => undefined);
+    const retryBody = swapSubscriptionResources(body, swaps);
+    const second = await this.createGroup(retryBody, what);
+    const secondRefused = refusedSubscriptionResources(second.responseBody);
+    const unbound = secondRefused.filter(u => otherPanelSpelling(u) !== null);
+    if (unbound.length > 0) {
+      await this.session.delete(this.parseLocation(second.location).deleteUrl).catch(() => undefined);
+      throw new RwsError(
+        `Subscription ${what}: the controller did not bind ${unbound.join(', ')} in either spelling`,
+        'UNKNOWN',
+      );
+    }
+    // The first group was deleted: only the second answer says what the kept group left out.
+    const othersKept = secondRefused.filter(u => otherPanelSpelling(u) === null);
+    for (const uri of othersKept.filter(u => !others.includes(u))) {
+      Logger.warn(`RWS 1.0 subscription: the controller did not bind ${uri}`);
+    }
+    return { location: second.location, body: retryBody, unbound: Object.freeze(othersKept) };
   }
 
   // ─── WebSocket lifecycle ────────────────────────────────────────────────────
@@ -423,10 +612,14 @@ export class WsSubscriber {
    * rejected upgrade). Reconnect handling for established streams lives in the
    * close handler, so callers of reconnect attempts must catch rejections.
    */
-  private openWebSocket(sub: ActiveSubscription): Promise<void> {
+  private async openWebSocket(sub: ActiveSubscription): Promise<void> {
+    const WS = this.wsCtor ?? await resolveWebSocket();
+    // Only the first load of 'ws' waits; a subscription closed meanwhile opens nothing.
+    if (sub.closed) {
+      throw new RwsError(`Subscription ${sub.id} was closed before its WebSocket opened`, 'NETWORK_ERROR');
+    }
     return new Promise<void>((resolve, reject) => {
       const cookieHeader = this.session.getCookieHeader();
-      const WS = this.wsCtor ?? resolveWebSocket();
       const ws = new WS(sub.wsUrl, ['robapi2_subscription'], {
         headers: { Cookie: cookieHeader },
         handshakeTimeout: sub.opts.openTimeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS,
@@ -481,9 +674,16 @@ export class WsSubscriber {
         }
         if (sub.closed) return; // intentional close - do not reconnect
 
-        if (!event.wasClean) {
-          this.scheduleReconnect(sub);
-        }
+        // Every close this client did not ask for is a lost stream, a clean
+        // one too. In the ws package a close is clean once both close frames
+        // went, and ws answers the controller's close frame itself, so a
+        // close the controller starts (RW 6.16.03 sends close frames, as the
+        // 1008 in the header says) reads as clean. Until 1.5.1 such a close
+        // neither reconnected nor fired onLost: the stream stopped and the
+        // consumer was not told. The RWS 2.0 subscriber reconnects on any
+        // close.
+        Logger.trace?.('subscription', `RWS 1.0 subscription ${sub.id}: the WebSocket closed (${event?.wasClean ? 'clean' : 'not clean'})`);
+        this.scheduleReconnect(sub);
       };
     });
   }
@@ -564,6 +764,7 @@ export class WsSubscriber {
     this.stopHeartbeat(sub);
     this.subscriptions.delete(sub.id);
     sub.ws = null;
+    sub.unbound = []; // no group is held any more
     // Best-effort: if the controller is reachable again later this frees the slot;
     // if it is down the DELETE just fails silently.
     void this.session.delete(sub.deleteUrl).catch(() => undefined);

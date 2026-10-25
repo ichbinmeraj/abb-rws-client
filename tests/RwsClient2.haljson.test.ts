@@ -316,3 +316,22 @@ describe('RwsClient2 XHTML-only endpoints', () => {
     } finally { server.close(); }
   });
 });
+
+// ─── A comma before a closing brace (RW 6.16.03 smbdata, 2026-10-01) ─────────
+
+describe('HalJsonParser trailing-comma repair', () => {
+  it('reads a body with a comma before a closing brace or bracket', async () => {
+    const { HalJsonParser } = await import('../src/HalJsonParser.js');
+    const p = new HalJsonParser('{ "state": [ { "_type": "x", "a": "1", }, ], }');
+    expect(p.getState('x')).toEqual({ a: '1' });
+  });
+
+  it('leaves string values alone and still fails a body malformed another way', async () => {
+    const { HalJsonParser } = await import('../src/HalJsonParser.js');
+    expect(HalJsonParser.dropTrailingCommas('{"m":"a, }", "n":"b\\", ]",}')).toBe('{"m":"a, }", "n":"b\\", ]"}');
+    const p = new HalJsonParser('{ "state": [ { "_type": "x", "a": "1" "b": "2" } ] }');
+    expect(p.getAllEntries()).toEqual([]);
+    // A valid body is parsed as it was.
+    expect(new HalJsonParser('{"state":[{"_type":"x","v":"1,}"}]}').getState('x')).toEqual({ v: '1,}' });
+  });
+});

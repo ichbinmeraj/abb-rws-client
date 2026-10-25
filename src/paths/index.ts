@@ -12,8 +12,8 @@
  * decision.
  */
 
-export type { DomainTable, Operation, PathSpec, HttpVerb } from './PathSpec.js';
-export { buildPath, flatten } from './PathSpec.js';
+export type { DomainTable, Operation, PathSpec, HttpVerb, Tier, Evidence, OperationEvidence } from './PathSpec.js';
+export { buildPath, flatten, evidenceOf, isBuiltOnly } from './PathSpec.js';
 
 import type { DomainTable } from './PathSpec.js';
 import { PANEL } from './panel.js';

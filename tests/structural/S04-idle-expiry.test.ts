@@ -225,8 +225,11 @@ for (const generation of ['rws1', 'rws2'] as const) {
         expect(session.nonceCount).toBeLessThan(base.nonceBefore);
         return;
       }
-      // RWS 2.0 sends Basic on every request, so "re-auth" means: the dead
-      // cookie was replaced by the one the controller minted on this exchange.
+      // RWS 2.0 answers the dead cookie 401, the client logs in once with
+      // Basic (GET /rw/system) and sends the request once more with the new
+      // cookie (since 1.5.1; before, Basic went on every request), so
+      // "re-auth" means: the dead cookie was replaced by the one the
+      // controller minted on this exchange.
       // Keeping the dead cookie is not cosmetic - it is what made every later
       // WS upgrade 401 forever on RW7.21 (see the note in RwsClient2.req).
       const cookie = rws2CookieHolderOf(target).sessionCookie;

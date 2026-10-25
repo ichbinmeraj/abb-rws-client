@@ -7,10 +7,18 @@ describe('redactBody - secret masking for trace logs', () => {
       .toBe('old-password=***&new-password=***');
   });
 
-  it('masks pin and pincode (opmode lock, control-station register)', () => {
+  it('masks pin, pincode and the control-station id (opmode lock, control-station register)', () => {
     expect(redactBody('pin=1234&permanent=false')).toBe('pin=***&permanent=false');
-    expect(redactBody('control-station-name=cs&control-station-id=id&pincode=9999'))
-      .toBe('control-station-name=cs&control-station-id=id&pincode=***');
+    // The station id is the identity a caller stores and registers with on
+    // every run, so it stays out of traces like the PIN; the name stays.
+    expect(redactBody('control-station-name=cs&control-station-id=%7B6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b%7D&pincode=9999'))
+      .toBe('control-station-name=cs&control-station-id=***&pincode=***');
+    expect(redactBody('control-station-id=x&release-write-access-when-lost=TRUE'))
+      .toBe('control-station-id=***&release-write-access-when-lost=TRUE');
+  });
+
+  it('masks only the exact control-station-id key, not other id fields', () => {
+    expect(redactBody('mastershipid=12&task-id=T_ROB1')).toBe('mastershipid=12&task-id=T_ROB1');
   });
 
   it('preserves non-secret fields verbatim', () => {

@@ -3,6 +3,7 @@ import { PANEL } from '../paths/panel.js';
 import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import { type ControllerClock, type ControllerIdentity, type RestartMode, type SystemInfo } from '../types.js';
 import { parse } from './core.js';
+import { robotTypesFrom } from '../commonReads.js';
 import type { GConstructor, Rws2Base } from './mixin.js';
 
 /**
@@ -33,6 +34,14 @@ function systemOps<TBase extends Rws2Base>(Base: TBase) {
       return { datetime: p.getState('ctrl-clock-info')['datetime'] ?? '' };
     }
 
+    /**
+     * `PUT /ctrl/clock`, the method ABB documents ("Set the Clock of the
+     * Controller", RWS 2.0 Rev L, Controller Service), with "Supported only in
+     * RC": a virtual controller answers 405 -1073414146 "HTTP method not
+     * supported by resource" (RW 7.21.4 and 8.2.1, 2026-10-11). Times are UTC.
+     *
+     * @experimental Built from the controller form; never run against an RWS 2.0 controller.
+     */
     setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
       // PUT /ctrl/clock - field names confirmed from RwsClient ResourceMapper
       return this.req('PUT', buildPath(CTRL.setControllerClock.rws2 as PathSpec), {
@@ -49,24 +58,21 @@ function systemOps<TBase extends Rws2Base>(Base: TBase) {
      * Restart the controller. Requires `edit` mastership - live-verified
      * 2026-08-02 on OmniCore VC RW7.21: bare POST /ctrl/restart → 403
      * "Restart failed for given restart mode -1073445859"; the same POST with
-     * edit mastership held is accepted. Acquired internally; no release
+     * edit mastership held is accepted. Held around the call; no release
      * afterwards - the controller is going down and takes the session with it.
+     * A refused restart releases the hold as usual: keeping edit mastership
+     * then would block every other client until this session times out.
      */
     async restartController(mode: RestartMode = 'restart'): Promise<void> {
-      await this.requestMastership('rapid');   // 'rapid' is renamed to 'edit' internally
-      try {
+      // 'rapid' is renamed to 'edit' internally
+      await this.withAccess(['rapid'], async () => {
         await this.req('POST', buildPath(PANEL.restartController.rws2 as PathSpec), { 'restart-mode': mode });
-        // Success: no release - the controller is going down and takes the
-        // session (and its mastership) with it.
-      } catch (e) {
-        // Refused restart (wrong mode, busy, ...): keeping edit mastership here
-        // would block every other client until this session times out.
-        await this.releaseMastership('rapid').catch(() => {});
-        throw e;
-      }
+      }, { releaseOnSuccess: false });
     }
 
-    /** Reset accumulated system energy counters. POST, no body. */
+    /**
+     * Reset accumulated system energy counters. POST, no body.
+     */
     async resetEnergy(): Promise<void> {
       await this.req('POST', buildPath(SYSTEM_MASTERSHIP.resetEnergy.rws2 as PathSpec));
     }
@@ -94,11 +100,13 @@ function systemOps<TBase extends Rws2Base>(Base: TBase) {
       }));
     }
 
-    async getRobotType(): Promise<{ type: string; variant?: string }> {
+    /** The robot types (ABB Rev L "Get Robot Type": one `sys-robottype`
+     *  entry per robot, span `robot-type` with a hyphen, live-verified):
+     *  `type` the first robot's, `types` every robot's, in the controller's
+     *  order. 1.4.x kept the first only. */
+    async getRobotType(): Promise<{ type: string; variant?: string; types: string[] }> {
       const p = parse(await this.req('GET', buildPath(SYSTEM_MASTERSHIP.getRobotType.rws2 as PathSpec)));
-      const d = p.getState('sys-robottype');
-      // Live-verified: span class is 'robot-type' (with hyphen), not 'robottype'
-      return { type: d['robot-type'] ?? d['robottype'] ?? d['type'] ?? '', variant: d['variant'] };
+      return robotTypesFrom(p.getAllEntries());
     }
 
     async getEnergyStats(): Promise<Record<string, string>> {
@@ -108,20 +116,33 @@ function systemOps<TBase extends Rws2Base>(Base: TBase) {
     }
 
     /**
-     * Write a system-information report to a file on the controller.
-     * POST /ctrl/system/info, form fields `path`, `file-type` (live-read
-     * 2026-08-09).
+     * Copy the system's installation files (RMF, RSF, RLF) into a controller
+     * directory; the caller removes them afterwards (ABB Rev L, "Supported
+     * only in RC"). POST /ctrl/system/info, form fields `path` and, optional,
+     * `file-type` (live-read 2026-08-09). ABB's `file-type` takes values such
+     * as `FileType_RMF` or `[FileType_RMF,FileType_RSF]`; without it the
+     * controller copies every type (`FileType_ALL`). This method sends
+     * `file-type` only when `fileType` is given and not empty.
+     *
+     * Returns nothing, as in 1.4.0. ABB's 200 answer lists the copied files
+     * (one `ctrl-system-info-li` per file, the name in the title and a
+     * `/fileservice/` link); list the `path` directory to see them.
      *
      * Despite the name this is NOT a getter - GET answers 405 and the resource
      * only accepts POST. Use `getSystemInfo()` for the in-memory system facts.
      *
      * Not available on a virtual controller: both VCs answer 403 "Functionality
-     * is not supported on the current platform" (live-verified 2026-08-09 on
-     * RW7.21 and RW8.1.1), surfacing as `RwsError` GRANT_DENIED. Kept because the
+     * is not supported on the current platform" (RW7.21 and RW8.1.1,
+     * 2026-08-09), surfacing as `RwsError` UNSUPPORTED_OPERATION (refusal
+     * kind `rc-only` when the caller knows it is a virtual controller). Kept because the
      * form is real and physical controllers do implement it.
+     *
+     * @experimental Built from the controller form; no logged 2xx on an RWS 2.0 controller.
      */
-    async saveSystemInfo(path: string, fileType: string): Promise<void> {
-      await this.req('POST', buildPath(CTRL.saveSystemInfo.rws2 as PathSpec), { path, 'file-type': fileType });
+    async saveSystemInfo(path: string, fileType?: string): Promise<void> {
+      const form: Record<string, string> = { path };
+      if (fileType !== undefined && fileType !== '') { form['file-type'] = fileType; }
+      await this.req('POST', buildPath(CTRL.saveSystemInfo.rws2 as PathSpec), form);
     }
   };
 }
@@ -142,9 +163,9 @@ export interface SystemMethods {
   getRestartCount(): Promise<number>;
   getLicenseInfo(): Promise<{ entries: Array<Record<string, string>> }>;
   listProducts(): Promise<Array<Record<string, string>>>;
-  getRobotType(): Promise<{ type: string; variant?: string }>;
+  getRobotType(): Promise<{ type: string; variant?: string; types: string[] }>;
   getEnergyStats(): Promise<Record<string, string>>;
-  saveSystemInfo(path: string, fileType: string): Promise<void>;
+  saveSystemInfo(path: string, fileType?: string): Promise<void>;
 }
 
 /** Guard: the mixin class must provide every SystemMethods member (never exported). */

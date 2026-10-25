@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { RwsClient } from '../src/RwsClient.js';
+import { RWS1Adapter } from '../src/RWS1Adapter.js';
 import { RwsError } from '../src/types.js';
 
 // ─── Tiny mock IRC5: digest-challenges, verifies the response hash, routes ───
@@ -397,6 +398,49 @@ describe('RwsClient - request shaping against a mock controller', () => {
 
     await expect(client.getActiveUiInstruction()).resolves.toBeNull();
   });
+
+  it('getJointTargetFull GETs the unit jointtarget and keeps the external-axis spans', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+
+    mock.routes.set('GET /rw/motionsystem/mechunits/ROB_1/jointtarget', (res) => {
+      res.writeHead(200, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<li class="ms-jointtarget" title="ROB_1">'
+        + '<span class="rax_1">0</span><span class="rax_2">10</span><span class="rax_3">20</span>'
+        + '<span class="rax_4">0</span><span class="rax_5">30.0000019073486</span><span class="rax_6">0</span>'
+        + '<span class="eax_a">512.5</span><span class="eax_b">9E+09</span><span class="eax_c">9E+09</span>'
+        + '<span class="eax_d">9E+09</span><span class="eax_e">9E+09</span><span class="eax_f">9E+09</span></li>');
+    });
+    mock.routes.set('GET /rw/motionsystem/mechunits/STN_1/jointtarget', (res) => {
+      res.writeHead(404, { 'Content-Type': 'application/xhtml+xml' });
+      res.end('<span class="code">-1073445879</span>');
+    });
+
+    await expect(client.getJointTargetFull()).resolves.toEqual({
+      rax: [0, 10, 20, 0, 30.0000019073486, 0],
+      eax: [512.5, 9e9, 9e9, 9e9, 9e9, 9e9],
+    });
+    // An unknown unit surfaces as a typed RwsError, never a zero-filled target.
+    await expect(client.getJointTargetFull('STN_1')).rejects.toBeInstanceOf(RwsError);
+  });
+
+  it('request() hands back the answer headers, so the Location of a 202 job answer reaches the adapter', async () => {
+    // ABB's RWS 1.0 manual (Rev M), "Compress/Decompress Resource": 202 with
+    // Location /progress/{id} and no content.
+    const client = makeClient(mock.port);
+    await client.connect();
+    mock.routes.set('POST /ctrl/compress?action=comp&json=1', (res) => {
+      res.writeHead(202, { Location: '/progress/4' });
+      res.end();
+    });
+    const res = await client.request('POST', '/ctrl/compress?action=comp&json=1', 'srcpath=a&dstpath=b');
+    expect(res.status).toBe(202);
+    expect(res.headers?.get('location')).toBe('/progress/4');
+
+    const adapter = new RWS1Adapter(client, { host: '127.0.0.1', port: mock.port, username: USER, password: PASS });
+    await expect(adapter.startJob('compressPath', '$TEMP/a.txt', '$TEMP/a.rzo')).resolves.toBe('4');
+    await expect(adapter.compressPath('$TEMP/a.txt', '$TEMP/a.rzo')).resolves.toBeUndefined();
+  });
 });
 
 describe('RwsClient - controller-level error taxonomy', () => {
@@ -461,5 +505,47 @@ describe('RwsClient.subscribe - option pass-through', () => {
 
     expect(captured[0]?.onLost).toBe(onLost);
     expect(captured[0]?.onRestored).toBe(onRestored);
+  });
+});
+
+describe('RwsClient - requests after disconnect()', () => {
+  // A request on a disconnected client is refused (NOT_CONNECTED) and
+  // nothing is sent.
+  let mock: MockController;
+
+  beforeEach(async () => {
+    mock = await startMockController();
+  });
+
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  it('are refused with NOT_CONNECTED and never reach the controller; a second disconnect() sends no second /logout', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.disconnect();
+    const sent = mock.seen.length;
+    expect(mock.seen[sent - 1].url).toBe('/logout');
+
+    await expect(client.getControllerState()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    await client.disconnect();
+    expect(mock.seen).toHaveLength(sent);
+    expect(mock.seen.filter(r => r.url === '/logout')).toHaveLength(1);
+  });
+
+  it('connect() re-opens the client on the same session cookie (no fresh handshake, no new session)', async () => {
+    const client = makeClient(mock.port);
+    await client.connect();
+    await client.disconnect();
+    const sent = mock.seen.length;
+    await client.connect();
+    // One authorized request, straight through: the digest state and cookie
+    // were kept across the disconnect (the pool-preserving rule).
+    expect(mock.seen).toHaveLength(sent + 1);
+    expect(mock.seen[sent].url).toBe('/rw/panel/ctrlstate');
+    expect(mock.seen[sent].authorized).toBe(true);
+    expect(mock.seen[sent].headers.cookie).toContain('-http-session-=sess-1');
+    expect(await client.getControllerState()).toBe('motoron');
   });
 });

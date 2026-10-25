@@ -432,6 +432,31 @@ describe('RWS 2.0 subscription reconnect', () => {
     } finally { s.close(); }
   }, 30000);
 
+  it('delivers a signal whose name starts with a panel word under its own path', async () => {
+    // An unanchored /\/opmode/ renamed this signal's events to 'operationmode'.
+    const s = await startSubscriptionServer();
+    try {
+      const events: Array<{ resource: string; value: string }> = [];
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      const unsubscribe = await client.subscribe(
+        [{ type: 'signal', name: 'opmode_sel' }, 'speedratio'],
+        (e: SubscriptionEvent) => events.push({ resource: e.resource, value: e.value }),
+      );
+      await until(() => s.sockets.length >= 1, 5000);
+      await deliverUntilSeen(
+        s.sockets,
+        '<li class="ios-signalstate-ev"><a href="/rw/iosystem/signals/opmode_sel;state" rel="self"></a><span class="lvalue">1</span></li>'
+        + '<li class="pnl-speedratio-ev"><a href="/rw/panel/speedratio" rel="self"></a><span class="speedratio">42</span></li>',
+        () => events.length >= 2,
+      );
+      expect(events.slice(0, 2)).toEqual([
+        { resource: '/rw/iosystem/signals/opmode_sel;state', value: '1' },
+        { resource: 'speedratio', value: '42' },
+      ]);
+      await unsubscribe();
+    } finally { s.close(); }
+  }, 30000);
+
   it('honors reconnect tuning options and fires onLost after the configured budget', async () => {
     let failing = false;
     const s = await startSubscriptionServer({ failSubscribes: () => failing });
@@ -597,5 +622,43 @@ describe('RWS 2.0 subscriptions over TLS', () => {
         .rejects.toThrow(/self[- ]signed|certificate/i);
       expect(s.sockets.length).toBe(0);
     } finally { s.close(); }
+  });
+});
+
+// ─── A refused subscribe says why ────────────────────────────────────────────
+
+describe('RWS 2.0 subscribe refusal', () => {
+  it('carries the controller\'s code and message from the refusal body', async () => {
+    const body = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body>'
+      + '<div class="status"><span class="code">-1073445866</span>'
+      + '<span class="msg">rws_subscription.cpp[1] Invalid resource URI in Create Subscription request</span></div></body></html>';
+    const server = http.createServer((req, res) => {
+      void collectBody(req).then(() => {
+        res.writeHead(400, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end(body);
+      });
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'u', 'p');
+      const e = await client.subscribe(['speedratio'], () => {}).then(() => null, (x: unknown) => x);
+      expect(e).toMatchObject({
+        name: 'RwsError', code: 'UNKNOWN', httpStatus: 400, controllerCode: -1073445866,
+      });
+      expect((e as Error).message).toMatch(/^RWS2 subscribe POST returned 400: .*Invalid resource URI/);
+    } finally { server.close(); }
+  });
+
+  it('a refusal without a body still says the status only', async () => {
+    const server = http.createServer((req, res) => {
+      void collectBody(req).then(() => { res.writeHead(400); res.end(); });
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'u', 'p');
+      const e = await client.subscribe(['speedratio'], () => {}).then(() => null, (x: unknown) => x);
+      expect(e).toMatchObject({ code: 'UNKNOWN', httpStatus: 400, controllerCode: undefined });
+      expect((e as Error).message).toBe('RWS2 subscribe POST returned 400');
+    } finally { server.close(); }
   });
 });

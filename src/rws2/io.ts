@@ -1,9 +1,32 @@
+import { Logger } from '../Logger.js';
 import { IO } from '../paths/index.js';
 import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import * as R2 from '../ResourceMapper2.js';
 import { RwsError, type IoDevice, type IoNetwork, type Signal, type SignalSearchExCriteria } from '../types.js';
-import { ACCEPT_XHTML, nextPagePath, parse } from './core.js';
+import { withReport } from '../refusal.js';
+import { ACCEPT_XHTML, nextPagePath, parse, signalLocation } from './core.js';
 import type { GConstructor, Rws2Base } from './mixin.js';
+
+/**
+ * Most pages a signal search follows before it stops with a warning: 100
+ * pages of 100 hits. No controller seen so far has more than a few hundred
+ * signals, so reaching it means a `next` chain that never ends.
+ */
+const SEARCH_MAX_PAGES = 100;
+
+/**
+ * Identity of one search page for the revisit guard: the `start` offset in
+ * the page path (0 when absent). The bare search path and
+ * `signal-search?start=0&limit=100` are the same page.
+ */
+function searchPageKey(pagePath: string): string {
+  const query = pagePath.split('?')[1] ?? '';
+  for (const kv of query.split('&')) {
+    const [k, v] = kv.split('=');
+    if (k === 'start') { return String(Number(v ?? '0') || 0); }
+  }
+  return '0';
+}
 
 /**
  * I/O domain (`/rw/iosystem`): signals, networks, devices.
@@ -37,8 +60,8 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
         const p = parse(body);
         for (const s of p.getAllStates('ios-signal-li')) {
           const name  = s['name'] ?? s['_title']?.split('/').pop() ?? '';
-          const parts = (s['_title'] ?? '').split('/');
-          if (parts.length >= 3) { this.sigCoords.set(name, { n: parts[0], d: parts[1] }); }
+          const loc = signalLocation(s);
+          if (loc && name) { this.sigCoords.set(name, loc); }
           out.push({ name, value: s['lvalue'] ?? '0', type: (s['type'] ?? 'DI') as Signal['type'], lvalue: s['lvalue'] ?? '0' });
         }
         path = nextPagePath(body, buildPath(IO.listAllSignals.rws2 as PathSpec));
@@ -54,19 +77,106 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
 
     /**
      * Search IO signals by criteria instead of paging through the full list.
-     * `name` is a SUBSTRING match (not a wildcard - '*' matches nothing); criteria
-     * compose as AND. Live-verified 2026-08-04 (RW7.21): type filter alone found
-     * every DO, device filter scoped correctly. Hits populate the same
-     * network/device cache writeSignal uses.
+     * Criteria compose as AND. Live-verified 2026-08-04 (RW7.21): type filter
+     * alone found every DO, device filter scoped correctly. Hits populate the
+     * same network/device cache writeSignal uses.
+     *
+     * `name` is a case-insensitive PREFIX match, not a substring match (the
+     * wording up to 2026-09-29 was wrong): `IIO_do` finds IIO_do1..8 and
+     * `IIO_DO8` finds IIO_do8, but `do8` and `O_do8` find nothing. There is no
+     * glob or regex - `*`, `?` and `.*` match nothing. `device`, `network` and
+     * `category` match whole values only (RW 8.1.1: `device=IntegratedIO` 0
+     * hits against `IntegratedIOInternalDevice` 26, `network=Int` 0 against
+     * `IntBus` 30, `category=int` 0 against `internal` 68); `device` and
+     * `category` ignore case (`device=integratedIOInternalDevice` 26), the
+     * case of `network` is untested. Sending no criteria at all returns every
+     * signal. Verified 2026-09-27 on RW 6.16, 7.21 and 8.1.1 virtual
+     * controllers.
+     *
+     * On the `category` criterion: ABB's RobotWare 7.3.1 notes (§3.1
+     * Incompatibilities, RobotWare 7.3.2 release notes p.4; release notes,
+     * 2026-09-29) say that RobotWare 7, unlike RobotWare 6, does not set a
+     * signal's Category by default - stated there for the FlexPendant IO app's
+     * Safety-signals list, not for RWS search. The consequence for this method
+     * is ours: a `category` criterion can only match signals whose Category
+     * was configured, and on the RW 8.1.1 virtual controller 73 of 141 signals
+     * carry an empty Category (2026-09-27), so it finds fewer signals than a
+     * RobotWare 6 user would expect.
+     *
+     * The controller pages the hits at 100 with a `next` link regardless of
+     * the criteria (an empty search on RW 8.1.1: 100, then 41, 2026-09-27); a
+     * search with 100 hits or fewer carries no `next` (every filtered search
+     * captured on 2026-09-27 and 2026-09-29 was under 100 and had none). Every
+     * page is read, so the result is the whole hit set; see
+     * `searchSignalPages`.
      */
     async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
       const { path, body } = R2.searchSignals(criteria);
-      return this.parseSignalList(await this.req('POST', path, body));
+      return this.searchSignalPages('searchSignals', path, body);
+    }
+
+    /**
+     * POST one signal search and follow the controller's `next` links until
+     * the last page, re-sending the same criteria body to each page path.
+     *
+     * RWS 2.0 pages a search at 100 hits like the plain signal list (see
+     * `listAllSignals`, whose walk this mirrors): the first answer carries
+     * `next` = `signals/signal-search?start=100&limit=100` (or
+     * `signal-search-ex`), relative to the response base `/rw/iosystem/`,
+     * which is also the base the signal list's links use - hence the same
+     * `nextPagePath` resolution against the signals collection path. A POST of
+     * the same body to that path answered 200 with the remaining hits and a
+     * `first` link but no `next` (RW 8.1.1, 2026-09-27: empty search 100 then
+     * 41; `invert=false` on signal-search-ex the same way). Up to 1.3.x only
+     * the first page was read, so a search matching more than 100 signals
+     * silently returned 100.
+     *
+     * Stops with a `Logger.warn` at `SEARCH_MAX_PAGES` (10 000 signals), and
+     * on a `next` that points back at a page already read (a controller that
+     * did so would otherwise duplicate hits until the cap). Pages are told
+     * apart by their `start` offset, not by the literal path: the first page
+     * is requested at the bare search path while the controller names it
+     * `?start=0&limit=100` in its `first` link (RW 8.1.1, 2026-09-27), so a
+     * `next` at `?start=0&limit=100` is the first page again, not a new one.
+     * A page after the first that fails is not swallowed: the whole search
+     * throws, the same as any other RWS error, rather than returning a
+     * partial hit set.
+     */
+    private async searchSignalPages(
+      what: string,
+      path: string,
+      body: Record<string, string> | undefined,
+      rawBody?: string,
+      rawContentType?: string,
+    ): Promise<Signal[]> {
+      const out: Signal[] = [];
+      const visited = new Set<string>();
+      let next = path;
+      for (let page = 0; next; page++) {
+        if (page >= SEARCH_MAX_PAGES) {
+          Logger.warn(`RWS2 ${what}: stopped after ${SEARCH_MAX_PAGES} pages (${out.length} signals) `
+            + `with a further page still advertised at ${next} - the result is incomplete`);
+          break;
+        }
+        const key = searchPageKey(next);
+        if (visited.has(key)) {
+          Logger.warn(`RWS2 ${what}: the controller's next link points back at ${next}, `
+            + `a page already read - stopping after ${page} page(s) (${out.length} signals)`);
+          break;
+        }
+        visited.add(key);
+        const res = await this.req('POST', next, body, rawBody, rawContentType);
+        out.push(...this.parseSignalList(res));
+        next = nextPagePath(res, buildPath(IO.listAllSignals.rws2 as PathSpec));
+      }
+      return out;
     }
 
     /** Configuration properties of one signal (EIO_SIGNAL instance: category,
      *  device mapping, access, ...). Live-verified 2026-08-04 (RW7.21), class
-     *  ios-signal-config-general. */
+     *  ios-signal-config-general; read again on RW 7.21.0, 7.21.4, 8.1.1 and
+     *  8.2.1 on 2026-10-03 (an unknown signal is refused 400 -1073445879,
+     *  INVALID_ARGUMENT). */
     async getSignalConfig(network: string, device: string, name: string): Promise<Record<string, string>> {
       const p = parse(await this.req(
         'GET', buildPath(IO.getSignalConfig.rws2 as PathSpec, { network, device, name })));
@@ -80,18 +190,24 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
       await this.req('POST', path, body);
     }
 
-    /** Release blocked/forced signals (POST /rw/iosystem/signals/unblock-signal). */
+    /**
+     * Release blocked/forced signals (POST /rw/iosystem/signals/unblock-signal).
+     */
     async unblockSignals(): Promise<void> {
       await this.req('POST', buildPath(IO.unblockSignals.rws2 as PathSpec));
     }
 
-    /** Start or stop an IO network (`lstate` = start | stop). Changes IO availability. */
+    /**
+     * Start or stop an IO network (`lstate` = start | stop). Changes IO availability.
+     */
     async setNetworkLState(network: string, start: boolean): Promise<void> {
       const { path, body } = R2.setNetworkLState(network, start);
       await this.req('POST', path, body);
     }
 
-    /** Enable or disable an IO device (`lstate` = enable | disable). Changes IO availability. */
+    /**
+     * Enable or disable an IO device (`lstate` = enable | disable). Changes IO availability.
+     */
     async setIoDeviceLState(network: string, device: string, enable: boolean): Promise<void> {
       const { path, body } = R2.setIoDeviceLState(network, device, enable);
       await this.req('POST', path, body);
@@ -138,7 +254,8 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
     }
 
     /** Configuration of one IO network (its cfg instance). Live-verified
-     *  2026-08-04 (RW7.21), class ios-network-config-general. */
+     *  2026-08-04 (RW7.21), class ios-network-config-general; read again on
+     *  RW 7.21.0, 7.21.4, 8.1.1 and 8.2.1 on 2026-10-03. */
     async getIoNetworkConfig(network: string): Promise<Record<string, string>> {
       const p = parse(await this.req('GET', buildPath(IO.getIoNetworkConfig.rws2 as PathSpec, { network })));
       return p.getState('ios-network-config-general');
@@ -153,28 +270,101 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
     }
 
     /** Configuration of one IO device (its cfg instance). Live-verified
-     *  2026-08-04 (RW7.21), class ios-device-config-general. */
+     *  2026-08-04 (RW7.21), class ios-device-config-general; read again on
+     *  RW 7.21.0, 7.21.4, 8.1.1 and 8.2.1 on 2026-10-03. */
     async getIoDeviceConfig(network: string, device: string): Promise<Record<string, string>> {
       const p = parse(await this.req(
         'GET', buildPath(IO.getIoDeviceConfig.rws2 as PathSpec, { network, device })));
       return p.getState('ios-device-config-general');
     }
 
-    writeSignal(network: string, device: string, name: string, value: string): Promise<void> {
-      let n = network, d = device;
-      if (!n || !d) {
-        const c = this.sigCoords.get(name);
-        if (!c) {
-          // Without coordinates the URL would degenerate to /signals///{name}/set-value.
-          return Promise.reject(new RwsError(
-            `writeSignal: network/device unknown for signal "${name}" - pass them explicitly or call listAllSignals() first`,
-            'UNKNOWN',
-          ));
-        }
-        n = c.n; d = c.d;
+    /**
+     * Set a signal's value (`POST .../set-value` with `lvalue`).
+     *
+     * With `network` and `device` both given, the value is written at
+     * `/rw/iosystem/signals/{network}/{device}/{name}/set-value`. With either
+     * left empty (as `RobotManager.writeIoSignal` does), the client finds where
+     * the signal lives, from the signal itself:
+     *  1. from what `listAllSignals`, `searchSignals` and `searchSignalsEx`
+     *     already read; otherwise
+     *  2. with one read by bare name, `GET /rw/iosystem/signals/{name}`, which
+     *     answered 200 on RobotWare 6.16, 7.21 and 8.1.1 virtual controllers
+     *     (observed 2026-09-27). Its entry's title is `network/device/name`
+     *     for a signal bound to a device and the bare name for a signal with
+     *     no device. The answer is remembered for later writes.
+     *
+     * A device-bound signal is then written at its full path, as before. A
+     * signal with no device - on RobotWare 7 and 8 the safety controller's
+     * SCnCBC* signals, on 8.1.1 also CollaborativeOperationIsActive - is
+     * written at `/rw/iosystem/signals/{name}/set-value`: the controller's own
+     * resource path for that signal with ABB's `set-value` action appended. Up
+     * to 1.3.x every such signal, and every signal not listed first, was
+     * refused before sending.
+     *
+     * That device-less write form has run against RobotWare 8.2.1.
+     * Whatever the controller answers is passed on unchanged,
+     * and the write is never retried in another form.
+     *
+     * No mastership or write access is taken: ABB's IO Service lists none for
+     * a signal write. The signal's access level decides, and the controller
+     * refuses a write the level does not allow (403 `-1073445881`).
+     *
+     * Refused before any write is sent: a name that is not a bare signal name
+     * (letters, digits and underscores; pass network and device separately
+     * instead) with `INVALID_ARGUMENT`; a lookup the controller refuses, with
+     * that answer's code (`RESOURCE_NOT_FOUND` for an unknown name); and an
+     * answer that does not say where the signal lives, with `PARSE_ERROR`. A
+     * remembered location the controller answers 404 for is forgotten, so the
+     * next write looks the signal up again.
+     */
+    async writeSignal(network: string, device: string, name: string, value: string): Promise<void> {
+      if (network && device) {
+        const { path, body } = R2.setSignalValue(network, device, name, value);
+        await this.req('POST', path, body);
+        return;
       }
-      const { path, body } = R2.setSignalValue(n, d, name, value);
-      return this.req('POST', path, body).then(() => {});
+      const loc = this.sigCoords.get(name) ?? await this.lookUpSignal(name);
+      const { path, body } = loc.n && loc.d
+        ? R2.setSignalValue(loc.n, loc.d, name, value)
+        : R2.setSignalValueByName(name, value);
+      try {
+        await this.req('POST', path, body);
+      } catch (e) {
+        if (e instanceof RwsError && e.httpStatus === 404) { this.sigCoords.delete(name); }
+        throw e;
+      }
+    }
+
+    /**
+     * Where a signal lives, read from the signal itself by its bare name, and
+     * remembered for `writeSignal`. See `writeSignal` for the refusals.
+     */
+    private async lookUpSignal(name: string): Promise<{ n: string; d: string }> {
+      if (!/^[A-Za-z0-9_]+$/.test(name)) {
+        throw new RwsError(
+          `writeSignal: ${JSON.stringify(name)} is not a bare I/O signal name (letters, digits and underscores); `
+          + 'pass the network and device as their own arguments instead',
+          'INVALID_ARGUMENT',
+        );
+      }
+      let body: string;
+      try {
+        body = await this.req('GET', R2.signalByName(name));
+      } catch (e) {
+        throw withReport(e, `writeSignal: nothing was written; reading signal "${name}" by name, to learn its network and device, failed.`);
+      }
+      const entry = parse(body).getAllStates('ios-signal-li')
+        .find(s => (s['name'] ?? s['_title']?.split('/').pop() ?? '').toLowerCase() === name.toLowerCase());
+      const loc = entry ? signalLocation(entry) : null;
+      if (!loc) {
+        throw new RwsError(
+          `writeSignal: nothing was written; the controller's answer for signal "${name}" does not say which `
+          + 'network and device it is on, or that it has none - pass them as their own arguments',
+          'PARSE_ERROR',
+        );
+      }
+      this.sigCoords.set(name, loc);
+      return loc;
     }
 
     async listNetworks(): Promise<IoNetwork[]> {
@@ -255,6 +445,19 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
      *
      * Note the controller does NOT glob: `name: '*'` matches nothing. Pass no
      * criteria fields at all to list everything.
+     *
+     * `name` / `name2` are case-insensitive PREFIX matches, not substring
+     * matches; `device`, `network` and `category` match whole values, ignoring
+     * case (network re-checked 2026-09-29 on RW 7.21.4+417 and 8.2.1+1023);
+     * the second set narrows the first. `invert` (`invert2` for the second
+     * set) negates its own criteria set: `type=DO` with `invert=true` gives
+     * every signal that is not a DO, and `invert=true` with no other criterion
+     * gives nothing (live-verified 2026-09-29 on RW 6.16.03, 7.21.4 and
+     * 8.2.1). Verified 2026-09-27 on RW 6.16 (`?action=signal-searchex`), 7.21
+     * and 8.1.1. The
+     * controller pages the hits at 100 with a `next` link (RW 8.1.1,
+     * 2026-09-27: `invert=false` answered 100 plus `next`); every page is read
+     * now, see `searchSignalPages`.
      */
     async searchSignalsEx(criteria: SignalSearchExCriteria[]): Promise<Signal[]> {
       if (criteria.length === 0 || criteria.length > 2) {
@@ -278,11 +481,10 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
         if (c.invert !== undefined) { parts.push(`invert${sfx}=${c.invert}`); }
         if (c.blocked !== undefined) { parts.push(`blocked${sfx}=${c.blocked}`); }
       });
-      const html = await this.req(
-        'POST', buildPath(IO.searchSignalsEx.rws2 as PathSpec),
+      return this.searchSignalPages(
+        'searchSignalsEx', buildPath(IO.searchSignalsEx.rws2 as PathSpec),
         undefined, parts.join('&'), 'application/x-www-form-urlencoded;v=2.0',
       );
-      return this.parseSignalList(html);
     }
 
     /**

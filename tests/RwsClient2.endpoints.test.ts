@@ -2,15 +2,14 @@ import { describe, it, expect } from 'vitest';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { RwsClient2 } from '../src/RwsClient2.js';
-import { RwsError } from '../src/types.js';
+import { RwsError, type UserRegistration } from '../src/types.js';
 
 /**
  * Unit tests for the endpoint-completion additions (2026-08-09).
  *
  * Each assertion encodes something a live controller actually told us during
  * the endpoint-completion crawl - the request shapes here are the ones RW7.21
- * and RW8.1.1 accepted, and the refusals are the ones they returned. The live
- * evidence is recorded in docs/tasks/endpoint-completion.md.
+ * and RW8.1.1 accepted, and the refusals are the ones they returned.
  */
 
 function collectBody(req: http.IncomingMessage): Promise<string> {
@@ -36,6 +35,12 @@ async function startServer(
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   return { server, port: (server.address() as AddressInfo).port, requests };
 }
+
+/** The requests other than the edit-mastership request and release the
+ *  client now holds around each of these writes (no connect() here, so the
+ *  RobotWare 7 mastership path is taken). */
+const withoutAccess = (requests: Recorded[]): Recorded[] =>
+  requests.filter(r => !r.url.startsWith('/rw/mastership/'));
 
 const client = (port: number): RwsClient2 =>
   new RwsClient2(`http://127.0.0.1:${port}`, 'Default User', 'robotics');
@@ -64,12 +69,16 @@ describe('endpoint completion - panel and controller', () => {
     } finally { server.close(); }
   });
 
-  it('setExternalEmergencyStop posts state', async () => {
+  it('setExternalEmergencyStop posts state=on / state=off (the circuit), and maps active to off and reset to on', async () => {
     const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
     try {
-      await client(port).setExternalEmergencyStop('active');
-      expect(requests[0].url).toBe('/rw/panel/external-emergency-stop');
-      expect(requests[0].body).toBe('state=active');
+      const c = client(port);
+      await c.setExternalEmergencyStop('off');
+      await c.setExternalEmergencyStop('on');
+      await c.setExternalEmergencyStop('active');
+      await c.setExternalEmergencyStop('reset');
+      expect(requests.map(r => r.url)).toEqual(Array(4).fill('/rw/panel/external-emergency-stop'));
+      expect(requests.map(r => r.body)).toEqual(['state=off', 'state=on', 'state=off', 'state=on']);
     } finally { server.close(); }
   });
 });
@@ -81,9 +90,14 @@ describe('endpoint completion - paths that notes get wrong', () => {
       await client(port).setKeylessMotorOn();
       // /rw/panel/keyless-motoron - the shape most notes record - 404s on every
       // generation; the live resource is under ctrl-state and takes no fields.
-      expect(requests[0].method).toBe('POST');
-      expect(requests[0].url).toBe('/rw/panel/ctrl-state/keyless-motoron');
-      expect(requests[0].body).toBe('');
+      // It is held under edit mastership, like the ordinary motors-on.
+      expect(requests.map(r => r.url)).toEqual([
+        '/rw/mastership/edit/request', '/rw/panel/ctrl-state/keyless-motoron', '/rw/mastership/edit/release',
+      ]);
+      const [post] = withoutAccess(requests);
+      expect(post.method).toBe('POST');
+      expect(post.url).toBe('/rw/panel/ctrl-state/keyless-motoron');
+      expect(post.body).toBe('');
     } finally { server.close(); }
   });
 
@@ -91,8 +105,12 @@ describe('endpoint completion - paths that notes get wrong', () => {
     const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
     try {
       await client(port).setModuleText('T_ROB1', 'Module1', 'MODULE m\nENDMODULE');
-      expect(requests[0].url).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/text');
-      expect(requests[0].body).toBe('task=T_ROB1&text=MODULE+m%0AENDMODULE');
+      expect(requests.map(r => r.url)).toEqual([
+        '/rw/mastership/edit/request', '/rw/rapid/tasks/T_ROB1/modules/Module1/text', '/rw/mastership/edit/release',
+      ]);
+      const [post] = withoutAccess(requests);
+      expect(post.url).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/text');
+      expect(post.body).toBe('task=T_ROB1&text=MODULE+m%0AENDMODULE');
     } finally { server.close(); }
   });
 
@@ -104,12 +122,16 @@ describe('endpoint completion - paths that notes get wrong', () => {
       );
       // The controller's own form says action="…/textrange"; that path 404s on
       // both RW7.21 and RW8.1.1. The slashed path is the real one.
-      expect(requests[0].url).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/text/range');
-      expect(requests[0].url).not.toContain('textrange');
-      expect(requests[0].body).toContain('replace-mode=After');
-      expect(requests[0].body).toContain('query-mode=Force');
-      expect(requests[0].body).toContain('startrow=1');
-      expect(requests[0].body).toContain('endcol=5');
+      const [post] = withoutAccess(requests);
+      expect(post.url).toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/text/range');
+      expect(post.url).not.toContain('textrange');
+      expect(post.body).toContain('replace-mode=After');
+      expect(post.body).toContain('query-mode=Force');
+      expect(post.body).toContain('startrow=1');
+      expect(post.body).toContain('endcol=5');
+      expect(requests.map(r => r.url)).toEqual([
+        '/rw/mastership/edit/request', post.url, '/rw/mastership/edit/release',
+      ]);
     } finally { server.close(); }
   });
 });
@@ -218,9 +240,13 @@ describe('endpoint completion - motion and RAPID', () => {
     const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
     try {
       await client(port).modifyPosition('T_ROB1', 'Module1', { startRow: 12, startCol: 5 });
-      expect(requests[0].url)
-        .toBe('/rw/rapid/tasks/T_ROB1/modules/Module1/modify-position');
-      expect(requests[0].body).toBe('startrow=12&startcol=5&endrow=12&endcol=5');
+      expect(requests.map(r => r.url)).toEqual([
+        '/rw/mastership/edit/request',
+        '/rw/rapid/tasks/T_ROB1/modules/Module1/modify-position',
+        '/rw/mastership/edit/release',
+      ]);
+      const [post] = withoutAccess(requests);
+      expect(post.body).toBe('startrow=12&startcol=5&endrow=12&endcol=5');
     } finally { server.close(); }
   });
 
@@ -231,10 +257,11 @@ describe('endpoint completion - motion and RAPID', () => {
         startRow: 1, startCol: 2, endRow: 3, endCol: 4,
         checkLimit: true, checkDeactAxes: false, allowDeact: true, text: 'note',
       });
-      expect(requests[0].body).toContain('checklimit=true');
-      expect(requests[0].body).toContain('checkdeactaxes=false');
-      expect(requests[0].body).toContain('allowdeact=true');
-      expect(requests[0].body).toContain('text=note');
+      const [post] = withoutAccess(requests);
+      expect(post.body).toContain('checklimit=true');
+      expect(post.body).toContain('checkdeactaxes=false');
+      expect(post.body).toContain('allowdeact=true');
+      expect(post.body).toContain('text=note');
     } finally { server.close(); }
   });
 
@@ -242,8 +269,11 @@ describe('endpoint completion - motion and RAPID', () => {
     const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
     try {
       await client(port).resetTaskProgramPointer('T_ROB1');
-      expect(requests[0].method).toBe('POST');
-      expect(requests[0].url).toBe('/rw/rapid/tasks/T_ROB1/pcp/reset');
+      expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+        'POST /rw/mastership/edit/request',
+        'POST /rw/rapid/tasks/T_ROB1/pcp/reset',
+        'POST /rw/mastership/edit/release',
+      ]);
     } finally { server.close(); }
   });
 });
@@ -314,12 +344,93 @@ describe('endpoint completion - subscription group editing', () => {
     } finally { server.close(); }
   });
 
+  it('unsubscribeResource of every mastership domain DELETEs edit, then motion', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(); });
+    try {
+      await client(port).unsubscribeResource('/subscription/2', { type: 'mastership' });
+      expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+        'DELETE /subscription/2/rw/mastership/edit',
+        'DELETE /subscription/2/rw/mastership/motion',
+      ]);
+    } finally { server.close(); }
+  });
+
   it('rejects a resource that maps to no RWS 2.0 path', async () => {
     const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(); });
     try {
       await expect(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         client(port).unsubscribeResource('/subscription/2', 'nonsense' as any),
+      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+      expect(requests).toHaveLength(0);
+    } finally { server.close(); }
+  });
+
+  // Signal names go into the body and the DELETE path unencoded (semicolons
+  // must stay literal), so a name carrying '&', '=', '?', '#' or '..' would add
+  // form fields or aim the request at another resource.
+  const BAD_SIGNAL_NAMES = [
+    'a&resources=9&9=/rw/panel/ctrl-state', 'di=1', 'di?x=1', 'di#frag', '../../x', 'Local/../di_1',
+    'di;lvalue', 'di%2e', 'di 1', 'DRV_1/di_1', 'a/b/c/d', '', 'dí_1',
+  ];
+
+  it('updateSubscriptionGroup refuses an invalid signal name before sending anything', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(); });
+    try {
+      for (const name of BAD_SIGNAL_NAMES) {
+        await expect(
+          client(port).updateSubscriptionGroup('/subscription/2', ['speedratio', { type: 'signal', name }]),
+        ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+      }
+      expect(requests).toHaveLength(0);
+    } finally { server.close(); }
+  });
+
+  it('accepts a flat signal name and the network/device/signal form', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(); });
+    try {
+      await client(port).updateSubscriptionGroup('/subscription/2',
+        [{ type: 'signal', name: 'di_1' }, { type: 'signal', name: 'Local/DRV_1/DO10_1' }]);
+      expect(requests[0].body).toBe(
+        'resources=1&1=/rw/iosystem/signals/di_1;state&1-p=1'
+        + '&resources=2&2=/rw/iosystem/signals/Local/DRV_1/DO10_1;state&2-p=1');
+      await client(port).unsubscribeResource('/subscription/2', { type: 'signal', name: 'Local/DRV_1/DO10_1' });
+      expect(requests[1].url).toBe('/subscription/2/rw/iosystem/signals/Local/DRV_1/DO10_1;state');
+    } finally { server.close(); }
+  });
+
+  it('unsubscribeResource refuses an invalid signal name before sending anything', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(); });
+    try {
+      for (const name of BAD_SIGNAL_NAMES) {
+        await expect(
+          client(port).unsubscribeResource('/subscription/2', { type: 'signal', name }),
+        ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+      }
+      expect(requests).toHaveLength(0);
+    } finally { server.close(); }
+  });
+
+  it('unsubscribeResource refuses any resource path that would leave the group', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(200); res.end(); });
+    try {
+      // A RAPID symbol path is not validated as a signal name - the DELETE
+      // target check is what stops it: '..' segments collapse during URL
+      // parsing, '?' and '#' split the path.
+      for (const name of ['T_ROB1/../../../../subscription/3', 'T_ROB1/M/x?y', 'T_ROB1/M/x#y']) {
+        await expect(
+          client(port).unsubscribeResource('/subscription/2', { type: 'persvar', name }),
+        ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+      }
+      expect(requests).toHaveLength(0);
+    } finally { server.close(); }
+  });
+
+  it('subscribe refuses an invalid signal name before the subscription POST', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(201); res.end(); });
+    try {
+      await expect(
+        client(port).subscribe([{ type: 'signal', name: 'di_1&2=/rw/panel/opmode' }], () => {}),
       ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
       expect(requests).toHaveLength(0);
     } finally { server.close(); }
@@ -403,20 +514,113 @@ describe('RW8 control-station write access', () => {
 });
 
 describe('endpoint completion - users and UAS', () => {
-  it('registerUser omits ulocale when no locale is given', async () => {
-    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+  it('registerUser sends ABB\'s four fields, ulocale last (remote and local)', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(201); res.end(); });
     try {
-      await client(port).registerUser({ application: 'app', username: 'u', location: 'loc' });
-      expect(requests[0].url).toBe('/users/register');
-      expect(requests[0].body).toBe('application=app&username=u&location=loc');
+      await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale: 'remote' });
+      await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale: 'local' });
+      expect(requests.map(r => r.url)).toEqual(['/users/register', '/users/register']);
+      expect(requests[0].body).toBe('application=app&username=u&location=loc&ulocale=remote');
+      expect(requests[1].body).toBe('application=app&username=u&location=loc&ulocale=local');
     } finally { server.close(); }
   });
 
-  it('registerUser sends ulocale when a locale is given', async () => {
-    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(204); res.end(); });
+  it('registerUser sends a given locale string as it is, as 1.4.0 did: the controller decides', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(201); res.end(); });
     try {
-      await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale: 'en-GB' });
-      expect(requests[0].body).toContain('ulocale=en-GB');
+      for (const locale of ['en-GB', 'Remote', '']) {
+        await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale });
+      }
+      expect(requests.map(r => r.body)).toEqual([
+        'application=app&username=u&location=loc&ulocale=en-GB',
+        'application=app&username=u&location=loc&ulocale=Remote',
+        'application=app&username=u&location=loc&ulocale=',
+      ]);
+    } finally { server.close(); }
+  });
+
+  it('registerUser refuses a locale that is not a string (a type error) before sending', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(201); res.end(); });
+    try {
+      for (const locale of [null, 1, { v: 'remote' }]) {
+        const reg = { application: 'app', username: 'u', location: 'loc', locale } as unknown as UserRegistration;
+        const err = await client(port).registerUser(reg).catch((e: unknown) => e as RwsError);
+        expect(err, String(locale)).toBeInstanceOf(RwsError);
+        expect(err).toMatchObject({ code: 'INVALID_ARGUMENT' });
+        expect((err as RwsError).message).toMatch(/must be a string.*'local' and 'remote'.*Nothing was sent\./);
+      }
+      expect(requests).toEqual([]);
+    } finally { server.close(); }
+  });
+
+  it('a 400 to a locale other than local or remote names ABB\'s two values; code, status and answer kept', async () => {
+    // -1073445879 SYS_CTRL_E_INVALIDARG: what a controller answers to such a
+    // value is not measured (registerUser has not run); this is a code the
+    // client explains as an invalid argument.
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(400, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+      res.end(xhtml('<div class="status"><span class="code">-1073445879</span><span class="msg">Invalid argument</span></div>'));
+    });
+    try {
+      const err = await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale: 'Remote' })
+        .catch((e: unknown) => e as RwsError);
+      expect(err).toBeInstanceOf(RwsError);
+      expect(err).toMatchObject({ code: 'INVALID_ARGUMENT', httpStatus: 400, controllerCode: -1073445879 });
+      expect(err.message.startsWith("registerUser sent ulocale 'Remote', and ABB's values are 'local' and 'remote'")).toBe(true);
+      expect(err.message).toContain('Invalid argument');
+      expect(err.refusal?.remedy).toMatchObject({ kind: 'fix-input', detail: expect.stringContaining("'local' and 'remote'") });
+      expect(err.refusal?.sentence.startsWith('registerUser sent ulocale')).toBe(true);
+      expect(err.refusal?.controller.code).toBe(-1073445879);
+
+      // ABB's own value refused: the controller's answer as it is, no note.
+      const plain = await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale: 'remote' })
+        .catch((e: unknown) => e as RwsError);
+      expect(plain).toMatchObject({ code: 'INVALID_ARGUMENT', controllerCode: -1073445879 });
+      expect(plain.message).not.toContain('registerUser sent ulocale');
+    } finally { server.close(); }
+  });
+
+  it('a refusal other than a 400 is passed on as it is, whatever the locale', async () => {
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(403, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+      res.end(xhtml('<div class="status"><span class="code">-1073445867</span><span class="msg">The user is not allowed access</span></div>'));
+    });
+    try {
+      const err = await client(port).registerUser({ application: 'app', username: 'u', location: 'loc', locale: 'Remote' })
+        .catch((e: unknown) => e as RwsError);
+      expect(err).toMatchObject({ httpStatus: 403, controllerCode: -1073445867 });
+      expect(err.message).not.toContain('registerUser sent ulocale');
+    } finally { server.close(); }
+  });
+
+  it('registerUser without a locale sends what 1.4.0 sent: three fields, no ulocale', async () => {
+    const { server, port, requests } = await startServer((_q, res) => { res.writeHead(201); res.end(); });
+    try {
+      // The 1.4.0 shape: locale optional and typed string.
+      const reg: { application: string; username: string; location: string; locale?: string } = { application: 'app', username: 'u', location: 'loc' };
+      const typed: UserRegistration = reg;
+      await client(port).registerUser(typed);
+      await client(port).registerUser({ ...typed, locale: undefined });
+      expect(requests.map(r => r.url)).toEqual(['/users/register', '/users/register']);
+      expect(requests[0].body).toBe('application=app&username=u&location=loc');
+      expect(requests[1].body).toBe('application=app&username=u&location=loc');
+    } finally { server.close(); }
+  });
+
+  it('the 400 RW 7.21.4 and 8.2.1 gave a registration without a locale is a refused input, explained with ABB\'s two values (2026-10-21)', async () => {
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(400, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+      res.end(xhtml('<div class="status"><span class="code">-1073414146</span><span class="msg">UserRegistration failed:locale name is empty or exceeded size of ulocale</span></div>'));
+    });
+    try {
+      const err = await client(port).registerUser({ application: 'app', username: 'u', location: 'loc' })
+        .catch((e: unknown) => e as RwsError);
+      expect(err).toBeInstanceOf(RwsError);
+      // It said RESOURCE_NOT_FOUND, "Resource does not exist on the controller", before.
+      expect(err).toMatchObject({ code: 'INVALID_ARGUMENT', httpStatus: 400, controllerCode: -1073414146 });
+      expect(err.message.startsWith("registerUser sent no ulocale, which ABB marks required, with the values 'local' and 'remote'")).toBe(true);
+      expect(err.message).toContain('locale name is empty');
+      expect(err.message).not.toContain('Resource does not exist');
     } finally { server.close(); }
   });
 
@@ -427,6 +631,25 @@ describe('endpoint completion - users and UAS', () => {
     });
     try {
       expect(await client(port).isPasswordChangeAllowed()).toBe(true);
+    } finally { server.close(); }
+  });
+
+  it('isPasswordChangeAllowed reads the password-change-allowed span RW 7.21.4 answers (2026-10-01)', async () => {
+    // The live hal+json answer for the Default User, minus the base link; it
+    // carries no password-change-allow field, which the method read alone before.
+    const live = (v: string): string => JSON.stringify({
+      _links: { self: { href: '' } },
+      state: [{ _type: 'password-change-allow', _title: 'pass-change-allow', 'password-change-allowed': v }],
+    });
+    let value = 'true';
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end(live(value));
+    });
+    try {
+      expect(await client(port).isPasswordChangeAllowed()).toBe(true);
+      value = 'false';
+      expect(await client(port).isPasswordChangeAllowed()).toBe(false);
     } finally { server.close(); }
   });
 
@@ -503,14 +726,25 @@ describe('endpoint completion - 2026-08-11 sweep (RWS 2.0 wire-forms)', () => {
     } finally { server.close(); }
   });
 
-  it('pollRmmp maps the broken RW8.1.1 RMMP service (HTTP 500) to none rather than throwing', async () => {
+  it('pollRmmp reports the RW 8.1.1 "service not supported" 500 as unsupported, not as none', async () => {
     const { server, port } = await startServer((_q, res) => {
       res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
       res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"Unspecified Error"}}');
     });
     try {
-      // A raw 500 must not escape to a caller that merely polls a pending request.
-      expect(await client(port).pollRmmp()).toBe('none');
+      // -1073445885 SYS_CTRL_E_SERVICE_NOT_SUPPORTED: the controller has no RMMP.
+      // It used to read as 'none', i.e. "no privilege held".
+      expect(await client(port).pollRmmp()).toBe('unsupported');
+    } finally { server.close(); }
+  });
+
+  it('pollRmmp throws any other 500 instead of reporting none', async () => {
+    const { server, port } = await startServer((_q, res) => {
+      res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
+      res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073414146,"msg":"Unspecified Error"}}');
+    });
+    try {
+      await expect(client(port).pollRmmp()).rejects.toBeInstanceOf(RwsError);
     } finally { server.close(); }
   });
 

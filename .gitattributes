@@ -1,0 +1,22 @@
+# Every text file checks out with LF on every platform, whatever core.autocrlf says.
+# `npm pack` then yields the same bytes (and the same sha512) on Windows, macOS and
+# Linux, so a consumer's lock integrity holds wherever the tarball is packed.
+* text=auto eol=lf
+
+# Binary files are never converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.tgz binary
+*.zip binary
+*.pdf binary
+
+# Listening-port fixtures keep their bytes exactly as captured or composed:
+# Windows netstat output is CRLF with a leading blank line, the German sample
+# carries a raw OEM code-page byte, Linux and macOS samples are LF.
+tests/fixtures/listening-ports/* -text
+
+# Scripts start with a "#!" line and some are imported by the tests; the test runner only
+# accepts that line when it ends in LF. Keep them LF in every checkout.
+*.mjs text eol=lf

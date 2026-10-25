@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "500-exec-start-motion-mastership-held-haljson",
+  "request": {
+    "method": "POST",
+    "path": "/rw/rapid/execution/start",
+    "body": ""
+  },
+  "response": {
+    "status": 500,
+    "contentType": "application/hal+json;v=2.0",
+    "body": "{ \"_links\":{ \"base\": { \"href\": \"https://127.0.0.1:9403/\" } } ,\"status\" : {\"code\":-1073445844, \"msg\":\"ERROR: org_code: -2302 new_code: 0xc004842c;\"}}"
+  }
+}

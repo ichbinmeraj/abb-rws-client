@@ -24,18 +24,25 @@
  * the measurement window is the frozen one - the proxy's open-connection count
  * then becomes physical proof that the socket really was terminated, not just
  * that the client logged an intention to.
+ *
+ * RWS 1.0 runs the frozen-stream test twice, once per transport of its
+ * client's HTTP legs: through fetch (the proxy on a port fetch accepts) and
+ * through node:http (the proxy on a port fetch refuses, as for a controller
+ * on port 7; src/badPorts.ts). With RWS_STRUCTURAL_NODE_HTTP=1 every rws1
+ * test here runs through node:http (tests/helpers/structuralHarness.ts).
  */
 
-import { it, expect, beforeEach, afterEach } from 'vitest';
-import type { ChaosProxy } from '../helpers/chaosProxy.js';
+import { it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { ChaosProxy, ChaosProxyOptions } from '../helpers/chaosProxy.js';
 import type { RobotManager } from '../../src/RobotManager.js';
 import type { WsSubscribeOptions } from '../../src/WsSubscriber.js';
 import type {
   SubscriptionEvent, SubscriptionHandle, SubscriptionResource,
 } from '../../src/types.js';
 import { setLogger } from '../../src/Logger.js';
+import { fetchRefusesUrl } from '../../src/badPorts.js';
 import {
-  cell, until, assertQualityHonest, type AnyClient,
+  cell, until, assertQualityHonest, type AnyClient, type CellContext,
 } from '../helpers/structuralHarness.js';
 
 // ─── Tuning ──────────────────────────────────────────────────────────────────
@@ -182,6 +189,113 @@ afterEach(async () => {
   setLogger(silentLogger);
 });
 
+/**
+ * The frozen-stream test, through a proxy listening as `listen` says.
+ * Through a port fetch refuses it also checks that none of the requests
+ * to that port went through fetch: the subscription's HTTP legs (the
+ * registration, the re-registration on reconnect, the DELETE) then ran
+ * through node:http, and the WebSocket through `ws` either way.
+ */
+async function frozenStreamRecovers(
+  ctx: CellContext, generation: 'rws1' | 'rws2', listen?: ChaosProxyOptions['listen'],
+): Promise<void> {
+  const proxy = await ctx.proxy(listen ? { listen } : {});
+  const refused = fetchRefusesUrl(`http://127.0.0.1:${proxy.port}`);
+  if (listen) { expect(refused, `the proxy port ${proxy.port}`).toBe(listen === 'fetch-refused'); }
+  const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  try {
+    const client = await ctx.client(proxy, { timeout: CLIENT_TIMEOUT_MS });
+    const o: Open = { proxy, client };
+    open.push(o);
+
+    await (client as { connect: () => Promise<void> }).connect();
+
+    let lost = 0;
+    let restored = 0;
+    const acceptedBeforeStream = proxy.stats().connectionsTotal;
+    const stream = await openStream(client, generation,
+      { onLost: () => { lost++; }, onRestored: () => { restored++; } },
+      {
+        pingIntervalMs: PING_MS, reconnectBaseMs: RECONNECT_BASE_MS,
+        reconnectCapMs: RECONNECT_CAP_MS, maxReconnectAttempts: HUGE_ATTEMPT_BUDGET,
+        openTimeoutMs: OPEN_TIMEOUT_MS,
+      });
+    o.stream = stream;
+    const groupBeforeFreeze = stream.groupPath();
+
+    // The stream's own connection through the proxy: the one whose first
+    // request asked for the WebSocket upgrade, read from the bytes when they
+    // are plain HTTP; through TLS, where they are not readable, the newest
+    // connection the subscribe opened (the upgrade goes on a socket of its
+    // own, after the subscription's HTTP requests).
+    const opened = proxy.openConnections().filter(c => c.index > acceptedBeforeStream);
+    const streamConn = (opened.filter(c => c.upgrade === true).at(-1)
+      ?? opened.filter(c => c.upgrade === null).at(-1))?.index;
+    expect(streamConn, `the stream's connection among ${JSON.stringify(opened)}`).toBeDefined();
+    const totalAtFreeze = proxy.stats().connectionsTotal;
+    const frozenAt = Date.now();
+    // refuseNew BEFORE freeze: during the measurement window no new pair can
+    // be established.
+    proxy.refuseNew(true);
+    proxy.freeze();
+
+    // The budget here is deliberately far larger than the bound being
+    // asserted: a timeout would only say "never", while the expect() below
+    // reports the actual detection time, which is the diagnosis either way.
+    await until(sawHeartbeatMiss, 30000, 'the heartbeat notices the frozen stream');
+    const detectedMs = Date.now() - frozenAt;
+    expect(detectedMs).toBeLessThanOrEqual(DETECT_BUDGET_MS);
+
+    // Physical proof that terminate() actually reached the wire: the proxy saw
+    // the client end of the stream's own connection close. Not a drop in the
+    // open-connection count: the HTTP keep-alive socket the subscription left
+    // is closed by its agent once it sat idle 4 s (HttpSession.IDLE_SOCKET_MS
+    // through node:http, undici's default through fetch), which can fall
+    // inside this window, so a count would pass even if terminate() never
+    // reached the wire.
+    await until(() => !proxy.openConnections().some(c => c.index === streamConn), 3000,
+      'the frozen stream socket is gone at the TCP level, not merely logged');
+
+    // …and the reconnect path runs: every attempt (WS re-open on RWS 1.0,
+    // DELETE+re-POST on RWS 2.0) needs a fresh connection, which the proxy
+    // counts even while it is refusing them.
+    await until(() => proxy.stats().connectionsTotal > totalAtFreeze, 25000,
+      'the reconnect path attempts a fresh connection');
+
+    // Thaw: the next attempt must succeed and the consumer must be told.
+    proxy.refuseNew(false);
+    proxy.unfreeze();
+
+    await until(() => restored >= 1, 45000, 'onRestored fires after recovery');
+    // Recovery, not surrender: the budget was set far out of reach.
+    expect(lost).toBe(0);
+
+    if (generation === 'rws2') {
+      // RWS 2.0 re-POSTs /subscription on every reconnect (the old poll URL is
+      // spent), so the stream must now hold a DIFFERENT group than before the
+      // freeze. The controller hands out a fresh group id per POST; if a
+      // controller is ever seen reusing one, this needs a byte-level proof
+      // instead - but "same group as before" would otherwise be indis-
+      // tinguishable from "no re-POST happened at all".
+      // Both ends are checked: `groupPath` is '' whenever no group is held, so
+      // an unasserted pre-freeze value would make "the group changed" true for
+      // the wrong reason ('' -> '/subscription/3' is a change, but it would
+      // mean the FIRST subscribe never captured a group).
+      expect(groupBeforeFreeze).toMatch(/^\/subscription\/.+/);
+      const groupAfter = stream.groupPath();
+      expect(groupAfter).toMatch(/^\/subscription\/.+/);
+      expect(groupAfter).not.toBe(groupBeforeFreeze);
+    }
+
+    if (refused) {
+      const viaFetch = fetchSpy.mock.calls.filter(([u]) => String(u).includes(`:${proxy.port}/`));
+      expect(viaFetch.length, 'requests to a port fetch refuses went through fetch').toBe(0);
+    }
+  } finally {
+    fetchSpy.mockRestore();
+  }
+}
+
 for (const generation of ['rws1', 'rws2'] as const) {
   cell('S02-half-open-freeze', generation, ctx => {
     /**
@@ -247,83 +361,14 @@ for (const generation of ['rws1', 'rws2'] as const) {
     }, 60000);
 
     it('a frozen stream is detected within 2x the ping interval, terminated, and recovered', async () => {
-      const proxy = await ctx.proxy();
-      const client = await ctx.client(proxy, { timeout: CLIENT_TIMEOUT_MS });
-      const o: Open = { proxy, client };
-      open.push(o);
-
-      await (client as { connect: () => Promise<void> }).connect();
-
-      let lost = 0;
-      let restored = 0;
-      const stream = await openStream(client, generation,
-        { onLost: () => { lost++; }, onRestored: () => { restored++; } },
-        {
-          pingIntervalMs: PING_MS, reconnectBaseMs: RECONNECT_BASE_MS,
-          reconnectCapMs: RECONNECT_CAP_MS, maxReconnectAttempts: HUGE_ATTEMPT_BUDGET,
-          openTimeoutMs: OPEN_TIMEOUT_MS,
-        });
-      o.stream = stream;
-      const groupBeforeFreeze = stream.groupPath();
-
-      const connsAtFreeze = proxy.connections();
-      const totalAtFreeze = proxy.stats().connectionsTotal;
-      const frozenAt = Date.now();
-      // refuseNew BEFORE freeze: during the measurement window no new pair can
-      // be established, so any drop in the open-connection count below is the
-      // frozen socket dying and nothing else.
-      proxy.refuseNew(true);
-      proxy.freeze();
-
-      // The budget here is deliberately far larger than the bound being
-      // asserted: a timeout would only say "never", while the expect() below
-      // reports the actual detection time, which is the diagnosis either way.
-      await until(sawHeartbeatMiss, 30000, 'the heartbeat notices the frozen stream');
-      const detectedMs = Date.now() - frozenAt;
-      expect(detectedMs).toBeLessThanOrEqual(DETECT_BUDGET_MS);
-
-      // Physical proof that terminate() actually reached the wire: the proxy saw
-      // the client end of the frozen pair close. The window is short ON PURPOSE.
-      // The only other socket this client holds through the proxy is the HTTP
-      // keep-alive one, and the earliest that can disappear is the first
-      // reconnect attempt's request giving up on the frozen link - no sooner
-      // than reconnectBase + CLIENT_TIMEOUT_MS (~4.4 s) from here. A generous
-      // window would let that count as "the frozen socket died", so a drop seen
-      // inside 3 s is attributable to terminate() and to nothing else.
-      await until(() => proxy.connections() < connsAtFreeze, 3000,
-        'the frozen socket is gone at the TCP level, not merely logged');
-
-      // …and the reconnect path runs: every attempt (WS re-open on RWS 1.0,
-      // DELETE+re-POST on RWS 2.0) needs a fresh connection, which the proxy
-      // counts even while it is refusing them.
-      await until(() => proxy.stats().connectionsTotal > totalAtFreeze, 25000,
-        'the reconnect path attempts a fresh connection');
-
-      // Thaw: the next attempt must succeed and the consumer must be told.
-      proxy.refuseNew(false);
-      proxy.unfreeze();
-
-      await until(() => restored >= 1, 45000, 'onRestored fires after recovery');
-      // Recovery, not surrender: the budget was set far out of reach.
-      expect(lost).toBe(0);
-
-      if (generation === 'rws2') {
-        // RWS 2.0 re-POSTs /subscription on every reconnect (the old poll URL is
-        // spent), so the stream must now hold a DIFFERENT group than before the
-        // freeze. The controller hands out a fresh group id per POST; if a
-        // controller is ever seen reusing one, this needs a byte-level proof
-        // instead - but "same group as before" would otherwise be indis-
-        // tinguishable from "no re-POST happened at all".
-        // Both ends are checked: `groupPath` is '' whenever no group is held, so
-        // an unasserted pre-freeze value would make "the group changed" true for
-        // the wrong reason ('' -> '/subscription/3' is a change, but it would
-        // mean the FIRST subscribe never captured a group).
-        expect(groupBeforeFreeze).toMatch(/^\/subscription\/.+/);
-        const groupAfter = stream.groupPath();
-        expect(groupAfter).toMatch(/^\/subscription\/.+/);
-        expect(groupAfter).not.toBe(groupBeforeFreeze);
-      }
+      await frozenStreamRecovers(ctx, generation);
     }, 120000);
+
+    if (generation === 'rws1') {
+      it('through node:http (the proxy on a port fetch refuses): a frozen stream is detected within 2x the ping interval, terminated, and recovered', async () => {
+        await frozenStreamRecovers(ctx, generation, 'fetch-refused');
+      }, 120000);
+    }
 
     it('a freeze outlasting the reconnect budget fires onLost exactly once, then stops', async () => {
       const proxy = await ctx.proxy();

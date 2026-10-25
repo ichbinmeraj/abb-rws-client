@@ -5,14 +5,16 @@
  * Three properties from the matrix:
  *
  *   - the CONFIGURED timeout is what fires, and it fires as a typed RwsError -
- *     not a raw AbortError (RWS 1.0 aborts a fetch) and not a bare socket error
- *     (RWS 2.0 destroys the request), and not "eventually succeeded 8 s later";
+ *     not a raw AbortError (RWS 1.0 aborts a fetch on every port fetch
+ *     accepts) and not a bare socket error (RWS 2.0, and RWS 1.0 on a port
+ *     fetch refuses, destroy the request on their own timer), and not
+ *     "eventually succeeded 8 s later";
  *   - the request queue DRAINS: every request issued settles, including the ones
  *     that time out, and a batch of timeouts does not wedge the requests behind
  *     it. Both generations detach queue errors on purpose (HttpSession.enqueue
  *     swallows the rejection on the shared chain, RwsClient2.takeRequestSlot
  *     catches a failed slot) - this cell is what proves those two lines work;
- *   - the >=55 ms pacing floor still holds while the link is slow.
+ *   - the >=100 ms pacing floor still holds while the link is slow.
  *
  * Pacing is measured CLIENT-side, from wall clock around the calls. Timestamping
  * arrivals at the proxy would be sharper in theory and useless in practice: this
@@ -30,11 +32,11 @@ import {
 
 /**
  * The pacing floor both generations implement: RwsClient defaults
- * `requestIntervalMs` to 55 and RwsClient2 hard-codes `MIN_MS = 55`, which is
+ * `requestIntervalMs` to 100 and RwsClient2 hard-codes `MIN_MS = 100`, which is
  * the <20 req/s RWS ceiling with a margin. Duplicated here rather than imported
  * so a silent change to either default fails this cell instead of following it.
  */
-const MIN_INTERVAL_MS = 55;
+const MIN_INTERVAL_MS = 100;
 
 /** Minimal shape both clients satisfy; the harness returns a union of the two. */
 interface Probe {
@@ -112,7 +114,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       const long = await time(slow);
 
       // Both generations classify a deadline as NETWORK_ERROR: HttpSession turns
-      // the AbortError into `Request timed out after Nms`, RwsClient2 rejects with
+      // its timer into `Request timed out after Nms`, RwsClient2 rejects with
       // `RWS2 timeout: <path>` from req.setTimeout.
       for (const r of [short, long]) {
         expect(r.err.code).toBe('NETWORK_ERROR');
@@ -209,8 +211,8 @@ for (const generation of ['rws1', 'rws2'] as const) {
       const errors = await Promise.all(failures);
       for (const e of errors) {
         // A resolved entry (null) would mean the deadline did not fire; anything
-        // that is not an RwsError would mean a raw AbortError (RWS 1.0) or a bare
-        // socket error (RWS 2.0) escaped the client's own error classification.
+        // that is not an RwsError would mean a raw AbortError or a bare socket
+        // error escaped the client's own error classification.
         expect(e, 'a request under 3 s of latency resolved despite a 700 ms timeout').not.toBeNull();
         expect(e, `expected an RwsError, got ${String(e)}`).toBeInstanceOf(RwsError);
         expect((e as RwsError).code).toBe('NETWORK_ERROR');
@@ -228,7 +230,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       }
     }, 90000);
 
-    it('the >=55 ms pacing floor still holds under injected latency', async () => {
+    it('the >=100 ms pacing floor still holds under injected latency', async () => {
       const proxy = await ctx.proxy();
       const slot = track(proxy);
       const c = probe(slot.client = await ctx.client(proxy, { timeout: 15000 }));
@@ -244,7 +246,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       // underneath it. What failed was the rig, not the pacing floor: the same
       // test failed on RWS 1.0 too, whose own client handles that race.
       //
-      // The property here is the >=55 ms floor, and it is measured just as
+      // The property here is the >=100 ms floor, and it is measured just as
       // strictly at a load that does not manufacture connection churn. Starvation
       // under stress is covered by the timeout-batch test above and by S10.
       proxy.setLatency(250);
@@ -267,8 +269,8 @@ for (const generation of ['rws1', 'rws2'] as const) {
           .toBe('fulfilled');
       }
 
-      // Contractual floor: no two requests may START less than 55 ms apart, so a
-      // burst of N cannot finish in less than (N-1)*55 ms however fast the link.
+      // Contractual floor: no two requests may START less than 100 ms apart, so a
+      // burst of N cannot finish in less than (N-1)*100 ms however fast the link.
       // Weak on its own under 500 ms of delay (one round trip already clears it)
       // - it is here as the direct statement of the contract; the span check
       // below is the one with teeth.

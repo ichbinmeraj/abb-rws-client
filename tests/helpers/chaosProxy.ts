@@ -10,11 +10,21 @@
  *   - setCorruption():truncate or mangle bytes flowing back to the client
  *   - script():       per-connection scripted behaviour (nth connection differs)
  *
+ * Where it listens: on 127.0.0.1, on a free port that Node's fetch accepts,
+ * or, with `listen: 'fetch-refused'`, on a free port that fetch refuses. An
+ * RWS 1.0 client sends through fetch on the first and through node:http on
+ * the second (src/badPorts.ts), so the same cell can run either transport.
+ * The operating system's free ports can be refused ones (its dynamic range
+ * starts at 1024 on some Windows machines), so a port fetch refuses is let
+ * go and another taken unless one was asked for.
+ *
  * Test infrastructure only - never shipped in the package.
  */
 
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { FETCH_BAD_PORTS } from '../../src/badPorts.js';
+import { listenOnRefusedPort } from './refusedPorts.js';
 
 /** How the proxy mangles bytes on the way back to the client. */
 export type CorruptionMode =
@@ -48,11 +58,29 @@ export interface ChaosProxyStats {
   bytesDown: number;
 }
 
+/** Options of startChaosProxy. */
+export interface ChaosProxyOptions {
+  /**
+   * `'fetch-accepted'` (the default): a free port Node's fetch accepts.
+   * `'fetch-refused'`: a free port fetch refuses, so an RWS 1.0 client sends
+   * through node:http (tests/helpers/refusedPorts.ts; throws when none is free).
+   */
+  listen?: 'fetch-accepted' | 'fetch-refused';
+}
+
 export interface ChaosProxy {
   /** Local port the proxy listens on. */
   port: number;
   /** Number of currently active client connections. */
   connections(): number;
+  /**
+   * The connections open now, oldest first: each one's 1-based index (as
+   * `script` counts them) and whether its first request asked for a
+   * WebSocket upgrade, read from the bytes the client sent (null while they
+   * are not readable HTTP, as through TLS, or before a whole request head
+   * arrived).
+   */
+  openConnections(): OpenConnection[];
   /** Counters since start - used by leak and backpressure assertions. */
   stats(): ChaosProxyStats;
   /** Hard-destroy every active connection (simulates a network blip). */
@@ -89,11 +117,36 @@ export interface ChaosProxy {
   close(): Promise<void>;
 }
 
+/** One open connection of the proxy (ChaosProxy.openConnections). */
+export interface OpenConnection {
+  /** 1-based index of this connection since the proxy started. */
+  index: number;
+  /** True when its first request asked for a WebSocket upgrade; null when that is not readable. */
+  upgrade: boolean | null;
+}
+
+/** The longest request head the proxy reads to tell an upgrade (asksUpgrade). */
+const HEAD_LIMIT = 8192;
+
+/**
+ * Whether the first request in `head` (the bytes a client sent, as latin1)
+ * asks for a WebSocket upgrade: null unless it starts with an HTTP/1.x
+ * request line and its header section ends within HEAD_LIMIT bytes.
+ */
+export function asksUpgrade(head: string): boolean | null {
+  if (!/^[A-Z]+ \S+ HTTP\/1\.[01]\r\n/.test(head)) { return null; }
+  const end = head.indexOf('\r\n\r\n');
+  if (end < 0) { return null; }
+  return /\r\nupgrade:[ \t]*websocket[ \t]*\r\n/i.test(head.slice(0, end + 2));
+}
+
 interface Pair {
   client: net.Socket;
   upstream: net.Socket;
   /** 1-based index of this connection since the proxy started. */
   index: number;
+  /** The first bytes the client sent, as latin1, up to HEAD_LIMIT (asksUpgrade). */
+  head: string;
   bytesDown: number;
   /**
    * `bytesDown` at the moment corruption was armed for this pair.
@@ -107,6 +160,19 @@ interface Pair {
    */
   corruptionBase: number;
   script?: ConnectionScript;
+}
+
+/** Listen on a free port of 127.0.0.1 that fetch accepts, and return it. */
+async function listenOnAcceptedPort(server: net.Server): Promise<number> {
+  for (let tries = 0; ; tries += 1) {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+    });
+    const port = (server.address() as AddressInfo).port;
+    if (!FETCH_BAD_PORTS.has(port) || tries >= 50) { return port; }
+    await new Promise<void>(r => server.close(() => r()));
+  }
 }
 
 function applyCorruption(mode: CorruptionMode, data: Buffer, alreadySent: number): {
@@ -139,7 +205,9 @@ function applyCorruption(mode: CorruptionMode, data: Buffer, alreadySent: number
   }
 }
 
-export async function startChaosProxy(targetHost: string, targetPort: number): Promise<ChaosProxy> {
+export async function startChaosProxy(
+  targetHost: string, targetPort: number, options: ChaosProxyOptions = {},
+): Promise<ChaosProxy> {
   const pairs = new Set<Pair>();
   let currentTargetHost = targetHost;
   let currentTargetPort = targetPort;
@@ -187,7 +255,7 @@ export async function startChaosProxy(targetHost: string, targetPort: number): P
     if (refusing || script?.refuse) { client.destroy(); return; }
 
     const upstream = net.connect(currentTargetPort, currentTargetHost);
-    const pair: Pair = { client, upstream, index, bytesDown: 0, corruptionBase: 0, script };
+    const pair: Pair = { client, upstream, index, head: '', bytesDown: 0, corruptionBase: 0, script };
     pairs.add(pair);
 
     const teardown = (): void => {
@@ -198,6 +266,7 @@ export async function startChaosProxy(targetHost: string, targetPort: number): P
 
     client.on('data', d => {
       bytesUp += d.length;
+      if (pair.head.length < HEAD_LIMIT) { pair.head += d.subarray(0, HEAD_LIMIT - pair.head.length).toString('latin1'); }
       forward(upstream, d);
     });
 
@@ -221,12 +290,16 @@ export async function startChaosProxy(targetHost: string, targetPort: number): P
     upstream.on('error', () => undefined);
   });
 
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as AddressInfo).port;
+  const port = options.listen === 'fetch-refused'
+    ? await listenOnRefusedPort(server)
+    : await listenOnAcceptedPort(server);
 
   return {
     port,
     connections: () => pairs.size,
+    openConnections: () => [...pairs]
+      .sort((a, b) => a.index - b.index)
+      .map(p => ({ index: p.index, upgrade: asksUpgrade(p.head) })),
     stats: () => ({ connectionsTotal, connectionsOpen: pairs.size, bytesUp, bytesDown }),
     dropAll: () => {
       for (const { client, upstream } of [...pairs]) {

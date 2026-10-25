@@ -4,63 +4,56 @@
  * be injected without touching cables.
  *
  * Enabled only when RWS_TEST_HOST is set; skipped in plain `npm test` runs.
- *   RWS_TEST_HOST       - VC host, MUST be localhost (hard-fails otherwise)
- *   RWS_TEST_PORT_RW6   - IRC5 RWS port (default 28447)
+ *   RWS_TEST_HOST       - VC host, MUST be this PC (hard-fails otherwise): a
+ *                         bare host (127.0.0.1) or an http(s) URL naming one,
+ *                         as RAPID Live's host harness sets it
+ *                         (https://127.0.0.1:80); only its host is used
+ *                         (tests/helpers/liveHost.ts)
+ *   RWS_TEST_PORT_RW6   - IRC5 RWS port (default: found by the client's own
+ *                         discovery of this PC, the RobVC.exe listener)
  *   RWS_TEST_USER/PASS  - credentials (default 'Default User' / 'robotics')
  *   RWS_TEST_ALLOW_RESTART=1 - additionally run the real warm-restart test
- *                              (restarts the VC - disruptive, ~1 min)
+ *                              (restarts the VC - disruptive, ~1 min), on a
+ *                              lane off the never-restart list only
+ *                              (tests/helpers/restartPolicy.ts). RWS 1.0 is
+ *                              the rw6 lane, which is on it, so here the
+ *                              test is skipped whatever this says.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import http from 'node:http';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { RwsClient } from '../../src/RwsClient.js';
 import type { SubscriptionEvent } from '../../src/types.js';
 import { startChaosProxy, type ChaosProxy } from '../helpers/chaosProxy.js';
+import { controllerFor, findVcAgain } from '../helpers/liveControllers.js';
+import { laneOf, restartRefusal } from '../helpers/restartPolicy.js';
+import { liveHost } from '../helpers/liveHost.js';
 
-const execFileP = promisify(execFile);
-
-const HOST = process.env.RWS_TEST_HOST;
-const RW6_PORT = Number(process.env.RWS_TEST_PORT_RW6 ?? '28447');
+// Throws at import for a host that is not this PC: live suites must never
+// point at a real or workplace robot.
+const HOST = liveHost();
 const USER = process.env.RWS_TEST_USER ?? 'Default User';
 const PASS = process.env.RWS_TEST_PASS ?? 'robotics';
 const ALLOW_RESTART = process.env.RWS_TEST_ALLOW_RESTART === '1';
-
-// Safety guard: live suites must never point at a real or workplace robot.
-const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
-if (HOST && !LOCAL_HOSTS.has(HOST)) {
-  throw new Error(
-    `RWS_TEST_HOST=${HOST} is not localhost. Live suites only ever target local ` +
-    'virtual controllers - refusing to run against a possibly real robot.',
-  );
-}
+/**
+ * Why the warm-restart test must not run here, or null. Every RWS 1.0
+ * controller is RobotWare 6, so the lane of the controller the suite finds is
+ * known before discovery: rw6. The reason is in the test's title.
+ */
+const RESTART_REFUSAL = restartRefusal(laneOf('rws1'));
 
 const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * The -http-session- cookie is the controller session identity (GET /logout
- * deletes it); ABBCX is re-issued on every new TCP connection and MUST NOT be
- * used to detect session growth. Live-verified 2026-08-02 on RW6.16 VC
- * (probe-session-slots/probe-ws): across a severed connection the next request
- * returns 200 with a new ABBCX but the same -http-session-.
+ * deletes it); ABBCX MUST NOT be used to detect session growth. ABBCX names
+ * the controller's client, not the TCP connection: RW 6.16.03 issues a new one
+ * when its client is gone, as after a drop, and sets it on the first answer
+ * then, even an error answer (live 2026-10-22). Live-verified 2026-08-02 on
+ * RW6.16 VC (probe-session-slots/probe-ws): across a severed connection the
+ * next request returns 200 with a new ABBCX but the same -http-session-.
  */
 function sessionSlot(cookie: string | null): string {
   return cookie?.match(/-http-session-=([^;]+)/)?.[1] ?? '';
-}
-
-/** True when the port answers with the RWS digest realm. */
-function probeRwsDigest(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const req = http.request({ host: '127.0.0.1', port, path: '/rw/panel/speedratio', timeout: 2000 }, res => {
-      const auth = String(res.headers['www-authenticate'] ?? '');
-      res.resume();
-      resolve(res.statusCode === 401 && auth.includes('robapi'));
-    });
-    req.on('timeout', () => { req.destroy(); resolve(false); });
-    req.on('error', () => resolve(false));
-    req.end();
-  });
 }
 
 /**
@@ -68,25 +61,11 @@ function probeRwsDigest(port: number): Promise<boolean> {
  * RWS to a fresh dynamic port on every warm restart (real IRC5 hardware keeps
  * :80) - the restart test chases the port and feeds it to the chaos proxy so
  * the client keeps seeing one stable address, exactly like real hardware.
+ * One paced discovery of this PC: the RobVC.exe listener that answers the
+ * RWS 1.0 challenge, the port before the restart preferred.
  */
-async function findLiveRwsPort(): Promise<number | null> {
-  if (process.platform !== 'win32') { return null; }
-  const { stdout: tl } = await execFileP('tasklist', ['/FI', 'IMAGENAME eq RobVC.exe', '/FO', 'CSV', '/NH'])
-    .catch(() => ({ stdout: '' }));
-  const pids = [...tl.matchAll(/"RobVC\.exe","(\d+)"/g)].map(m => m[1]);
-  if (pids.length === 0) { return null; }
-  const ports = new Set<number>();
-  for (const proto of ['TCP', 'TCPv6']) {
-    const { stdout } = await execFileP('netstat', ['-ano', '-p', proto]).catch(() => ({ stdout: '' }));
-    for (const line of stdout.split('\n')) {
-      const m = line.match(/TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/);
-      if (m && pids.includes(m[2])) { ports.add(Number(m[1])); }
-    }
-  }
-  for (const port of ports) {
-    if (await probeRwsDigest(port)) { return port; }
-  }
-  return null;
+async function findLiveRwsPort(originPort: number): Promise<number | null> {
+  return (await findVcAgain('rws1', { originPort }))?.port ?? null;
 }
 
 /** Poll until cond() is true or timeoutMs elapses; returns elapsed ms or -1. */
@@ -100,12 +79,19 @@ async function until(cond: () => boolean, timeoutMs: number, stepMs = 100): Prom
 }
 
 describe.skipIf(!HOST)('RWS 1.0 subscriber resilience (RW6 VC via chaos proxy)', () => {
+  let RW6_PORT = 0;
   let proxy: ChaosProxy;
   let client: RwsClient;
   let unsubscribe: (() => Promise<void>) | null = null;
   let events: SubscriptionEvent[];
   let restored: number;
   let lost: number;
+
+  beforeAll(async () => {
+    const vc = await controllerFor('rws1');
+    if (!vc) { throw new Error('no RWS 1.0 virtual controller found on this PC - start the RW6 VC, or set RWS_TEST_PORT_RW6'); }
+    RW6_PORT = vc.port;
+  }, 120000);
 
   beforeEach(async () => {
     proxy = await startChaosProxy(HOST!, RW6_PORT);
@@ -194,7 +180,7 @@ describe.skipIf(!HOST)('RWS 1.0 subscriber resilience (RW6 VC via chaos proxy)',
     // registration server-side, then kill the socket. The reconnect to the
     // stored poll URL is rejected, forcing the re-POST path.
     const subscriber = (client as unknown as {
-      subscriber: { subscriptions: Map<string, { deleteUrl: string }>; session: { delete(u: string): Promise<unknown> } };
+      subscriber: { subscriptions: Map<string, { deleteUrl: string }>; session: { delete(u: string): Promise<{ status: number }> } };
     }).subscriber;
     const sub = [...subscriber.subscriptions.values()][0];
     expect(sub).toBeDefined();
@@ -251,37 +237,39 @@ describe.skipIf(!HOST)('RWS 1.0 subscriber resilience (RW6 VC via chaos proxy)',
     await expectSpeedEvent(67);
   });
 
-  it.skipIf(!ALLOW_RESTART)('survives a real warm restart of the VC', async () => {
-    // RIG CAVEAT (2026-08-03): the RobotStudio IRC5 VC does not reliably
-    // survive an RWS-initiated warm restart - observed dying (RobVC process
-    // gone, never re-listens) on 2 of 3 attempts in one night. When that
-    // happens this test fails on the 8-min window and the VC needs a manual
-    // start in RobotStudio. The recovery logic itself passed this test live
-    // (2026-08-02) and is also covered by the dead-registration test above.
-    await subscribeSpeed({
-      // VC restart timing varies with host load (observed 1-6 min end to end
-      // across the rig) - budget generously; real IRC5 hardware reboots are
-      // in the same range.
-      maxReconnectAttempts: 90,
-      reconnectBaseMs: 1000,
-      reconnectCapMs: 10000,
-    });
-    await expectSpeedEvent(68);
+  it.skipIf(!ALLOW_RESTART || RESTART_REFUSAL !== null)(
+    `survives a real warm restart of the VC${RESTART_REFUSAL ? ` [skipped: ${RESTART_REFUSAL}]` : ''}`,
+    async () => {
+      // RIG NOTE: if the IRC5 virtual controller is still down after the warm
+      // restart, start it from RobotStudio; this test then fails on its 8-min
+      // window. The recovery logic itself passed this test live (2026-08-02)
+      // and is also covered by the dead-registration test above.
+      await subscribeSpeed({
+        // VC restart timing varies with host load (observed 1-6 min end to end
+        // across the rig) - budget generously; real IRC5 hardware reboots are
+        // in the same range.
+        maxReconnectAttempts: 90,
+        reconnectBaseMs: 1000,
+        reconnectCapMs: 10000,
+      });
+      await expectSpeedEvent(68);
 
-    await client.restartController('restart');
+      await client.restartController('restart');
 
-    // The VC re-binds RWS to a new dynamic port on restart (real IRC5 keeps
-    // :80). Chase the port and retarget the proxy so the client sees one
-    // stable address throughout - the client itself must recover unaided.
-    const deadline = Date.now() + 480000;
-    while (restored < 1 && Date.now() < deadline) {
-      const port = await findLiveRwsPort();
-      if (port) { proxy.setTarget('127.0.0.1', port); }
-      await wait(3000);
-    }
-    expect(restored, 'stream was not restored within 8 min of the warm restart').toBeGreaterThanOrEqual(1);
+      // The VC re-binds RWS to a new dynamic port on restart (real IRC5 keeps
+      // :80). Chase the port and retarget the proxy so the client sees one
+      // stable address throughout - the client itself must recover unaided.
+      const deadline = Date.now() + 480000;
+      while (restored < 1 && Date.now() < deadline) {
+        const port = await findLiveRwsPort(RW6_PORT);
+        if (port) { proxy.setTarget('127.0.0.1', port); }
+        await wait(3000);
+      }
+      expect(restored, 'stream was not restored within 8 min of the warm restart').toBeGreaterThanOrEqual(1);
 
-    await expectSpeedEvent(69, 30000);
-    expect(lost).toBe(0);
-  }, 560000);
+      await expectSpeedEvent(69, 30000);
+      expect(lost).toBe(0);
+    },
+    560000,
+  );
 }, 120000);

@@ -42,6 +42,17 @@ describe('XhtmlParser', () => {
       expect(all[0]).toMatchObject({ name: 'T_ROB1', active: 'On' });
       expect(all[1]).toMatchObject({ name: 'T_ROB2', active: 'Off' });
     });
+
+    it('a capturing group inside the class pattern does not shift title, href or spans', () => {
+      const xml = `
+        <li class="fs-dir" title="HOME"><a href="fileservice/HOME" rel="self"></a><span class="fs-mdate">d1</span></li>
+        <li class="fs-file" title="a.mod"><span class="fs-size">12</span></li>`;
+      const all = new XhtmlParser(xml).getAllStates('(fs-dir|fs-file)');
+      expect(all).toEqual([
+        { _title: 'HOME', _href: 'fileservice/HOME', 'fs-mdate': 'd1' },
+        { _title: 'a.mod', 'fs-size': '12' },
+      ]);
+    });
   });
 
   describe('get', () => {

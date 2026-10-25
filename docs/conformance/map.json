@@ -1,371 +1,1980 @@
 {
- "crawledAt": "2026-08-11",
+ "crawledAt": "2026-10-10",
+ "counting": "families",
  "summary": {
-  "implemented": 59,
-  "deliberate-gap": 1,
+  "implemented": 226,
+  "deliberate-gap": 5,
   "unmapped": 0,
   "orphan": 0
  },
+ "builds": [
+  {
+   "build": "rws2 RW 7.21.0+229 :19985",
+   "nodes": 276,
+   "families": 147,
+   "summary": {
+    "implemented": 145,
+    "deliberate-gap": 2,
+    "unmapped": 0,
+    "orphan": 0
+   },
+   "crawl": {
+    "probed": 299,
+    "queued": 0,
+    "deadlineHit": false,
+    "nodeCapHit": false,
+    "stoppedAnswering": null,
+    "complete": true,
+    "elapsedMs": 32491,
+    "deadlineMs": 1200000,
+    "systemAfter": 200
+   }
+  },
+  {
+   "build": "rws2 RW 8.1.1+614 :9403",
+   "nodes": 386,
+   "families": 152,
+   "summary": {
+    "implemented": 150,
+    "deliberate-gap": 2,
+    "unmapped": 0,
+    "orphan": 0
+   },
+   "crawl": {
+    "probed": 445,
+    "queued": 0,
+    "deadlineHit": false,
+    "nodeCapHit": false,
+    "stoppedAnswering": null,
+    "complete": true,
+    "elapsedMs": 48508,
+    "deadlineMs": 1200000,
+    "systemAfter": 200,
+    "carriedFrom": "2026-10-10"
+   }
+  },
+  {
+   "build": "rws1 RW 6.16.3007 :23280",
+   "nodes": 232,
+   "families": 74,
+   "summary": {
+    "implemented": 71,
+    "deliberate-gap": 3,
+    "unmapped": 0,
+    "orphan": 0
+   },
+   "crawl": {
+    "probed": 250,
+    "queued": 0,
+    "deadlineHit": false,
+    "nodeCapHit": false,
+    "stoppedAnswering": null,
+    "complete": true,
+    "elapsedMs": 27241,
+    "deadlineMs": 1200000,
+    "systemAfter": 200,
+    "carriedFrom": "2026-10-10"
+   }
+  },
+  {
+   "build": "rws2 RW 7.21.4+417 :9403",
+   "nodes": 269,
+   "families": 117,
+   "summary": {
+    "implemented": 116,
+    "deliberate-gap": 1,
+    "unmapped": 0,
+    "orphan": 0
+   },
+   "crawl": {
+    "probed": 298,
+    "queued": 0,
+    "deadlineHit": false,
+    "nodeCapHit": false,
+    "stoppedAnswering": null,
+    "complete": true,
+    "elapsedMs": 32554,
+    "deadlineMs": 1200000,
+    "systemAfter": 200,
+    "carriedFrom": "2026-10-10"
+   }
+  },
+  {
+   "build": "rws2 RW 8.2.1+1023 :5466",
+   "nodes": 71,
+   "families": 65,
+   "summary": {
+    "implemented": 64,
+    "deliberate-gap": 1,
+    "unmapped": 0,
+    "orphan": 0
+   },
+   "crawl": {
+    "carriedFrom": "2026-10-10"
+   }
+  }
+ ],
  "rows": [
   {
    "gen": "rws1",
    "resource": "/ctrl",
    "verdict": "implemented",
-   "by": "ctrl.getControllerIdentity"
+   "by": "ctrl.setControllerLanguage",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/backup",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.createBackup",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/clock",
    "verdict": "implemented",
-   "by": "ctrl.getControllerClock"
+   "by": "ctrl.getControllerClock",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/compress",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.compressPath",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/identity",
    "verdict": "implemented",
-   "by": "ctrl.getControllerIdentity"
+   "by": "ctrl.getControllerIdentity",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/network",
    "verdict": "implemented",
-   "by": "ctrl.getNetworkConfig"
+   "by": "ctrl.getNetworkConfig",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/options",
-   "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "verdict": "deliberate-gap",
+   "by": "ctrl.ctrlOptionsVerify",
+   "match": "exact",
+   "instances": 1,
+   "reason": "the bare GET carries no option list (204); the list is /rw/system/options (listControllerOptions). ABB documents a per-option check, GET /ctrl/options/{option}; it is not wrapped"
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/safety",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.getSafetyStatus",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.getVirtualTimeClock",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vtspeed",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.getVirtualTimeScale",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vtstate",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.getVirtualTimeState",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vttime",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.getVirtualTimeClock",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/ctrl/virtualtime/vttimeslice",
    "verdict": "implemented",
-   "by": "ctrl.setControllerLanguage"
+   "by": "ctrl.getVirtualTimeTimeslice",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/rw",
    "verdict": "implemented",
-   "by": "panel.getControllerState"
+   "by": "panel.setPanelLanguage",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/cfg",
+   "verdict": "implemented",
+   "by": "panel.setKeylessMotorOn",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/cfg/{domain}",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.listCfgTypes",
+   "match": "exact",
+   "instances": 6
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/devices",
+   "verdict": "implemented",
+   "by": "listDeviceGroups, listSystemDevices",
+   "match": "claim",
+   "instances": 1,
+   "reason": "The device groups (HW_DEVICES, SW_RESOURCES)."
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/devices/{group}",
+   "verdict": "implemented",
+   "by": "listControllerDevices, getDeviceTree",
+   "match": "claim",
+   "instances": 2,
+   "reason": "The devices of one group."
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/devices/{group}/{node...}",
+   "verdict": "implemented",
+   "by": "listControllerDevices",
+   "match": "claim",
+   "instances": 143,
+   "reason": "One node per hardware device, software resource and property: the same device-tree resource at any depth, read by passing the nested path (listControllerDevices('HW_DEVICES/CONTROLLER'))."
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/dipc",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.listDipcQueues",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/elog",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.clearAllEventLogs",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/iosystem",
+   "verdict": "implemented",
+   "by": "io.listAllSignals",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/iosystem/devices",
+   "verdict": "implemented",
+   "by": "io.listDevices",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/iosystem/devices/{network}/{device}",
+   "verdict": "implemented",
+   "by": "io.getIoDeviceInfo",
+   "match": "ancestor",
+   "instances": 2
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/iosystem/networks",
+   "verdict": "implemented",
+   "by": "io.listNetworks",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/iosystem/networks/{network}",
+   "verdict": "implemented",
+   "by": "io.getIoNetwork",
+   "match": "exact",
+   "instances": 3
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/iosystem/signals",
+   "verdict": "implemented",
+   "by": "io.listAllSignals",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/mastership",
+   "verdict": "implemented",
+   "by": "systemMastership.requestMastershipAll",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/mastership/{domain}",
+   "verdict": "implemented",
+   "by": "systemMastership.requestMastership",
+   "match": "exact",
+   "instances": 3
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem",
+   "verdict": "implemented",
+   "by": "motion.jog",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/errorstate",
+   "verdict": "implemented",
+   "by": "motion.getMotionErrorState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits",
+   "verdict": "implemented",
+   "by": "motion.listMechunits",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}",
+   "verdict": "implemented",
+   "by": "motion.getMechunitInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/axes",
+   "verdict": "implemented",
+   "by": "motion.getMechunitAxes",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/axes/{axis}",
+   "verdict": "implemented",
+   "by": "motion.getMechunitAxes",
+   "match": "ancestor",
+   "instances": 6
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/baseframe",
+   "verdict": "implemented",
+   "by": "motion.getMechunitBaseFrame",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/cartesian",
+   "verdict": "implemented",
+   "by": "motion.getCartesianFull",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/jointtarget",
+   "verdict": "implemented",
+   "by": "motion.getJointPositions",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/motorcalib",
+   "verdict": "implemented",
+   "by": "motion.getMechunitMotorCalib",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/pjoints",
+   "verdict": "implemented",
+   "by": "motion.getMechunitPjoints",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/robtarget",
+   "verdict": "implemented",
+   "by": "motion.getRobTarget",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/smbdata",
+   "verdict": "implemented",
+   "by": "motion.getMechunitSmbData",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/motionsystem/nonmotionexecution",
+   "verdict": "implemented",
+   "by": "motion.getNonMotionExecution",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/panel",
+   "verdict": "implemented",
+   "by": "panel.setPanelLanguage",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/panel/coldetstate",
+   "verdict": "implemented",
+   "by": "panel.getCollisionDetectionState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/panel/ctrlstate",
+   "verdict": "implemented",
+   "by": "panel.getControllerState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/panel/opmode",
+   "verdict": "implemented",
+   "by": "panel.getOperationMode",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/panel/speedratio",
+   "verdict": "implemented",
+   "by": "panel.getSpeedRatio",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid",
+   "verdict": "implemented",
+   "by": "rapid.getRapidExecutionState",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/aliasio",
+   "verdict": "implemented",
+   "by": "rapid.listAliasIO",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/execution",
+   "verdict": "implemented",
+   "by": "rapid.getRapidExecutionState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/symbols",
+   "verdict": "implemented",
+   "by": "rapid.listModuleRoutines",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTasks",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks/{task}",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTask",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks/{task}/motion",
+   "verdict": "implemented",
+   "by": "rapid.getTaskMotion",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks/{task}/pcp",
+   "verdict": "implemented",
+   "by": "rapid.getMotionPointer",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks/{task}/program",
+   "verdict": "implemented",
+   "by": "rapid.getTaskProgramInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks/{task}/program/breakpoint",
+   "verdict": "implemented",
+   "by": "rapid.listBreakpoints",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/tasks/{task}/program/builderror",
+   "verdict": "implemented",
+   "by": "rapid.getBuildErrors",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/taskselection",
+   "verdict": "implemented",
+   "by": "rapid.getTaskSelection",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rapid/uiinstr",
+   "verdict": "implemented",
+   "by": "rapid.getActiveUiInstruction",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/retcode",
+   "verdict": "implemented",
+   "by": "getReturnCode, describeReturnCode",
+   "match": "claim",
+   "instances": 1,
+   "reason": "Read with the code in the query (/rw/retcode?code=N); a bare GET is the dictionary entry point the crawl sees."
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rim",
+   "verdict": "deliberate-gap",
+   "by": "",
+   "match": "claim",
+   "instances": 1,
+   "reason": "RobotWare installation service (default license, default settings, systems, boot server). Not in the RWS 1.0 reference, answers XHTML only (no JSON form), and installs systems rather than operating one."
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/rim/infra",
+   "verdict": "deliberate-gap",
+   "by": "",
+   "match": "claim",
+   "instances": 1,
+   "reason": "Part of the RobotWare installation service under /rw/rim (see there)."
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/system",
+   "verdict": "implemented",
+   "by": "systemMastership.getSystemInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/system/energy",
+   "verdict": "implemented",
+   "by": "systemMastership.getEnergyStats",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/system/license",
+   "verdict": "implemented",
+   "by": "systemMastership.getLicenseInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/system/options",
+   "verdict": "implemented",
+   "by": "systemMastership.listControllerOptions",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/system/products",
+   "verdict": "implemented",
+   "by": "systemMastership.listProducts",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws1",
+   "resource": "/rw/vision",
+   "verdict": "implemented",
+   "by": "filesVision.listVisionSystems",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/users",
    "verdict": "implemented",
-   "by": "usersUas.getRmmpPrivilege"
+   "by": "usersUas.getRmmpPrivilege",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/users/grants",
    "verdict": "implemented",
-   "by": "usersUas.listCurrentUserGrants"
+   "by": "usersUas.listCurrentUserGrants",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/users/rmmp",
    "verdict": "implemented",
-   "by": "usersUas.getRmmpPrivilege"
+   "by": "usersUas.getRmmpPrivilege",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws1",
    "resource": "/users/rmmp/poll",
    "verdict": "implemented",
-   "by": "usersUas.getRmmpPrivilege"
+   "by": "usersUas.pollRmmp",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl",
    "verdict": "implemented",
-   "by": "panel.restartController"
+   "by": "panel.restartController",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/backup",
    "verdict": "implemented",
-   "by": "ctrl.createBackup"
+   "by": "ctrl.createBackup",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/backup/state",
    "verdict": "implemented",
-   "by": "ctrl.getBackupStatus"
+   "by": "ctrl.getBackupStatus",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/certstore",
    "verdict": "implemented",
-   "by": "ctrl.listCertificateStores"
+   "by": "ctrl.listCertificateStores",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/certstore/controller",
    "verdict": "implemented",
-   "by": "ctrl.listCertificateStores"
+   "by": "ctrl.getCertificates",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/certstore/controller/trust_ca_store",
    "verdict": "implemented",
-   "by": "ctrl.listCertificateStores"
+   "by": "ctrl.clearCertificateStore",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/certstore/system",
    "verdict": "implemented",
-   "by": "ctrl.listCertificateStores"
+   "by": "ctrl.getCertificates",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/certstore/system/robapi_store",
    "verdict": "implemented",
-   "by": "ctrl.listCertificateStores"
+   "by": "ctrl.clearCertificateStore",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/certstore/system/rws_store",
    "verdict": "implemented",
-   "by": "ctrl.listCertificateStores"
+   "by": "ctrl.clearCertificateStore",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/clock",
    "verdict": "implemented",
-   "by": "ctrl.getControllerClock"
+   "by": "ctrl.getControllerClock",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/features",
    "verdict": "implemented",
-   "by": "ctrl.listFeatures"
+   "by": "ctrl.listFeatures",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/identity",
    "verdict": "implemented",
-   "by": "ctrl.getControllerIdentity"
+   "by": "ctrl.getControllerIdentity",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/options",
    "verdict": "deliberate-gap",
-   "by": "ctrl.ctrlOptionsVerify"
+   "by": "ctrl.ctrlOptionsVerify",
+   "match": "exact",
+   "instances": 1,
+   "reason": "the bare GET carries no option list; the list is /rw/system/options (listControllerOptions). ABB documents a per-option check, GET /ctrl/options/{option}; it is not wrapped"
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistry",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/cfgrules",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/cfgtext",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/devices",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/elogrules",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/elogtext",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/hw-compatibility",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/option",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/rapid-metadata",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/rapid-text",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/rw-services",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/registry/uastext",
    "verdict": "implemented",
-   "by": "ctrl.getRegistry"
+   "by": "ctrl.getRegistryFile",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/safety",
    "verdict": "implemented",
-   "by": "ctrl.getSafetyMode"
+   "by": "ctrl.getSafetyMode",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/safety/config",
    "verdict": "implemented",
-   "by": "ctrl.getSafetyStartupStatus"
+   "by": "ctrl.getSafetyConfig",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/safety/load",
    "verdict": "implemented",
-   "by": "ctrl.getSafetyLoadStatus"
+   "by": "ctrl.getSafetyLoadStatus",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/safety/mode",
    "verdict": "implemented",
-   "by": "ctrl.getSafetyMode"
+   "by": "ctrl.getSafetyMode",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/safety/violation",
    "verdict": "implemented",
-   "by": "ctrl.getSafetyViolationInfo"
+   "by": "ctrl.getSafetyViolationInfo",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/virtualtime",
    "verdict": "implemented",
-   "by": "ctrl.setVirtualTimeRunning"
+   "by": "ctrl.setVirtualTimeScale",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/virtualtime/vtspeed",
    "verdict": "implemented",
-   "by": "ctrl.setVirtualTimeScale"
+   "by": "ctrl.setVirtualTimeScale",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/virtualtime/vtstate",
    "verdict": "implemented",
-   "by": "ctrl.setVirtualTimeRunning"
+   "by": "ctrl.getVirtualTimeState",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/virtualtime/vttime",
    "verdict": "implemented",
-   "by": "ctrl.getVirtualTimeClock"
+   "by": "ctrl.getVirtualTimeClock",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/ctrl/virtualtime/vttimeslice",
    "verdict": "implemented",
-   "by": "ctrl.getVirtualTimeTimeslice"
+   "by": "ctrl.getVirtualTimeTimeslice",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/rw",
    "verdict": "implemented",
-   "by": "panel.getControllerState"
+   "by": "motion.getMotionChangeCount",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/cfg",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.listCfgDomains",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/cfg/{domain}",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.listCfgTypes",
+   "match": "exact",
+   "instances": 6
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation",
+   "verdict": "implemented",
+   "by": "systemMastership.getControlStationType",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/allowmotioncontrol",
+   "verdict": "implemented",
+   "by": "systemMastership.getAllowMotionControl",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/local/isconnected",
+   "verdict": "implemented",
+   "by": "systemMastership.isLocalControlStationConnected",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/tpu/safety/protocol/status",
+   "verdict": "implemented",
+   "by": "systemMastership.getTpuSafetyProtocolStatus",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/type",
+   "verdict": "implemented",
+   "by": "systemMastership.getControlStationType",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/writeaccess/release",
+   "verdict": "implemented",
+   "by": "systemMastership.releaseWriteAccess",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/writeaccess/release/appeal/changecount",
+   "verdict": "implemented",
+   "by": "systemMastership.getWriteAccessAppealChangeCount",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/writeaccess/request",
+   "verdict": "implemented",
+   "by": "systemMastership.requestWriteAccess",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/controlstation/writeaccess/status",
+   "verdict": "implemented",
+   "by": "systemMastership.getWriteAccessStatus",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/devices",
+   "verdict": "implemented",
+   "by": "listDeviceGroups, listSystemDevices",
+   "match": "claim",
+   "instances": 1,
+   "reason": "The device groups (HW_DEVICES, SW_RESOURCES)."
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/devices/{group}",
+   "verdict": "implemented",
+   "by": "listControllerDevices, getDeviceTree",
+   "match": "claim",
+   "instances": 2,
+   "reason": "The devices of one group."
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/devices/{group}/{node...}",
+   "verdict": "implemented",
+   "by": "listControllerDevices",
+   "match": "claim",
+   "instances": 221,
+   "reason": "One node per hardware device, software resource and property: the same device-tree resource at any depth, read by passing the nested path (listControllerDevices('HW_DEVICES/CONTROLLER'))."
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/dipc",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.listDipcQueues",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/elog",
+   "verdict": "implemented",
+   "by": "cfgElogDipc.listEventLogDomains",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/iosystem",
+   "verdict": "implemented",
+   "by": "io.listAllSignals",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/iosystem/devices",
+   "verdict": "implemented",
+   "by": "io.listDevices",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/iosystem/devices/{network}/{device}",
+   "verdict": "implemented",
+   "by": "io.getIoDeviceInfo",
+   "match": "exact",
+   "instances": 6
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/iosystem/networks",
+   "verdict": "implemented",
+   "by": "io.listNetworks",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/iosystem/networks/{network}",
+   "verdict": "implemented",
+   "by": "io.getIoNetwork",
+   "match": "exact",
+   "instances": 4
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/iosystem/signals",
+   "verdict": "implemented",
+   "by": "io.listAllSignals",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/mastership",
+   "verdict": "implemented",
+   "by": "systemMastership.listMastershipDomains",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/mastership/{domain}",
+   "verdict": "implemented",
+   "by": "systemMastership.requestMastershipAll",
+   "match": "exact",
+   "instances": 2
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem",
+   "verdict": "implemented",
+   "by": "motion.getMotionChangeCount",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/checkchangecount/{n}",
+   "verdict": "implemented",
+   "by": "motion.checkMotionChangeCount",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/collisionprediction",
+   "verdict": "implemented",
+   "by": "motion.setMechunitForJogging",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/errorstate",
+   "verdict": "implemented",
+   "by": "motion.setMechunitForJogging",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits",
+   "verdict": "implemented",
+   "by": "motion.listMechunits",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}",
+   "verdict": "implemented",
+   "by": "motion.getMechunitInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/axes",
+   "verdict": "implemented",
+   "by": "motion.getMechunitAxes",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/axes/{axis}",
+   "verdict": "implemented",
+   "by": "motion.getAxisPose",
+   "match": "beneath",
+   "instances": 6
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/axes/{axis}/pose",
+   "verdict": "implemented",
+   "by": "motion.getAxisPose",
+   "match": "exact",
+   "instances": 6
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/baseframe",
+   "verdict": "implemented",
+   "by": "motion.getMechunitBaseFrame",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/calib",
+   "verdict": "implemented",
+   "by": "motion.getMechunitCalib",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/cartesian",
+   "verdict": "implemented",
+   "by": "motion.getCartesianFull",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/coll-pred-model",
+   "verdict": "implemented",
+   "by": "motion.getCollisionPredictionModel",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/jointtarget",
+   "verdict": "implemented",
+   "by": "motion.getJointPositions",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/lead-through",
+   "verdict": "implemented",
+   "by": "motion.getLeadThrough",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/motionsupervision",
+   "verdict": "implemented",
+   "by": "motion.getMotionSupervision",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/motorcalib",
+   "verdict": "implemented",
+   "by": "motion.getMechunitMotorCalib",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/pathsupervision",
+   "verdict": "implemented",
+   "by": "motion.getPathSupervision",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/pjoints",
+   "verdict": "implemented",
+   "by": "motion.getMechunitPjoints",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/robtarget",
+   "verdict": "implemented",
+   "by": "motion.getRobTarget",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/mechunits/{mechunit}/smbdata",
+   "verdict": "implemented",
+   "by": "motion.getMechunitSmbData",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/motionsystem/nonmotionexecution",
+   "verdict": "implemented",
+   "by": "motion.setMechunitForJogging",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/panel",
+   "verdict": "implemented",
+   "by": "panel.getControllerState",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/panel/coldetstate",
+   "verdict": "implemented",
+   "by": "panel.getCollisionDetectionState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/panel/ctrl-state",
+   "verdict": "implemented",
+   "by": "panel.getControllerState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/panel/opmode",
+   "verdict": "implemented",
+   "by": "panel.getOperationMode",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/panel/opmode/lock-state",
+   "verdict": "implemented",
+   "by": "panel.getOperationModeLockState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/panel/speedratio",
+   "verdict": "implemented",
+   "by": "panel.getSpeedRatio",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid",
+   "verdict": "implemented",
+   "by": "rapid.getRapidExecutionState",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/aliasio",
+   "verdict": "implemented",
+   "by": "rapid.listAliasIO",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/execution",
+   "verdict": "implemented",
+   "by": "rapid.getRapidExecutionState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/modules",
+   "verdict": "implemented",
+   "by": "rapid.getModPossibleAll",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/symbols",
+   "verdict": "implemented",
+   "by": "rapid.listModuleRoutines",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTasks",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/spy",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTask",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/syncstate/motion-pointer",
+   "verdict": "implemented",
+   "by": "rapid.getMotionPointerSyncState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/syncstate/program-pointer",
+   "verdict": "implemented",
+   "by": "rapid.getProgramPointerSyncState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTask",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/activation-record",
+   "verdict": "implemented",
+   "by": "rapid.getTaskActivationRecord",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/modules",
+   "verdict": "implemented",
+   "by": "rapid.listModules",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/motion",
+   "verdict": "implemented",
+   "by": "rapid.getTaskMotion",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/motion/extjointstate",
+   "verdict": "implemented",
+   "by": "rapid.getTaskExtJointState",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/motion/jointtarget",
+   "verdict": "implemented",
+   "by": "rapid.getTaskJointTarget",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/motion/mechunits",
+   "verdict": "implemented",
+   "by": "rapid.getTaskMechunits",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/motion/robtarget",
+   "verdict": "implemented",
+   "by": "rapid.getTaskRobTarget",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/pallet-head",
+   "verdict": "implemented",
+   "by": "rapid.listInstructionCategories",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/pallet/{n}",
+   "verdict": "implemented",
+   "by": "rapid.listInstructions",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/program",
+   "verdict": "implemented",
+   "by": "rapid.getTaskProgramInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/structural-changecount",
+   "verdict": "implemented",
+   "by": "rapid.getTaskStructuralChangeCount",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/syncstate/motion-pointer",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTask",
+   "match": "ancestor",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/tasks/{task}/syncstate/program-pointer",
+   "verdict": "implemented",
+   "by": "rapid.getRapidTask",
+   "match": "ancestor",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/taskselection",
+   "verdict": "implemented",
+   "by": "rapid.getTaskSelection",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/rapid/uiinstr",
+   "verdict": "implemented",
+   "by": "rapid.getActiveUiInstruction",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/retcode",
+   "verdict": "implemented",
+   "by": "getReturnCode, describeReturnCode",
+   "match": "claim",
+   "instances": 1,
+   "reason": "Read with the code in the query (/rw/retcode?code=N); a bare GET is the dictionary entry point the crawl sees."
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/system",
+   "verdict": "implemented",
+   "by": "systemMastership.getSystemInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/system/energy",
+   "verdict": "implemented",
+   "by": "systemMastership.getEnergyStats",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/system/license",
+   "verdict": "implemented",
+   "by": "systemMastership.getLicenseInfo",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/system/options",
+   "verdict": "implemented",
+   "by": "systemMastership.listControllerOptions",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/system/products",
+   "verdict": "implemented",
+   "by": "systemMastership.listProducts",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/system/robottype",
+   "verdict": "implemented",
+   "by": "systemMastership.getRobotType",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/rw/vision",
+   "verdict": "implemented",
+   "by": "filesVision.listVisionSystems",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/uas",
    "verdict": "implemented",
-   "by": "usersUas.listAllGrants"
+   "by": "usersUas.listAllGrants",
+   "match": "beneath",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/configuration",
+   "verdict": "deliberate-gap",
+   "by": "usersUas.getUasConfiguration",
+   "match": "exact",
+   "instances": 1,
+   "reason": "returns the whole UAS configuration database (ABB, UAS service). UAS is administered in RobotStudio; this client reads users, roles and grants one by one (/uas/users, /uas/roles, /uas/grants) and does not export the database. Nothing is sent"
   },
   {
    "gen": "rws2",
    "resource": "/uas/grants",
    "verdict": "implemented",
-   "by": "usersUas.listAllGrants"
+   "by": "usersUas.listAllGrants",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/uas/ldap",
    "verdict": "implemented",
-   "by": "usersUas.listLdapResources"
+   "by": "usersUas.listLdapResources",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/ldap/configuration",
+   "verdict": "implemented",
+   "by": "usersUas.getLdapResource",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/ldap/enabled",
+   "verdict": "implemented",
+   "by": "usersUas.getLdapResource",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/ldap/settings",
+   "verdict": "implemented",
+   "by": "usersUas.getLdapResource",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles",
+   "verdict": "implemented",
+   "by": "usersUas.listUasRoles",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Administrator",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRole",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Administrator/description",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRoleDescription",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Administrator/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listUasRoleGrants",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Operator",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRole",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Operator/description",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRoleDescription",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Operator/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listUasRoleGrants",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Programmer",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRole",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Programmer/description",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRoleDescription",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Programmer/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listUasRoleGrants",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Service",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRole",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Service/description",
+   "verdict": "implemented",
+   "by": "usersUas.getUasRoleDescription",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/roles/Service/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listUasRoleGrants",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users",
+   "verdict": "implemented",
+   "by": "usersUas.listUasUsers",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Admin",
+   "verdict": "implemented",
+   "by": "usersUas.getUasUser",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Admin/description",
+   "verdict": "implemented",
+   "by": "usersUas.getUasUserDescription",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Admin/enable",
+   "verdict": "implemented",
+   "by": "usersUas.isUasUserEnabled",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Admin/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listUasUserGrants",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Admin/password-change-allow",
+   "verdict": "implemented",
+   "by": "usersUas.isUasUserPasswordChangeAllowed",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Admin/roles",
+   "verdict": "implemented",
+   "by": "usersUas.listUasUserRoles",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Default%20User",
+   "verdict": "implemented",
+   "by": "usersUas.getUasUser",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Default%20User/description",
+   "verdict": "implemented",
+   "by": "usersUas.getUasUserDescription",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Default%20User/enable",
+   "verdict": "implemented",
+   "by": "usersUas.isUasUserEnabled",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Default%20User/grants",
+   "verdict": "implemented",
+   "by": "usersUas.listUasUserGrants",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Default%20User/password-change-allow",
+   "verdict": "implemented",
+   "by": "usersUas.isUasUserPasswordChangeAllowed",
+   "match": "exact",
+   "instances": 1
+  },
+  {
+   "gen": "rws2",
+   "resource": "/uas/users/Default%20User/roles",
+   "verdict": "implemented",
+   "by": "usersUas.listUasUserRoles",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/users",
    "verdict": "implemented",
-   "by": "usersUas.getRmmpPrivilege"
+   "by": "usersUas.getRmmpPrivilege",
+   "match": "beneath",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/users/rmmp",
    "verdict": "implemented",
-   "by": "usersUas.getRmmpPrivilege"
+   "by": "usersUas.getRmmpPrivilege",
+   "match": "exact",
+   "instances": 1
   },
   {
    "gen": "rws2",
    "resource": "/users/rmmp/poll",
    "verdict": "implemented",
-   "by": "usersUas.getRmmpPrivilege"
+   "by": "usersUas.pollRmmp",
+   "match": "exact",
+   "instances": 1
   }
  ]
 }

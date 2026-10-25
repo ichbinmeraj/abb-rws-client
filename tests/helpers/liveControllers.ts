@@ -1,25 +1,34 @@
 /**
- * Discovery of the local virtual controllers for structural live tests.
+ * Discovery of the local virtual controllers for structural and live tests.
  *
  * Two hard rules from the task brief are enforced here rather than trusted to
  * every test:
  *
  *   1. LOCALHOST ONLY. Anything else throws before a single byte is sent. A
  *      structural suite injects faults - pointing it at a real or workplace
- *      robot must be impossible, not merely discouraged.
+ *      robot must be impossible, not merely discouraged. Discovery runs with
+ *      `loopbackOnly: true` (the client itself refuses any other target before
+ *      sending anything), and every host it returns passes `assertLocalhost`.
  *   2. NEVER assume a port. VC RWS ports drift across restarts (a warm restart
  *      was observed moving one from 62214 to 40483, and IRC5 comes back as a
- *      NEW process on a new port), so ports are discovered every run.
+ *      NEW process on a new port), so ports are discovered every run through
+ *      the client's own `findControllers`: the OS listening-port scan of this
+ *      PC, filtered on Windows to the virtual-controller processes.
+ *
+ * Probes are paced: one at a time, at least 1 s apart. Back-to-back probes
+ * run into the controllers' request-rate and session limits, and the 503/401
+ * answers that follow look like client defects when they are not.
  *
  * RWS 1.0 (IRC5) is plain HTTP + Digest; RWS 2.0 (OmniCore) is TLS + Basic.
- * Probing an IRC5 over TLS looks like a dead port, which is why generation is
- * decided by the auth challenge rather than guessed from the port.
+ * The generation is decided by the auth challenge, never guessed from the port.
  *
  * Test infrastructure only - never shipped in the package.
  */
 
-import http from 'node:http';
-import https from 'node:https';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { findControllers, type FindControllersOptions, type FoundController } from '../../src/index.js';
 
 export type Generation = 'rws1' | 'rws2';
 
@@ -31,6 +40,10 @@ export interface LiveController {
   /** Base URL in the shape RwsClient2 wants; RWS 1.0 callers use host/port. */
   baseUrl: string;
   label: string;
+  /** RobotWare version, when the local system folder of the VC could be read (OmniCore VCs on Windows). */
+  rwVersion?: string;
+  /** System name, read the same way. */
+  systemName?: string;
 }
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -48,139 +61,163 @@ export function assertLocalhost(host: string): void {
 export const TEST_USER = process.env.RWS_TEST_USER ?? 'Default User';
 export const TEST_PASS = process.env.RWS_TEST_PASS ?? 'robotics';
 
-/** One unauthenticated request; the WWW-Authenticate challenge names the generation. */
-function probe(port: number, tls: boolean, timeoutMs: number): Promise<Generation | null> {
-  return new Promise(resolve => {
-    const mod = tls ? https : http;
-    const req = mod.request(
-      {
-        host: '127.0.0.1', port, path: '/rw/system', method: 'GET', timeout: timeoutMs,
-        ...(tls ? { rejectUnauthorized: false } : {}),
-      },
-      res => {
-        const challenge = String(res.headers['www-authenticate'] ?? '');
-        res.resume();
-        if (/digest/i.test(challenge)) { resolve('rws1'); return; }
-        if (/basic/i.test(challenge)) { resolve('rws2'); return; }
-        resolve(null);
-      },
-    );
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.on('error', () => resolve(null));
-    req.end();
+/** The process that serves RWS for each generation of RobotStudio virtual controller. */
+export const VC_IMAGE: Readonly<Record<Generation, string>> = { rws1: 'RobVC.exe', rws2: 'Vrchost64.exe' };
+
+/**
+ * The discovery options every test helper uses: this PC's loopback only, no
+ * service address, no mDNS, the virtual-controller process filter, and one
+ * probe at a time at least 1 s apart.
+ */
+export const LOCAL_DISCOVERY: Readonly<FindControllersOptions> = Object.freeze({
+  loopbackOnly: true,
+  serviceAddress: false,
+  mdns: false,
+  filterToVcProcesses: true,
+  pacing: { local: { concurrency: 1, minGapMs: 1000 } },
+});
+
+/** A port named in the environment, or undefined when unset or not a port. */
+function envPort(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) { return undefined; }
+  const port = Number(raw);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+}
+
+/** The env-named ports, per generation. They are probed in every discovery and preferred. */
+function envPorts(): Record<Generation, number | undefined> {
+  return { rws1: envPort('RWS_TEST_PORT_RW6'), rws2: envPort('RWS_TEST_PORT_RW7') };
+}
+
+/**
+ * One paced `findControllers` run against this PC: the listening-port scan
+ * plus `ports` as loopback targets. Returns the RWS controllers found (realm
+ * verified, generation known) on 127.0.0.1, ordered by port. Every host the
+ * call returns is checked with `assertLocalhost`, including folded addresses.
+ */
+export async function findLocalControllers(
+  opts: { identify?: 'none' | 'anonymous'; ports?: readonly number[] } = {},
+): Promise<FoundController[]> {
+  const manual = [...new Set(opts.ports ?? [])].map(port => ({ host: '127.0.0.1', port }));
+  const result = await findControllers({
+    ...LOCAL_DISCOVERY,
+    identify: opts.identify ?? 'none',
+    ...(manual.length > 0 ? { manual } : {}),
   });
+  for (const c of result.controllers) {
+    assertLocalhost(c.host);
+    for (const a of c.addresses ?? []) { assertLocalhost(a.host); }
+  }
+  return result.controllers
+    .filter(c => c.host === '127.0.0.1' && c.identified && c.probe !== null && c.https !== null
+      && (c.generation === 'rws1' || c.generation === 'rws2'))
+    .sort((a, b) => a.port - b.port);
 }
 
 /**
- * Ports to try, cheapest first: an explicit env override, then the ports seen
- * on this rig, then a scan is deliberately NOT done - a blind sweep of 65k
- * ports against localhost is slow and rude. Set RWS_TEST_PORT_RW6 /
- * RWS_TEST_PORT_RW7 when the VCs move.
+ * The RobotWare major of an entry (RWS 1.0 is always 6), or Infinity when unknown (sorts last).
+ * The same rule as `rwMajor` in scripts/local-controllers.mjs and `majorOf` in the functional fleet.
  */
-function candidatePorts(): Array<{ port: number; tls: boolean }> {
-  const out: Array<{ port: number; tls: boolean }> = [];
-  const rw6 = process.env.RWS_TEST_PORT_RW6;
-  const rw7 = process.env.RWS_TEST_PORT_RW7;
-  if (rw6) { out.push({ port: Number(rw6), tls: false }, { port: Number(rw6), tls: true }); }
-  if (rw7) { out.push({ port: Number(rw7), tls: true }, { port: Number(rw7), tls: false }); }
-  // Ports observed on this rig - HINTS ONLY, not configuration. They drift on
-  // every restart (one IRC5 restart moved 35112 -> 29228 within a single
-  // session), so when none of these answer, set RWS_TEST_PORT_RW6 /
-  // RWS_TEST_PORT_RW7 rather than editing this list. Both the old and new
-  // sightings are kept because a VC that comes back on its previous port is
-  // common enough to be worth trying first.
-  out.push(
-    { port: 29228, tls: false },  // IRC5 RW6.16   (2026-08-09, after restart)
-    { port: 35112, tls: false },  // IRC5 RW6.16   (2026-08-09, before restart)
-    { port: 9805, tls: true },    // OmniCore RW7.21
-    { port: 5466, tls: true },    // OmniCore RW8.1.1
-    { port: 9403, tls: true },    // OmniCore RW8.1.1 (second instance)
-    { port: 80, tls: false },
-  );
-  return out;
+function rwMajor(c: FoundController): number {
+  if (c.generation === 'rws1') { return 6; }
+  const m = /^\s*(\d+)\./.exec(c.rwVersion ?? '');
+  return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+}
+
+/** A found entry in the shape the structural cells take. */
+export function toLiveController(c: FoundController, note = ''): LiveController {
+  assertLocalhost(c.host);
+  const generation = c.generation as Generation;
+  const tls = c.https === true;
+  const who = [c.systemName, c.rwVersion ? `RW ${c.rwVersion}` : ''].filter(Boolean).join(' ');
+  return {
+    generation, host: '127.0.0.1', port: c.port, tls,
+    baseUrl: `${tls ? 'https' : 'http'}://127.0.0.1:${c.port}`,
+    label: `${generation === 'rws1' ? 'IRC5/RW6' : 'OmniCore/RW7+'} :${c.port}${who ? ` ${who}` : ''}${note ? ` ${note}` : ''}`,
+    ...(c.rwVersion ? { rwVersion: c.rwVersion } : {}),
+    ...(c.systemName ? { systemName: c.systemName } : {}),
+  };
 }
 
 /**
- * Localhost ports that something is LISTENING on, asked of the OS.
- *
- * The hint list above goes stale on every restart, and the failure mode is
- * confusing: "no rws1 controller reachable" when the VC is running perfectly on
- * a port nobody told us about. Rather than make a human re-read netstat and set
- * an env var, ask the OS and probe what it reports.
- *
- * Best-effort by design: if the command is missing or its output is not what we
- * expect, this returns nothing and the hint list plus the env overrides remain
- * the path. Never widened beyond loopback.
+ * The last full discovery, shared by the test files of one run (each file runs
+ * in its own worker, and a paced discovery takes up to half a minute). Used
+ * only while younger than `CACHE_MAX_AGE_MS`, with the same env ports, and
+ * after one probe of every cached port still answers with its generation and
+ * scheme. test-results/ is not committed.
  */
-async function listeningPorts(): Promise<number[]> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const run = promisify(execFile);
-  const cmd = process.platform === 'win32'
-    ? { file: 'netstat', args: ['-ano', '-p', 'TCP'] }
-    : { file: 'ss', args: ['-ltn'] };
-  let out = '';
+const CACHE_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'test-results', 'live-controllers.json');
+const CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+
+interface CacheFile { at: number; env: string; controllers: LiveController[] }
+
+function envKey(): string { return JSON.stringify(envPorts()); }
+
+async function loadCached(): Promise<LiveController[] | null> {
+  let saved: CacheFile;
+  try { saved = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')) as CacheFile; } catch { return null; }
+  if (!Array.isArray(saved?.controllers) || saved.controllers.length === 0
+      || !(Date.now() - saved.at < CACHE_MAX_AGE_MS) || saved.env !== envKey()) {
+    return null;
+  }
+  for (const c of saved.controllers) { assertLocalhost(c.host); }
+  const result = await findControllers({
+    ...LOCAL_DISCOVERY,
+    local: false,
+    identify: 'none',
+    manual: saved.controllers.map(c => ({ host: '127.0.0.1', port: c.port, https: c.tls })),
+  });
+  for (const r of result.controllers) { assertLocalhost(r.host); }
+  const still = saved.controllers.every(c => result.controllers.some(r =>
+    r.port === c.port && r.https === c.tls && r.generation === c.generation && r.identified));
+  return still ? saved.controllers : null;
+}
+
+function saveCache(controllers: LiveController[]): void {
   try {
-    out = (await run(cmd.file, cmd.args, { timeout: 8000 })).stdout;
-  } catch {
-    return [];
+    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+    const file: CacheFile = { at: Date.now(), env: envKey(), controllers };
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(file, null, 2) + '\n');
+  } catch { /* the cache is an optimisation */ }
+}
+
+/**
+ * Every RWS controller on this PC, in a fixed order: the env-named port of
+ * each generation first, then the lowest RobotWare major (RWS 1.0 is 6; for
+ * RWS 2.0, which serves both 7 and 8, when the VC's system folder named it),
+ * then the port. Not capped.
+ * `fresh: true` skips the run cache (after a restart may have moved a port).
+ */
+export async function listLocalControllers(opts: { fresh?: boolean } = {}): Promise<LiveController[]> {
+  if (!opts.fresh) {
+    const cached = await loadCached();
+    if (cached) { return cached; }
   }
-  const ports = new Set<number>();
-  for (const line of out.split('\n')) {
-    if (process.platform === 'win32' && !/LISTENING/.test(line)) { continue; }
-    // Match 127.0.0.1:PORT and 0.0.0.0:PORT / [::]:PORT (bound on all interfaces
-    // still means reachable on loopback).
-    for (const m of line.matchAll(/(?:127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{2,5})\b/g)) {
-      const p = Number(m[1]);
-      if (p > 0 && p < 65536) { ports.add(p); }
-    }
-  }
-  return [...ports];
+  const env = envPorts();
+  const named = new Set([env.rws1, env.rws2].filter((p): p is number => p !== undefined));
+  const rows = await findLocalControllers({ identify: 'anonymous', ports: [...named] });
+  const rank = (c: FoundController): number => (named.has(c.port) ? 0 : 1);
+  const list = rows
+    .sort((a, b) => rank(a) - rank(b) || rwMajor(a) - rwMajor(b) || a.port - b.port)
+    .map(c => toLiveController(c, named.has(c.port) ? '(env)' : ''));
+  if (list.length > 0) { saveCache(list); }
+  return list;
 }
 
 let cache: LiveController[] | null = null;
 
-/** Discover every reachable local controller, one per generation at minimum. */
-export async function discoverControllers(timeoutMs = 2500): Promise<LiveController[]> {
+/**
+ * At most one controller per generation, in the order of `listLocalControllers`.
+ * The cap keeps cells that loop over a generation on the one controller the
+ * suite is set up for. Set RWS_TEST_PORT_RW6 / RWS_TEST_PORT_RW7 to pick another.
+ */
+export async function discoverControllers(): Promise<LiveController[]> {
   if (cache) { return cache; }
   const found: LiveController[] = [];
-  const seen = new Set<number>();
-  for (const { port, tls } of candidatePorts()) {
-    if (seen.has(port)) { continue; }
-    const gen = await probe(port, tls, timeoutMs);
-    if (!gen) { continue; }
-    seen.add(port);
-    assertLocalhost('127.0.0.1');
-    found.push({
-      generation: gen, host: '127.0.0.1', port, tls,
-      baseUrl: `${tls ? 'https' : 'http'}://127.0.0.1:${port}`,
-      label: `${gen === 'rws1' ? 'IRC5/RW6' : 'OmniCore/RW7+'} :${port}`,
-    });
+  for (const c of await listLocalControllers()) {
+    if (!found.some(f => f.generation === c.generation)) { found.push(c); }
   }
-  // Nothing in the hint list answered for some generation - ask the OS which
-  // ports are actually listening and probe those. This is what makes a drifted
-  // port self-healing instead of a manual step.
-  if (!found.some(c => c.generation === 'rws1') || !found.some(c => c.generation === 'rws2')) {
-    for (const port of await listeningPorts()) {
-      if (seen.has(port)) { continue; }
-      seen.add(port);
-      // Try TLS first, then plain: OmniCore is TLS, IRC5 is not, and probing a
-      // plain-HTTP port with TLS looks exactly like a dead port.
-      for (const tls of [true, false]) {
-        const gen = await probe(port, tls, 800);
-        if (!gen) { continue; }
-        if (found.some(c => c.generation === gen)) { break; }
-        found.push({
-          generation: gen, host: '127.0.0.1', port, tls,
-          baseUrl: `${tls ? 'https' : 'http'}://127.0.0.1:${port}`,
-          label: `${gen === 'rws1' ? 'IRC5/RW6' : 'OmniCore/RW7+'} :${port} (found by scan)`,
-        });
-        break;
-      }
-      if (found.some(c => c.generation === 'rws1') && found.some(c => c.generation === 'rws2')) { break; }
-    }
-  }
-
   cache = found;
   return found;
 }
@@ -206,5 +243,31 @@ export async function requireController(generation: Generation): Promise<LiveCon
   return c;
 }
 
-/** Reset discovery (after a warm restart moved a port mid-suite). */
-export function forgetControllers(): void { cache = null; }
+/** Reset discovery, in this worker and the run cache (after a warm restart moved a port mid-suite). */
+export function forgetControllers(): void {
+  cache = null;
+  try { fs.rmSync(CACHE_FILE, { force: true }); } catch { /* nothing cached */ }
+}
+
+/**
+ * Find a virtual controller again after a restart may have moved its port:
+ * one paced discovery, this generation's VC process only (`RobVC.exe` for
+ * RWS 1.0, `Vrchost64.exe` for RWS 2.0, when the OS named the owner), ports in
+ * `excludePorts` dropped, and with `systemName` given an entry whose system
+ * folder names another system dropped too. The original port wins when it is
+ * among the answers; otherwise the lowest port. Null when nothing answers.
+ */
+export async function findVcAgain(
+  generation: Generation,
+  opts: { originPort?: number; excludePorts?: ReadonlySet<number>; systemName?: string } = {},
+): Promise<LiveController | null> {
+  const rows = await findLocalControllers({ identify: opts.systemName ? 'anonymous' : 'none' });
+  const want = VC_IMAGE[generation].toLowerCase();
+  const matches = rows.filter(c =>
+    c.generation === generation
+    && (c.process?.image === undefined || c.process.image.toLowerCase() === want)
+    && !opts.excludePorts?.has(c.port)
+    && (!opts.systemName || c.systemName === undefined || c.systemName === opts.systemName));
+  const hit = matches.find(c => c.port === opts.originPort) ?? matches[0];
+  return hit ? toLiveController(hit, hit.port === opts.originPort ? '' : '(found again)') : null;
+}

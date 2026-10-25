@@ -46,7 +46,9 @@ const THRESHOLDS = {
 const WARMUP_MS = Math.min(60_000, MINUTES * 60_000 * 0.1);
 const CYCLE_MS = 15_000;
 
-const { RobotManager } = await import(`file://${root}/dist/index.js`);
+const client = await import(`file://${root}/dist/index.js`);
+const { RobotManager } = client;
+const { byPreference, envPorts, findLocalControllers } = await import('./local-controllers.mjs');
 
 // The chaos proxy lives in tests/ as TypeScript and the build only emits src/,
 // so this script cannot import it. Re-implement the two operations a soak needs
@@ -77,28 +79,15 @@ async function simpleProxy(targetHost, targetPort) {
 }
 
 // ─── discover controllers (ports drift; never assume) ────────────────────────
-const http = await import('node:http');
-const https = await import('node:https');
-function probe(port, tls) {
-  return new Promise(resolve => {
-    const mod = tls ? https : http;
-    const req = mod.request({ host: '127.0.0.1', port, path: '/rw/system', timeout: 2500, ...(tls ? { rejectUnauthorized: false } : {}) },
-      res => { const c = String(res.headers['www-authenticate'] ?? ''); res.resume(); resolve(/digest/i.test(c) ? 'rws1' : /basic/i.test(c) ? 'rws2' : null); });
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.on('error', () => resolve(null));
-    req.end();
-  });
-}
-const candidates = [
-  { port: Number(process.env.RWS_TEST_PORT_RW6 ?? 35112), tls: false },
-  { port: Number(process.env.RWS_TEST_PORT_RW7 ?? 9805), tls: true },
-  { port: 5466, tls: true },
-];
+// One per generation, through the client's own findControllers (loopback only,
+// the VC process filter, one probe at a time): the RWS_TEST_PORT_RW6 / _RW7
+// ports first, then the lowest RobotWare major, then the lowest port.
+const named = envPorts(msg => console.log(`soak: ${msg}`));
+const { rows } = await findLocalControllers(client, { identify: 'anonymous', ports: [...named.keys()] });
 const targets = [];
-for (const c of candidates) {
-  const gen = await probe(c.port, c.tls);
-  if (gen && !targets.some(t => t.generation === gen)) {
-    targets.push({ ...c, generation: gen });
+for (const r of rows.sort(byPreference(named))) {
+  if (!targets.some(t => t.generation === r.generation)) {
+    targets.push({ port: r.port, tls: r.https, generation: r.generation });
   }
 }
 if (!targets.length) { console.error('soak: no live controller found on localhost'); process.exit(2); }

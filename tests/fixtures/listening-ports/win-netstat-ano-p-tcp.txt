@@ -1,0 +1,18 @@
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:80             0.0.0.0:0              LISTENING       2101
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1001
+  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING       4
+  TCP    0.0.0.0:5466           0.0.0.0:0              LISTENING       2102
+  TCP    0.0.0.0:9403           0.0.0.0:0              LISTENING       2103
+  TCP    0.0.0.0:9805           0.0.0.0:0              LISTENING       2104
+  TCP    0.0.0.0:39127          0.0.0.0:0              LISTENING       2105
+  TCP    0.0.0.0:53159          0.0.0.0:0              LISTENING       2101
+  TCP    0.0.0.0:55194          0.0.0.0:0              LISTENING       2105
+  TCP    0.0.0.0:57317          0.0.0.0:0              LISTENING       2104
+  TCP    0.0.0.0:59539          0.0.0.0:0              LISTENING       2103
+  TCP    0.0.0.0:59722          0.0.0.0:0              LISTENING       2102
+  TCP    127.0.0.1:80           127.0.0.1:64093        ESTABLISHED     2101
+  TCP    192.0.2.10:139     0.0.0.0:0              LISTENING       4

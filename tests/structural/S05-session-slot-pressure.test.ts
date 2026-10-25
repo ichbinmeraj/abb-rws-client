@@ -3,9 +3,8 @@
  *
  * The failure this cell exists to catch is not a crash: it is a client that
  * reconnects politely for an hour and quietly fills the controller's session
- * pool. Both generations cap at 70 concurrent sessions and answer a persistent
- * 503 once the pool is full - and a wedged VC does not recover on its own (it
- * happened here: ~200 credential-bearing requests permanently wedged one).
+ * pool. Both generations cap concurrent sessions and answer 503 once the pool
+ * is full, so a client that leaks sessions locks itself out.
  *
  * So every assertion below is about accounting, not about errors:
  *   - `GET /logout` must actually leave the client on every disconnect. That is
@@ -13,28 +12,30 @@
  *     deliberate no-op (it preserves the cookie so a reconnect can reuse the
  *     slot instead of minting a new one).
  *   - The controller's own session count must be flat across N cycles, read
- *     from `GET /users` rather than inferred from the client's behaviour.
+ *     from `GET /users` rather than inferred from the client's behaviour. RWS
+ *     1.0 only: RWS 2.0 has nothing that lists or counts sessions
+ *     (SESSION_COUNT_UNREADABLE), so there the count is not asserted, with that
+ *     reason, and the wire-level properties carry the cell.
  *   - Connections must be amortised across requests, not opened per request.
  *
  * Two observation channels are used because neither alone is enough:
  *   - a plaintext recording tap in front of the chaos proxy, which sees the
  *     actual request line and headers the client emits (RWS 2.0 is TLS, so a
  *     TCP-level proxy cannot);
- *   - `GET /users` issued with a long-lived observer client's session cookie and
- *     NO credentials, so counting sessions never mints one.
+ *   - on RWS 1.0, `GET /users` issued through a long-lived observer client's
+ *     own session, so counting sessions never mints one.
  */
 
 import { it, expect, afterEach } from 'vitest';
 import http from 'node:http';
 import https from 'node:https';
-import type { AddressInfo } from 'node:net';
 import type { ChaosProxy } from '../helpers/chaosProxy.js';
 import type { RobotManager } from '../../src/RobotManager.js';
 import { RwsClient } from '../../src/RwsClient.js';
 import { RwsClient2 } from '../../src/RwsClient2.js';
-import { TEST_USER, TEST_PASS } from '../helpers/liveControllers.js';
+import { TEST_USER, TEST_PASS, type Generation } from '../helpers/liveControllers.js';
 import {
-  cell, until, assertQualityHonest, type AnyClient,
+  cell, until, assertQualityHonest, listenForClient, type AnyClient,
 } from '../helpers/structuralHarness.js';
 
 /** Reconnect cycles per test. Kept in the 15-25 band: enough that a per-cycle
@@ -45,6 +46,8 @@ const CYCLES = 20;
 const MANAGER_CYCLES = 5;
 /** Documented cap on both generations; "must not approach it" is read as half. */
 const SESSION_CAP = 70;
+/** How long the Basic-credentials check's setup may take: well inside its 180 s test timeout. */
+const BASIC_SETUP_BUDGET_MS = 120000;
 
 /**
  * Deliberate spacing between cycles. This is NOT a sleep standing in for a
@@ -90,9 +93,11 @@ interface HeaderTap {
  * Authorization present?" are unanswerable there. Terminating plaintext on the
  * client side changes nothing the cell cares about - cookie handling, the
  * request queue, agent teardown on disconnect and the session lifecycle are all
- * scheme-independent.
+ * scheme-independent. For rws1 under RWS_STRUCTURAL_NODE_HTTP=1 the tap listens
+ * on a port fetch refuses, so the client sends through node:http
+ * (listenForClient).
  */
-async function startHeaderTap(upstreamPort: number, upstreamTls: boolean): Promise<HeaderTap> {
+async function startHeaderTap(upstreamPort: number, upstreamTls: boolean, generation: Generation): Promise<HeaderTap> {
   const seen: TapRequest[] = [];
   const agent = upstreamTls
     ? new https.Agent({ keepAlive: true, rejectUnauthorized: false })
@@ -134,8 +139,7 @@ async function startHeaderTap(upstreamPort: number, upstreamTls: boolean): Promi
     req.pipe(upstream);
   });
 
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as AddressInfo).port;
+  const port = await listenForClient(server, generation);
 
   return {
     port,
@@ -164,73 +168,50 @@ function clientThroughTap(generation: 'rws1' | 'rws2', tapPort: number): AnyClie
 // ─── Controller-side session count ───────────────────────────────────────────
 
 /**
- * One raw GET carrying ONLY a session cookie - never credentials. Sending Basic
- * (or a fresh digest handshake) here would mint the very session this helper is
- * meant to count, so the measurement would create what it measures.
+ * Why a generation's controller-side session count cannot be read, or null
+ * when it can.
+ *
+ * RWS 2.0 has no resource that lists or counts sessions. Its `GET /users`
+ * answers the same two links, `rmmp` and `grant-exists?grant=...`, whoever is
+ * logged in (ABB's RWS 2.0 User Service, RobotWare 7 and 8), so the count read
+ * from it was the two link items and stayed 2 when a client connected (an
+ * RWS 2.0 VC, 2026-10-24). The other services that name clients list none:
+ * the Mastership service names a domain's holder, the RobotWare 8 Control
+ * Station service names this session's station and the write-access holder,
+ * and `/users/login-info` names this session's own user. What RWS 2.0 does show is the
+ * wire side - an accepted `GET /logout` per disconnect, no 503 during churn,
+ * a session cookie that does not rotate - which the other tests assert.
  */
-function rawGet(
-  port: number, tls: boolean, path: string, cookie: string, accept: string,
-): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const transport = tls ? https : http;
-    const req = (transport as typeof https).request(
-      {
-        host: '127.0.0.1', port, path, method: 'GET', timeout: 8000,
-        headers: { Accept: accept, ...(cookie ? { Cookie: cookie } : {}) },
-        ...(tls ? { rejectUnauthorized: false } : {}),
-      } as https.RequestOptions,
-      res => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => resolve({
-          status: res.statusCode ?? 0,
-          body: Buffer.concat(chunks).toString('utf8'),
-        }));
-      },
-    );
-    req.on('timeout', () => { req.destroy(); reject(new Error(`GET ${path} timed out`)); });
-    req.on('error', reject);
-    req.end();
-  });
-}
+const SESSION_COUNT_UNREADABLE: Readonly<Record<Generation, string | null>> = {
+  rws1: null,
+  rws2: 'RWS 2.0 has no resource that lists or counts sessions (GET /users answers the same two links, rmmp and '
+    + 'grant-exists, whoever is logged in), so a session leak cannot be observed on the controller; the wire side '
+    + '(an accepted GET /logout per disconnect, no 503) is asserted by "every disconnect puts GET /logout on the wire"',
+};
 
 /**
- * How many sessions the controller currently believes it has.
+ * How many sessions an IRC5 (RWS 1.0) currently believes it has.
  *
- * `GET /users` is the User Service's list of logged-in users - one entry per
- * live session - and neither client wraps it, so it is read raw here. RWS 1.0
- * goes through the observer's own public `request()` (digest is already
- * negotiated there); RWS 2.0 has no generic request method, so the observer's
- * cookie is replayed directly.
+ * `GET /users` is RWS 1.0's list of logged-in clients - one entry per live
+ * session - and the client does not wrap it, so it is read raw, through the
+ * observer's own public `request()` (digest is already negotiated there, and
+ * the observer's session is reused, so counting mints no session). RWS 2.0 has
+ * no such list: see SESSION_COUNT_UNREADABLE.
  *
  * Throws rather than returning 0 when the list cannot be read or parsed: a
  * silently-zero count would make every "flat" assertion below trivially true,
  * which is worse than a failing cell.
  */
-async function countSessions(
-  generation: 'rws1' | 'rws2', proxyPort: number, tls: boolean, observer: AnyClient,
-): Promise<number> {
-  let status: number;
-  let body: string;
-  if (generation === 'rws1') {
-    const r = await (observer as unknown as {
-      request(m: 'GET', p: string): Promise<{ status: number; body: string }>;
-    }).request('GET', '/users');
-    status = r.status;
-    body = r.body;
-  } else {
-    const cookie = (observer as unknown as CycleClient).getSessionCookie() ?? '';
-    if (!cookie) { throw new Error('observer holds no session cookie - cannot count sessions'); }
-    const r = await rawGet(proxyPort, tls, '/users', cookie, 'application/xhtml+xml;v=2.0');
-    status = r.status;
-    body = r.body;
-  }
+async function countSessions(observer: AnyClient): Promise<number> {
+  const { status, body } = await (observer as unknown as {
+    request(m: 'GET', p: string): Promise<{ status: number; body: string }>;
+  }).request('GET', '/users');
   if (status < 200 || status >= 300) {
     throw new Error(`cannot observe controller sessions: GET /users answered ${status}`);
   }
-  // One <li class="user…"> per session in XHTML; hal+json names the same thing
-  // in `_type`. Both are counted so the representation the controller happens
-  // to serve does not decide whether this cell can assert anything.
+  // One <li class="user…"> per session in XHTML; a JSON answer names the same
+  // thing in `_type`. Both are counted so the representation the controller
+  // happens to serve does not decide whether this cell can assert anything.
   const xhtml = body.match(/<li[^>]*class="[^"]*user[^"]*"/gi) ?? [];
   const json = body.match(/"_type"\s*:\s*"[^"]*user[^"]*"/gi) ?? [];
   const n = Math.max(xhtml.length, json.length);
@@ -288,7 +269,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
     it('every disconnect puts GET /logout on the wire, and the cycles never degrade', async () => {
       const proxy = await ctx.proxy();
       const controller = await ctx.controller();
-      const tap = await startHeaderTap(proxy.port, controller.tls);
+      const tap = await startHeaderTap(proxy.port, controller.tls, generation);
       const client = clientThroughTap(generation, tap.port);
       open.push({ proxy, client, tap });
 
@@ -338,9 +319,12 @@ for (const generation of ['rws1', 'rws2'] as const) {
       ).toEqual([]);
     }, 180000);
 
-    it('reconnect cycles leave the controller session count flat', async () => {
+    it('reconnect cycles leave the controller session count flat', async t => {
+      // Before anything is opened: a skipped test's afterEach does not run.
+      const unreadable = SESSION_COUNT_UNREADABLE[generation];
+      if (unreadable) { ctx.skip(t, unreadable); }
+
       const proxy = await ctx.proxy();
-      const controller = await ctx.controller();
 
       // Separate, never-disconnected client: its session is the stable vantage
       // point from which the churning client's slots are counted.
@@ -352,8 +336,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
       open.push({ proxy, client });
       const c = client as unknown as CycleClient;
 
-      const count = (): Promise<number> =>
-        countSessions(generation, proxy.port, controller.tls, observer);
+      const count = (): Promise<number> => countSessions(observer);
 
       // The baseline is taken by CONNECTING the churning client and watching the
       // count rise: a count that cannot see one session it was told to expect
@@ -422,53 +405,58 @@ for (const generation of ['rws1', 'rws2'] as const) {
     }, 300000);
 
     if (generation === 'rws2') {
+      // The matrix states this property at the header level, and so does the
+      // repo rule ("Send Basic credentials only until you hold a session
+      // cookie").
+      //
+      // Since 1.5.1 RwsClient2 sends the Basic credentials only until it holds
+      // a session cookie, and again only after a 401 to that cookie (src/rws2/
+      // core.ts: authHeaders, withLogin); until then this test was held as a
+      // known gap (it.fails). tests/fix151-rws2-credentials.test.ts pins the
+      // same rule on a scripted controller, the subscription POST and the
+      // WebSocket upgrade included.
+      //
+      // It reads only the request headers at the tap, and no session count:
+      // nothing on RWS 2.0 counts sessions (SESSION_COUNT_UNREADABLE).
       it('does not re-send Basic credentials once a session cookie is held', async () => {
-        const proxy = await ctx.proxy();
-        const controller = await ctx.controller();
+        const setup = async (): Promise<TapRequest[]> => {
+          const proxy = await ctx.proxy();
+          const controller = await ctx.controller();
+          const tap = await startHeaderTap(proxy.port, controller.tls, generation);
+          const client = clientThroughTap(generation, tap.port) as RwsClient2;
+          open.push({ proxy, client, tap });
 
-        const observer = await ctx.client(proxy);
-        open.push({ client: observer });
-        await (observer as unknown as CycleClient).connect();
+          await client.connect();
+          if (!client.getSessionCookie()) {
+            throw new Error('no session cookie after connect - the header check would mean nothing');
+          }
+          tap.reset();
+          for (let i = 0; i < 8; i++) { await client.getControllerState(); }
+          const reads = [...tap.seen];
+          if (reads.length < 8) { throw new Error(`the tap saw ${reads.length} of the 8 reads`); }
+          return reads;
+        };
+        // The setup gets its own budget, well inside the 180 s test timeout,
+        // so a setup that broke or hung fails the test saying so, not as a
+        // bare timeout. What a setup still running past its budget opened by
+        // then is freed by afterEach.
+        let seen: TapRequest[];
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          seen = await Promise.race([
+            setup(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`no answer within ${BASIC_SETUP_BUDGET_MS / 1000} s`)), BASIC_SETUP_BUDGET_MS);
+            }),
+          ]);
+        } catch (e) {
+          throw new Error('S05-session-slot-pressure/rws2: the Basic-credentials check never reached its '
+            + `assertion, its setup failed: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          clearTimeout(timer);
+        }
 
-        const tap = await startHeaderTap(proxy.port, controller.tls);
-        const client = clientThroughTap(generation, tap.port) as RwsClient2;
-        open.push({ proxy, client, tap });
-
-        const count = (): Promise<number> =>
-          countSessions(generation, proxy.port, controller.tls, observer);
-        const before = await countAfterConnecting(count, () => client.connect());
-
-        const cookie = client.getSessionCookie();
-        expect(cookie, 'no session cookie after connect - nothing below would mean anything')
-          .toBeTruthy();
-
-        tap.reset();
-        for (let i = 0; i < 8; i++) { await client.getControllerState(); }
-        const after = await count();
-
-        // The consequence the rule protects against, asserted first so its
-        // verdict is visible even when the header assertion below fails: a burst
-        // on a held session must not mint a session per request. That is exactly
-        // what wedged a VC permanently once (~200 requests).
-        expect(
-          after,
-          `8 reads on a held session added ${after - before} controller sessions`,
-        ).toBeLessThanOrEqual(before + 1);
-
-        // The matrix states this property at the header level, and so does the
-        // repo rule ("Send Basic credentials only until you hold a session
-        // cookie").
-        //
-        // EXPECTED TO FAIL against the current implementation: RwsClient2.req()
-        // sets `Authorization: this.authHeader` unconditionally, alongside the
-        // Cookie, on every single request - there is no branch that drops it
-        // once `sessionCookie` is set. Today the cookie is what keeps the pool
-        // safe, and the assertion above should pass, but the belt-and-braces
-        // rule the matrix asks for is simply not implemented. Not weakened on
-        // purpose: a green cell here would record a guarantee the code does not
-        // give, and the next time something re-sends credentials WITHOUT a
-        // cookie there would be nothing to catch it.
-        const credentialed = tap.seen.filter(r => r.headers['authorization'] !== undefined);
+        const credentialed = seen.filter(r => r.headers['authorization'] !== undefined);
         expect(
           credentialed.map(r => `${r.method} ${r.path}`),
           'requests carried Basic credentials while a session cookie was held',
@@ -476,19 +464,13 @@ for (const generation of ['rws1', 'rws2'] as const) {
       }, 180000);
 
       it('repeated subscribe/unsubscribe rides the existing session', async () => {
+        // No session count (SESSION_COUNT_UNREADABLE): a session minted per
+        // subscribe shows as a rotated cookie, which the client adopts from the
+        // subscription answer's Set-Cookie.
         const proxy = await ctx.proxy();
-        const controller = await ctx.controller();
-
-        const observer = await ctx.client(proxy);
-        open.push({ client: observer });
-        await (observer as unknown as CycleClient).connect();
-
         const client = await ctx.client(proxy) as RwsClient2;
         open.push({ proxy, client });
-
-        const count = (): Promise<number> =>
-          countSessions(generation, proxy.port, controller.tls, observer);
-        const before = await countAfterConnecting(count, () => client.connect());
+        await client.connect();
 
         const cookie = client.getSessionCookie();
         expect(cookie, 'no session cookie after connect').toBeTruthy();
@@ -509,12 +491,6 @@ for (const generation of ['rws1', 'rws2'] as const) {
         // signature of a session minted per subscribe - the failure mode that
         // burns the 5-sessions-per-IP budget inside one reconnect loop.
         expect(client.getSessionCookie(), 'session cookie rotated across subscribes').toBe(cookie);
-
-        const after = await count();
-        expect(
-          after,
-          `6 subscribe/unsubscribe cycles added ${after - before} controller sessions`,
-        ).toBeLessThanOrEqual(before + 1);
       }, 300000);
     }
 
@@ -522,12 +498,24 @@ for (const generation of ['rws1', 'rws2'] as const) {
       const proxy = await ctx.proxy();
       const controller = await ctx.controller();
 
-      const observer = await ctx.client(proxy);
-      open.push({ client: observer });
-      await (observer as unknown as CycleClient).connect();
-      const count = (): Promise<number> =>
-        countSessions(generation, proxy.port, controller.tls, observer);
-      const beforeManager = await count();
+      // The session count is read on RWS 1.0 only. On RWS 2.0 nothing counts
+      // sessions (SESSION_COUNT_UNREADABLE): the count assertions are left out
+      // there, and the cycles and the quality are still asserted. What still
+      // fails here on RWS 2.0 is a manager that leaves its session open at
+      // every reconnect: ABB's RWS 2.0 docs allow 5 sessions per IP address,
+      // all of these run from 127.0.0.1, and the reconnect over the limit is
+      // refused (the consequence S08 asserts by). A leak the controller frees
+      // when the connection closes is not seen here.
+      const unreadable = SESSION_COUNT_UNREADABLE[generation];
+      if (unreadable) { console.warn(`S05-session-slot-pressure/${generation}: session count not asserted - ${unreadable}`); }
+      let count: (() => Promise<number>) | null = null;
+      if (!unreadable) {
+        const observer = await ctx.client(proxy);
+        open.push({ client: observer });
+        await (observer as unknown as CycleClient).connect();
+        count = () => countSessions(observer);
+      }
+      const beforeManager = count ? await count() : 0;
 
       // The manager is the path a real consumer churns on (the VS Code
       // extension reconnects exactly this way), and it holds more than an HTTP
@@ -543,12 +531,14 @@ for (const generation of ['rws1', 'rws2'] as const) {
       // manager's own (correct) session would eat the whole +1 tolerance below,
       // leaving no room for a just-logged-out session the controller has not
       // reaped - a false red. The rise also proves the count sees our sessions.
-      const baseline = await count();
-      expect(
-        baseline,
-        `the manager's own session is invisible to GET /users (${beforeManager} -> ${baseline}) `
-        + '- a per-cycle leak would be invisible too',
-      ).toBeGreaterThan(beforeManager);
+      const baseline = count ? await count() : 0;
+      if (count) {
+        expect(
+          baseline,
+          `the manager's own session is invisible to GET /users (${beforeManager} -> ${baseline}) `
+          + '- a per-cycle leak would be invisible too',
+        ).toBeGreaterThan(beforeManager);
+      }
 
       for (let i = 1; i <= MANAGER_CYCLES; i++) {
         await manager.disconnect();
@@ -569,11 +559,13 @@ for (const generation of ['rws1', 'rws2'] as const) {
       expect(manager.state.connected, 'manager reports disconnected after reconnect cycles').toBe(true);
       assertQualityHonest(manager, { notDisconnected: true });
 
-      const after = await count();
-      expect(
-        after,
-        `session count went ${baseline} -> ${after} over ${MANAGER_CYCLES} manager reconnects`,
-      ).toBeLessThanOrEqual(baseline + 1);
+      if (count) {
+        const after = await count();
+        expect(
+          after,
+          `session count went ${baseline} -> ${after} over ${MANAGER_CYCLES} manager reconnects`,
+        ).toBeLessThanOrEqual(baseline + 1);
+      }
     }, 300000);
   });
 }

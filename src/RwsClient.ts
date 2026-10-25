@@ -19,6 +19,7 @@ import { HttpSession } from './HttpSession.js';
 import type { HttpSessionOptions } from './HttpSession.js';
 import { WsSubscriber } from './WsSubscriber.js';
 import type { WsSubscribeOptions } from './WsSubscriber.js';
+import { AccessManager, bindAccess, type AccessGeneration, type AccessLock } from './access/AccessManager.js';
 import { RwsError } from './types.js';
 import type {
   RwsClientOptions,
@@ -28,6 +29,7 @@ import type {
   ExecutionInfo,
   ExecutionCycle,
   JointTarget,
+  JointTargetFull,
   RobTarget,
   CartesianFull,
   Signal,
@@ -46,7 +48,7 @@ import type {
   RapidSymbolInfo,
   RapidSymbolSearchParams,
   RestartMode,
-  SubscriptionResource,
+  AnySubscriptionResource,
   SubscriptionEvent,
 } from './types.js';
 import {
@@ -109,6 +111,7 @@ import {
   parseExecutionState,
   parseExecutionInfo,
   parseJointTarget,
+  parseJointTargetFull,
   parseRobTarget,
   parseCartesianFull,
   parseRapidSymbolValue,
@@ -127,24 +130,53 @@ import {
   parseDirectory,
   parseCollisionDetectionState,
 } from './ResponseParser.js';
-import { RAPID } from './paths/index.js';
+import { RAPID, MOTION } from './paths/index.js';
 import { buildPath, type PathSpec } from './paths/PathSpec.js';
+import { nextPagePath, readPages } from './commonReads.js';
+import { Logger } from './Logger.js';
+
+/** Most event-log pages `getEventLog` reads by default: 20 pages of 50, as on RWS 2.0. */
+const ELOG_MAX_PAGES = 20;
 
 export class RwsClient {
   private readonly session: HttpSession;
   private readonly subscriber: WsSubscriber;
+  /** listAllSignals has logged a page that ended its walk although more may follow (logged once per client). */
+  private signalWalkNoted = false;
+
+  /**
+   * The one place this session's mastership is requested and released:
+   * reference counts per domain (RobotWare 6 arbitrates cfg, motion and rapid
+   * separately), and one write at a time. See AccessManager.
+   */
+  private readonly access = new AccessManager({
+    label: 'RWS1',
+    locks: (): readonly AccessLock[] => ['cfg', 'motion', 'rapid'],
+    lockOf: (d): AccessLock => d,
+    domainOf: (l): MastershipDomain => (l === 'cfg' || l === 'motion' ? l : 'rapid'),
+    request: (_l, d): Promise<void> => this.wireRequestMastership(d),
+    release: (_l, d): Promise<void> => this.wireReleaseMastership(d),
+    generation: (): AccessGeneration => 'rw6',
+  });
 
   constructor(options: RwsClientOptions) {
     const sessionOptions: HttpSessionOptions = {
       baseUrl: `http://${options.host}:${options.port ?? 80}`,
       username: options.username ?? 'Admin',
       password: options.password ?? 'robotics',
-      requestIntervalMs: options.requestIntervalMs ?? 55,
+      requestIntervalMs: options.requestIntervalMs ?? 100,
       timeoutMs: options.timeout ?? 5000,
       sessionCookie: options.sessionCookie,
+      // A new controller session holds nothing: mastership counted on the old
+      // one is recorded as lost, and the next write requests it afresh.
+      onSessionReplaced: () => { this.access.sessionEnded('session-reissued'); },
+      // What the session's owner knows (mode, controller state, RMMP), to
+      // explain a refusal in plain words.
+      refusalContext: () => this.access.refusalContext(),
     };
     this.session = new HttpSession(sessionOptions);
     this.subscriber = new WsSubscriber(this.session, options.host, options.port ?? 80);
+    bindAccess(this, this.access);
   }
 
   /** Returns the current -http-session- cookie so callers can persist and reuse it */
@@ -164,19 +196,27 @@ export class RwsClient {
    * @param method   'GET' | 'POST' | 'PUT' | 'DELETE'
    * @param path     URL path, e.g. `/rw/cfg/MOC/ROBOT/instances?json=1`
    * @param body     Optional request body (form-encoded string for POST/PUT)
-   * @returns        `{ status: number, body: string }` - raw response
+   * @param options  `holdMs`: how long the controller may hold this request
+   *                 open on purpose before it answers (a DIPC read's wait).
+   *                 This one request's timeout is extended by it. Requests
+   *                 run one at a time, so later requests on this client wait
+   *                 behind a held one.
+   * @returns        `{ status: number, body: string, headers }` - raw response;
+   *                 `headers` carries, for example, the `Location` of a 202 job
    */
   async request(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     body?: string,
-  ): Promise<{ status: number; body: string }> {
+    options: { holdMs?: number } = {},
+  ): Promise<{ status: number; body: string; headers?: Headers }> {
+    const hold = options.holdMs ?? 0;
     let res;
-    if (method === 'GET')         { res = await this.session.get(path); }
-    else if (method === 'POST')   { res = await this.session.post(path, body ?? ''); }
-    else if (method === 'PUT')    { res = await this.session.put(path, body ?? ''); }
-    else                          { res = await this.session.delete(path); }
-    return { status: res.status, body: res.body };
+    if (method === 'GET')         { res = await this.session.get(path, hold); }
+    else if (method === 'POST')   { res = await this.session.post(path, body ?? '', hold); }
+    else if (method === 'PUT')    { res = await this.session.put(path, body ?? '', hold); }
+    else                          { res = await this.session.delete(path, hold); }
+    return { status: res.status, body: res.body, headers: res.headers };
   }
 
   // ─── Connection ─────────────────────────────────────────────────────────────
@@ -190,6 +230,7 @@ export class RwsClient {
    * @throws {RwsError} code='AUTH_FAILED' if credentials are incorrect
    */
   async connect(): Promise<void> {
+    this.session.reopen();
     try {
       const { body } = await this.session.get(pathControllerState());
       parseControllerState(body); // validate response is parseable
@@ -211,8 +252,19 @@ export class RwsClient {
     // the session slot in the controller's pool. Without this, orphan mastership can
     // block subsequent clients for several minutes (until the controller times out
     // the session by inactivity). Best-effort - ignore errors.
-    try { await this.session.get('/logout'); } catch { /* ignore */ }
+    //
+    // /logout is queued and the session closed in the same tick: requests queued
+    // earlier go out first, on this session; later ones are refused with
+    // NOT_CONNECTED instead of signing in a session nobody would log out. A
+    // second disconnect() sends nothing.
+    if (!this.session.isClosed) {
+      const loggedOut = this.session.get('/logout');
+      this.session.close();
+      try { await loggedOut; } catch { /* ignore */ }
+    }
     this.session.clearSession();
+    // Every hold belonged to the session that just ended.
+    this.access.sessionEnded('disconnect');
   }
 
   // ─── Controller state ───────────────────────────────────────────────────────
@@ -235,11 +287,17 @@ export class RwsClient {
   }
 
   /**
-   * Set the controller motor state.
-   * Requires AUTO mode and mastership (request with requestMastership('motion') first).
+   * Set the controller motor state. Sent as is: this method takes no mastership.
+   * Remote motors on is an AUTO-mode operation; in manual mode the motors are
+   * switched on with the enabling device on the FlexPendant. ABB's RWS 1.0
+   * reference states no mastership prerequisite for this resource, and whether
+   * the controller enforces one has not been established. A refusal for missing
+   * mastership classifies as MASTERSHIP_REQUIRED. `RobotManager.setMotorsOff`
+   * sends 'motoroff' first and takes mastership only when the controller refuses
+   * it as not held.
    *
    * @param state - 'motoron' | 'motoroff'
-   * @throws {RwsError} code='AUTH_FAILED' if mastership is not held
+   * @throws {RwsError} with the controller's classified code when refused
    */
   async setControllerState(state: 'motoron' | 'motoroff'): Promise<void> {
     try {
@@ -312,9 +370,11 @@ export class RwsClient {
   }
 
   /**
-   * Lock the operation mode selector on the FlexPendant.
+   * Lock the operating-mode selection with a PIN.
    * @param pin       - 4-digit PIN code
    * @param permanent - true = permanent lock; false = temporary
+   *
+   * @experimental Sent to RW 6.16.03 (2026-10-13) and refused 403 -1073445867 "The required option is missing": the controller lacks an option the lock needs. ABB's RWS 1.0 page names two UAS grants for the lock and no option. No 2xx logged on RWS 1.0.
    */
   async lockOperationMode(pin: string, permanent = false): Promise<void> {
     try {
@@ -326,10 +386,18 @@ export class RwsClient {
     }
   }
 
-  /** Unlock the operation mode selector. */
-  async unlockOperationMode(): Promise<void> {
+  /** Unlock the operating-mode selection with the PIN the lock set (the RW
+   *  6.16.03 form's one field; it used to post an empty body). Without a PIN
+   *  `RwsError` `INVALID_ARGUMENT` is thrown before anything is sent.
+   *
+   * @experimental Sent to RW 6.16.03 (2026-10-13) and refused as the lock was (403 -1073445867, option missing). No 2xx logged on RWS 1.0.
+   */
+  async unlockOperationMode(pin?: string): Promise<void> {
+    if (typeof pin !== 'string' || pin.trim() === '') {
+      throw new RwsError('RWS1 unlockOperationMode: the PIN the lock set is needed (the controller form requires pin)', 'INVALID_ARGUMENT');
+    }
     try {
-      const { path, body } = mapUnlockOperationMode();
+      const { path, body } = mapUnlockOperationMode(pin);
       await this.session.post(path, body);
     } catch (e) {
       if (e instanceof RwsError) throw e;
@@ -338,23 +406,21 @@ export class RwsClient {
   }
 
   /**
-   * Switch the controller's operation mode. **Virtual controllers only** - on
-   * real IRC5 hardware the physical key switch on the FlexPendant is the
-   * source of truth and the controller will reject this with 403.
-   *
-   * RWS 1.0 endpoint: POST /rw/panel/opmode with body `opmode=auto|man|manfs`
-   * (note the lowercase pre-OmniCore values).
+   * Switch the controller's operation mode: not possible over RWS 1.0, so this
+   * is refused before anything is sent. ABB's RWS 1.0 manual (Rev M) has no
+   * operating-mode change (only get, acknowledge, lock and unlock), the
+   * RW 6.16.03 opmode form offers only lock, unlock and acknowledge, and
+   * `POST /rw/panel/opmode` with `opmode=` answered 400 "NO/Invalid action
+   * parameter" on the RW 6.16.03 VC, as did `?action=setopmode` and
+   * `?action=set` (2026-10-09). On an IRC5 the mode is changed with the key
+   * switch at the controller or in RobotStudio's control panel.
+   * @throws RwsError `UNSUPPORTED_OPERATION`, always: there is no such write on RWS 1.0.
    */
   async setOperationMode(mode: 'AUTO' | 'MANR' | 'MANF'): Promise<void> {
-    const wire = mode === 'AUTO' ? 'auto' : mode === 'MANR' ? 'man' : 'manfs';
-    try {
-      // Path from the table via the shared mapper (setOperationMode has no query
-      // action on 1.0, so it POSTs to the same resource the read uses).
-      await this.session.post(pathOperationMode(), `opmode=${wire}`);
-    } catch (e) {
-      if (e instanceof RwsError) { throw e; }
-      throw new RwsError(`setOperationMode failed: ${String(e)}`, 'UNKNOWN');
-    }
+    throw new RwsError(
+      `setOperationMode('${mode}') was not sent: RWS 1.0 (IRC5) has no remote operating-mode change. Change the mode with the key switch at the controller (or the mode selector in RobotStudio's control panel for a virtual controller).`,
+      'UNSUPPORTED_OPERATION',
+    );
   }
 
   // ─── Speed ratio ────────────────────────────────────────────────────────────
@@ -458,7 +524,10 @@ export class RwsClient {
   }
 
   /**
-   * Stop RAPID program execution.
+   * Stop RAPID program execution. Sent at once, with no mastership taken first:
+   * a stop must never wait for access. ABB's RWS 1.0 stop page states no
+   * mastership prerequisite. A stop over RWS is a program stop, not a safety
+   * stop; use the emergency stop for safety.
    */
   async stopRapid(): Promise<void> {
     try {
@@ -592,6 +661,8 @@ export class RwsClient {
    * Get the currently active RAPID UI instruction.
    * Returns null if no UI instruction is waiting for input.
    * Used to detect when RAPID is waiting for operator input (TPReadNum, TPReadFK, etc.).
+   *
+   * Run on RW 6.16.03 (2026-10-13): it answered while a TPReadNum waited.
    */
   async getActiveUiInstruction(): Promise<UiInstruction | null> {
     try {
@@ -614,14 +685,20 @@ export class RwsClient {
    * Respond to an active RAPID UI instruction (e.g. send the answer to a TPReadNum).
    * Get the stackurl from getActiveUiInstruction().stack.
    *
-   * Common parameter names:
-   * - 'Result' - the answer value for TPReadNum, TPReadFK
-   * - 'TPFK1' … 'TPFK5' - individual function key states (0/1)
-   * - 'TPCompleted' - set to 'TRUE' when done
+   * The parameters are the instruction's own. The controller lists them live at
+   * `GET /rw/rapid/uiinstr/active/params/{stackurl}` (class `rap-uiparams-li`,
+   * one entry per parameter); read that list first when the instruction is not
+   * one of those below. A name the instruction does not have is refused 400
+   * -1073445879 "Invalid parameter".
    *
-   * @param stackurl - Stack URL from UiInstruction.stack (e.g. 'RAPID/T_ROB1/%$104')
-   * @param uiparam  - Parameter name, e.g. 'Result'
-   * @param value    - Value to set, e.g. '42' or 'TRUE'
+   * TPReadNum on RW 6.16.03 (2026-10-13): the list read `TPAnswer` and
+   * `TPText`; `TPAnswer` = '7' then `TPCompleted` = 'TRUE' answered 2xx and
+   * the RAPID variable read 7. `Result` was refused 400 -1073445879.
+   *
+   * @param stackurl - Stack URL from UiInstruction.stack (e.g. 'RAPID/T_ROB1/%$104'),
+   *   sent percent-encoded (the encoded stack answered 2xx on RW 6.16.03)
+   * @param uiparam  - Parameter name, e.g. 'TPAnswer' or 'TPCompleted'
+   * @param value    - Value to set, e.g. '7' or 'TRUE'
    */
   async setUiInstructionParam(stackurl: string, uiparam: string, value: string): Promise<void> {
     try {
@@ -645,14 +722,22 @@ export class RwsClient {
    * const persistents = await client.searchRapidSymbols({ task: 'T_ROB1', symtyp: 'per' });
    * ```
    *
-   * CAUTION (RobotWare 6.16, live-probed 2026-08): this controller rejects the
-   * documented `POST /rw/rapid/symbols?action=search-symbol` with HTTP 400
-   * "Invalid argument" for every body tried, including an empty one and each
-   * documented parameter combination; the resource advertises only
-   * `action=show` in its own listing. The wire form for symbol search on this
-   * RobotWare 6 release is therefore unresolved and the call is expected to
-   * throw there. The RWS 2.0 side (`RwsClient2.searchRapidSymbols`) is verified
-   * working, and `getRapidSymbolProperties` works on both.
+   * Wire form (live-verified 2026-09-29 on RW 6.16.03, 6.16.3007): the action
+   * is the plural `POST /rw/rapid/symbols?action=search-symbols`, as named in
+   * the controller's own `?action=show` form; the singular `search-symbol` is
+   * refused 400 -1073445879 for every body. `task` is accepted but ignored, so
+   * the scope comes from `blockurl` (default `RAPID/{task}`; a `RAPID`-scope
+   * search does not reach task symbols). `view=block`, `symtyp=any` and
+   * `recursive=TRUE` are the defaults. Module, VAR, PERS, CONST, PROC, FUNC
+   * and TRAP hits are returned. On RW 6.16.03 the module, VAR, PERS and PROC
+   * kinds were seen; CONST, FUNC and TRAP are read by the class names of the
+   * RWS 2.0 search and were not seen on RW 6. Other hit kinds the controller
+   * also lists (task, parameter, atomic and record entries) are not returned.
+   * A large search is paged by the controller (86 or 95 entries per page);
+   * only the first page is read, which is enough for a module-scoped search.
+   * These findings come from `?json=1` captures; the exact request this method
+   * sends (XHTML, `blockurl` percent-encoded) has not itself been sent to
+   * RW 6.16.
    */
   async searchRapidSymbols(params: RapidSymbolSearchParams): Promise<RapidSymbolInfo[]> {
     try {
@@ -668,6 +753,11 @@ export class RwsClient {
   /**
    * Validate a value against a RAPID data type without writing it.
    * Useful for validating user input before calling setRapidVariable.
+   *
+   * Not a check of the value on RW 6.16.03: `POST /rw/rapid/symbol/data?action=validate`
+   * with task, value and datatype answered 204 to every value sent on
+   * 2026-10-01, the malformed `[1,2` as pos and `"zz"` as num included, so
+   * `true` means only that the controller did not refuse the request.
    *
    * @param task     - RAPID task name, e.g. 'T_ROB1'
    * @param value    - Value in RAPID syntax, e.g. '[1,0,0,0]'
@@ -719,6 +809,25 @@ export class RwsClient {
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`getJointPositions failed: ${String(e)}`, 'UNKNOWN');
+    }
+  }
+
+  /**
+   * Read every axis slot of a mechanical unit: `rax_1..rax_6` AND
+   * `eax_a..eax_f` (`getJointPositions` keeps only the robot half). Same
+   * resource as `getJointPositions`, one GET. `9E9` in a slot means "no axis
+   * here" (`isJointValuePresent`); unused slots may also read 0 - see
+   * `JointTargetFull`.
+   *
+   * @param mechunit - Mechanical unit name; default 'ROB_1'
+   */
+  async getJointTargetFull(mechunit = 'ROB_1'): Promise<JointTargetFull> {
+    try {
+      const { body } = await this.session.get(buildPath(MOTION.getJointTargetFull.rws1 as PathSpec, { mechunit }));
+      return parseJointTargetFull(body);
+    } catch (e) {
+      if (e instanceof RwsError) throw e;
+      throw new RwsError(`getJointTargetFull failed: ${String(e)}`, 'UNKNOWN');
     }
   }
 
@@ -934,7 +1043,7 @@ export class RwsClient {
 
   /**
    * Rename a file in place on the controller filesystem (same directory).
-   * Live-verified on IRC5 RW6.16 (2026-08-11): POST to the file's fileservice
+   * Live-verified on the RobotWare 6.16 virtual controller (2026-08-11): POST to the file's fileservice
    * path with `fs-action=rename` answers 204.
    * @param sourcePath - Existing file path, e.g. '$HOME/A.mod'.
    * @param newName    - New bare filename in the same directory.
@@ -988,16 +1097,62 @@ export class RwsClient {
   }
 
   /**
-   * List all configured I/O signals (paginated).
-   * The controller returns up to `limit` signals per call; use `start` to page through.
+   * Every configured I/O signal, following the controller's pagination, as
+   * RWS 2.0's listAllSignals does.
    *
-   * @param start - Starting index (default 0)
-   * @param limit - Results per page (default 100)
+   * RWS 1.0 serves a long list a page at a time and links the next page from
+   * each page (`<a href="..." rel="next">`, the form ABB's RWS 1.0 manual
+   * shows for its paged lists); the last page has no such link. Each link is
+   * followed as the controller gives it, and the client never computes a
+   * `start` itself: on RWS 1.0 a link's `start` need not count entries
+   * (RW 6.16.03 links the second event-log page of 50 as
+   * `start=2&limit=50`). Up to 1.4.x only the first page was read, so on a
+   * controller with more than `limit` signals the rest was missing from the
+   * signal table. RW 6.16.03 (62 signals) honours `limit`: the functional
+   * suite read it in pages of 20 by `start` (2026-10-22). Whether those pages
+   * carry a `next` link was not recorded, so this client has not yet
+   * followed a controller's own link for signals.
+   *
+   * One call returns every signal from `start` to the end of the list, so a
+   * caller that paged with `start` and `limit` itself (as 1.4.x needed)
+   * calls once instead; each of its calls would now return the rest of the
+   * list.
+   *
+   * The walk ends at a page with no `next` link, at an empty page, at a link
+   * to a page already read or to another resource, or after `maxPages` pages
+   * (logged: signals may be missing then). A page that ends the walk while
+   * it links a next page the walk does not follow, or a full page with no
+   * link, is logged too (once per client), since only what was read is
+   * returned then. Pages are read one after the other through the session's
+   * request queue, at its pace, one request per page. A page that fails
+   * fails the whole read, so part of the table is never returned as all of
+   * it.
+   *
+   * @param start    - `start` of the first request (default 0), sent as given
+   * @param limit    - Signals per page asked for (default 100)
+   * @param maxPages - Most pages to read (default 50, as on RWS 2.0)
    */
-  async listAllSignals(start = 0, limit = 100): Promise<Signal[]> {
+  async listAllSignals(start = 0, limit = 100, maxPages = 50): Promise<Signal[]> {
     try {
-      const { body } = await this.session.get(pathAllSignals(start, limit));
-      return parseSignalList(body);
+      const first = pathAllSignals(start, limit);
+      const resource = first.split('?')[0];
+      const out: Signal[] = [];
+      const read = new Set<string>();
+      let path = first;
+      while (path && read.size < maxPages && !read.has(path)) {
+        read.add(path);
+        const { body } = await this.session.get(path);
+        const page = parseSignalList(body);
+        out.push(...page);
+        const next = page.length > 0 ? nextPagePath(body, resource) : '';
+        const followed = next.split('?')[0] === resource ? next : '';
+        if (!followed && page.length > 0) { this.noteSignalWalkEnd(path, body, page.length, limit, out.length); }
+        path = followed;
+      }
+      if (path && !read.has(path)) {
+        Logger.warn(`listAllSignals: stopped after ${maxPages} pages with ${out.length} signals; the controller links more`);
+      }
+      return out;
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`listAllSignals failed: ${String(e)}`, 'UNKNOWN');
@@ -1005,10 +1160,38 @@ export class RwsClient {
   }
 
   /**
+   * Log, once per client, a signal page that ended listAllSignals' walk
+   * although more may follow: it links a next page the walk does not follow
+   * (another path, an absolute or otherwise unread form of the link), or it
+   * is full and links none. No RWS 1.0 controller has been seen linking a
+   * signal page yet, so the form of that link is ABB's manual, and this is
+   * how a different one shows. A list of exactly `limit` signals logs the
+   * full page too.
+   */
+  private noteSignalWalkEnd(path: string, body: string, pageLength: number, limit: number, total: number): void {
+    if (this.signalWalkNoted) { return; }
+    const link = /<a\b[^>]*\brel\s*=\s*["']next["'][^>]*>/i.exec(body)?.[0]
+      ?? /"next"\s*:\s*\{[^}]*\}/.exec(body)?.[0];
+    const why = link
+      ? `links a next page the walk does not follow (${link.slice(0, 200)})`
+      : pageLength >= limit ? `is full (${pageLength} signals) and links no next page` : null;
+    if (!why) { return; }
+    this.signalWalkNoted = true;
+    Logger.warn(`listAllSignals: the page ${path} ${why}; returned ${total} signals, which may not be all of them (logged once)`);
+  }
+
+  /**
    * Search signals by criteria instead of paging the whole list. `name` is a
-   * SUBSTRING match; criteria AND-compose. RWS 1.0 query-action form
-   * (`POST /rw/iosystem/signals?action=signal-search`), live-verified on IRC5
-   * RW6.16 (2026-08-11): returns the same `ios-signal-li` shape as listAllSignals.
+   * case-insensitive PREFIX match (not a substring match - corrected
+   * 2026-09-29 after the 2026-09-27 probes on RW 6.16: `S` found the 14 names
+   * starting with S, `RAKE` none, `drv1brake` the same 3 as `DRV1BRAKE`);
+   * `device`, `network` and `category` match whole values (on RW 6.16 only
+   * `device` was exercised: `PAN` 0 hits, `panel` and `PANEL` 42; the
+   * whole-value `network` and `category` evidence is from RW 7.21 and 8.1.1
+   * over RWS 2.0, 2026-09-27); criteria AND-compose; `*` matches nothing; no
+   * criteria at all returns every signal. RWS 1.0 query-action form
+   * (`POST /rw/iosystem/signals?action=signal-search`), live-verified on the RobotWare 6.16 virtual controller
+   * (2026-08-11): returns the same `ios-signal-li` shape as listAllSignals.
    */
   async searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]> {
     try {
@@ -1098,6 +1281,8 @@ export class RwsClient {
    * @param hour  - Hour 0-23
    * @param min   - Minute 0-59
    * @param sec   - Second 0-59
+   *
+   * @experimental Built from the controller form; never run against an RWS 1.0 controller.
    */
   async setControllerClock(year: number, month: number, day: number, hour: number, min: number, sec: number): Promise<void> {
     try {
@@ -1117,17 +1302,38 @@ export class RwsClient {
   // ─── Event log ──────────────────────────────────────────────────────────────
 
   /**
-   * Retrieve event log messages from the controller.
-   * Domain 0 is the main system log (up to 1000 entries).
-   * Messages are returned newest-first (LIFO order).
+   * Retrieve event log messages from the controller, newest first (LIFO
+   * order), every page up to `maxPages`.
    *
-   * @param domain - Log domain number; default 0 (main system log)
-   * @param lang   - Language for message text; default 'en'
+   * The controller lists 50 messages a page and links the next page (RW
+   * 6.16.03: `0?order=lifo&lang=en&start=2&limit=50`, which served the older
+   * messages; a `limit` above 50 still served 50; 2026-09-29). Each page's
+   * `next` link is followed, as ABB's listing advertises it, until there is
+   * none or `maxPages` pages are read (default 20, about 1000 messages: the
+   * domain-0 buffer RW 6.16.03 reports). A message listed on two pages (one
+   * logged during the walk) is kept once. A later page that fails ends the
+   * walk with the messages already read (logged); the first page's failure
+   * is thrown. Up to 1.4.x only the first page was read, at most 50 messages;
+   * pass `maxPages: 1` for that.
+   *
+   * @param domain   - Log domain number; default 0 (main system log)
+   * @param lang     - Language for message text; default 'en'
+   * @param maxPages - Most pages to read; default 20
    */
-  async getEventLog(domain = 0, lang = 'en'): Promise<ElogMessage[]> {
+  async getEventLog(domain = 0, lang = 'en', maxPages = ELOG_MAX_PAGES): Promise<ElogMessage[]> {
     try {
-      const { body } = await this.session.get(pathElogMessages(domain, lang));
-      return parseElogMessages(body);
+      let page = 0;
+      const pages = await readPages(pathElogMessages(domain, lang), async path => {
+        if (page++ === 0) { return (await this.session.get(path)).body; }
+        try {
+          return (await this.session.get(path)).body;
+        } catch (e) {
+          Logger.warn(`getEventLog(${domain}): page ${page} failed (${e instanceof Error ? e.message : String(e)}); returning the messages already read`);
+          return '';
+        }
+      }, maxPages);
+      const seen = new Set<number>();
+      return pages.flatMap(body => parseElogMessages(body)).filter(m => !seen.has(m.seqnum) && seen.add(m.seqnum));
     } catch (e) {
       if (e instanceof RwsError) throw e;
       throw new RwsError(`getEventLog failed: ${String(e)}`, 'UNKNOWN');
@@ -1168,9 +1374,29 @@ export class RwsClient {
    * Must call releaseMastership when done. Operations that modify controller state
    * (motor on/off, speed ratio, etc.) require mastership on the appropriate domain.
    *
+   * Holds are counted per domain: a request for a domain this session already
+   * holds sends nothing, and the release goes out when the last hold on it
+   * ends. Pair every request with one releaseMastership.
+   *
    * @param domain - 'cfg' | 'motion' | 'rapid'
    */
-  async requestMastership(domain: MastershipDomain): Promise<void> {
+  requestMastership(domain: MastershipDomain): Promise<void> {
+    return this.access.requestPublic(domain);
+  }
+
+  /**
+   * Release mastership on a domain.
+   * Always call this after requestMastership, even if the operation failed.
+   * Ends this caller's most recent hold on the domain; the release is sent
+   * when no other hold of this session is on it.
+   *
+   * @param domain - 'cfg' | 'motion' | 'rapid'
+   */
+  releaseMastership(domain: MastershipDomain): Promise<void> {
+    return this.access.releasePublic(domain);
+  }
+
+  private async wireRequestMastership(domain: MastershipDomain): Promise<void> {
     try {
       const { path, body } = mapRequestMastership(domain);
       await this.session.post(path, body);
@@ -1180,13 +1406,7 @@ export class RwsClient {
     }
   }
 
-  /**
-   * Release mastership on a domain.
-   * Always call this after requestMastership, even if the operation failed.
-   *
-   * @param domain - 'cfg' | 'motion' | 'rapid'
-   */
-  async releaseMastership(domain: MastershipDomain): Promise<void> {
+  private async wireReleaseMastership(domain: MastershipDomain): Promise<void> {
     try {
       const { path, body } = mapReleaseMastership(domain);
       await this.session.post(path, body);
@@ -1222,7 +1442,7 @@ export class RwsClient {
    * ```
    */
   async subscribe(
-    resources: SubscriptionResource[],
+    resources: AnySubscriptionResource[],
     handler: (event: SubscriptionEvent) => void,
     opts?: WsSubscribeOptions,
   ): Promise<() => Promise<void>> {

@@ -7,7 +7,9 @@
  */
 
 import { RwsError } from './types.js';
+import { toJointTargetFull } from './mechunit.js';
 import type {
+  JointTargetFull,
   ControllerState,
   OperationMode,
   ExecutionState,
@@ -34,14 +36,45 @@ import type {
 
 /**
  * Decode the minimum set of HTML entities that may appear in RWS span values.
+ *
+ * `&amp;` is decoded LAST: decoding it first turned a doubly-escaped
+ * `&amp;lt;` (the controller's literal text "&lt;") into "<", which is a
+ * different string. `&apos;` is the XML spelling of the apostrophe; RWS is
+ * XHTML, so it may appear beside the HTML `&#39;` - both are decoded.
+ *
+ * Exported (internal module) for JSON string values that carry XML entities:
+ * the RWS 1.0 module text-range `text` value, the RWS 1.0 single event-log
+ * message text fields and the RWS 2.0 event-log text fields; also for the
+ * RWS 2.0 module text and text-range spans read through the XHTML fallback.
+ * A literal `&amp;` in the controller's text therefore reads as `&`.
  */
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Normalise an event-log `msgtype` field from either protocol: 1 = info,
+ * 2 = warning, 3 = error as the controller sends them; 0 = unknown when the
+ * field is absent, empty or not a number. Never defaults to info - RW6 could
+ * omit a parameter in Message Get (GET /rw/elog/{d}/{seq}; ABB RobotWare
+ * release notes 6.15.04 §4 Corrections, "RWS Elog Message Get missing
+ * response parameter", a title only: ABB names neither the parameter nor the
+ * affected versions, so "before 6.15.04" is inferred from the fix version;
+ * release notes, 2026-09-29), and an error read as information is the one
+ * misclassification a log viewer must not make. Shared by the RWS 1.0 XHTML
+ * listing and ?json=1 paths and the RWS 2.0 hal+json path. A value such as
+ * "3abc" is 0 too (it used to parse as 3): the field is mangled, not known.
+ */
+export function elogMsgtype(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === '') { return 0; }
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
 /**
@@ -221,6 +254,30 @@ export function parseJointTarget(xml: string): JointTarget {
     result[ax] = requireFloat(m[1].trim(), ax);
   }
   return result as JointTarget;
+}
+
+/**
+ * Parse a jointtarget XML response into a JointTargetFull: the six robot axes
+ * AND the six external-axis spans `eax_a..eax_f` that parseJointTarget drops.
+ * XML: <li class="ms-jointtarget" title="ROB_1">
+ *        <span class="rax_1">10.00</span> ... <span class="eax_f">9E+09</span>
+ *      </li>
+ * Robot spans are required (PARSE_ERROR otherwise); an absent eax span reads as
+ * JOINT_NOT_PRESENT (9E9). The eax spans on RW 6 are assumed to use the same
+ * names as the fields read live on an RW 7.21 VC (2026-09-23) - not yet read on RW 6.
+ */
+export function parseJointTargetFull(xml: string): JointTargetFull {
+  const liMatch = xml.match(/<li[^>]*class="[^"]*\bms-jointtarget\b[^"]*"[^>]*>(.*?)<\/li>/is);
+  if (!liMatch) {
+    throw new RwsError('PARSE_ERROR: missing <li class="ms-jointtarget">', 'PARSE_ERROR');
+  }
+  const fields: Record<string, string> = {};
+  for (const m of liMatch[1].matchAll(/<span[^>]*class="([^"]*)"[^>]*>(.*?)<\/span>/gis)) {
+    for (const cls of m[1].split(/\s+/)) {
+      if (cls && fields[cls] === undefined) { fields[cls] = decodeEntities(m[2].trim()); }
+    }
+  }
+  return toJointTargetFull(fields, 'jointtarget');
 }
 
 /**
@@ -516,7 +573,15 @@ export function parseElogMessages(xml: string): ElogMessage[] {
     return {
       seqnum,
       code: parseInt(get('code'), 10) || 0,
-      msgtype: parseInt(get('msgtype'), 10) || 1,
+      // A missing or non-numeric msgtype is 0 = unknown, never 1 = info. ABB's
+      // correction names the single-message Message Get (GET /rw/elog/{d}/
+      // {seq}, read by RWS1Adapter.getEventLogMessage), not this listing: RW6
+      // before 6.15.04 (range inferred from the fix version) could omit a
+      // parameter there (ABB RobotWare release notes 6.15.04 §4 Corrections,
+      // "RWS Elog Message Get missing response parameter"; release notes,
+      // 2026-09-29). Applied to the listing too so both paths agree, and
+      // because an error shown as information would be the worst misreading.
+      msgtype: elogMsgtype(get('msgtype')),
       timestamp: get('tstamp'),
       srcName: get('src-name'),
       title: get('title'),
@@ -595,15 +660,29 @@ export function parseCollisionDetectionState(xml: string): CollisionDetectionSta
  * The list-item class encodes the symbol KIND, so a single class never covers
  * every symbol: variables are rap-sympropvar, PERSISTENTS are rap-symproppers
  * (tool0, wobj0, load0 - live-verified 2026-08 on RW6.16), constants
- * rap-sympropconst, routines rap-sympropproc / -fun / -trap, modules
- * rap-sympropmod. Requiring only the VAR spelling made this THROW
- * PARSE_ERROR for every persistent, which is most of what BASE holds.
+ * rap-sympropconstant, functions rap-sympropfunction, procedures
+ * rap-sympropproc, modules rap-sympropmod. Requiring only the VAR spelling
+ * made this THROW PARSE_ERROR for every persistent, which is most of what
+ * BASE holds.
+ *
+ * Live-verified 2026-09-30 on RW 6.16.03: a CONST answers
+ * <li class="rap-sympropconstant" title="RAPID/T_ROB1/{module}/{name}"> with
+ * the spans symburl, name (empty), symtyp (con), named, linked, local,
+ * typurl, dattyp and ndim; it carries neither rdonly nor dim. VAR and PERS
+ * carry rdonly. This list had `rap-sympropconst`, which the \b boundary does
+ * not find inside `rap-sympropconstant`, so every CONST read threw
+ * PARSE_ERROR. The function spelling is the search class
+ * (rap-sympropfunction-li, live-verified 2026-09-29 on RW 6.16.03, 7.21.4 and
+ * 8.2.1) without `-li`, as it is for every kind recorded both ways. The short
+ * `const` / `fun` spellings were never seen live and are kept only as
+ * fallbacks.
  *
  * XML: <li class="rap-symproppers" title="RAPID/T_ROB1/BASE/tool0">...</li>
  */
 const SYMBOL_PROP_CLASSES = [
-  'rap-sympropvar', 'rap-symproppers', 'rap-sympropconst',
-  'rap-sympropproc', 'rap-sympropfun', 'rap-symproptrap', 'rap-sympropmod',
+  'rap-sympropvar', 'rap-symproppers', 'rap-sympropconstant', 'rap-sympropfunction',
+  'rap-sympropproc', 'rap-symproptrap', 'rap-sympropmod',
+  'rap-sympropconst', 'rap-sympropfun',
 ];
 
 export function parseRapidSymbolProperties(xml: string): RapidSymbolProperties {
@@ -639,7 +718,10 @@ export function parseRapidSymbolProperties(xml: string): RapidSymbolProperties {
     heap: get('heap').toLowerCase() === 'true',
     linked: get('linked').toLowerCase() === 'true',
     local: get('local').toLowerCase() === 'true',
-    ro: get('ro').toLowerCase() === 'true',
+    // The controller's span is `rdonly` (live-verified 2026-07-09 and
+    // 2026-09-30 on RW 6.16); reading only `ro` reported every symbol as
+    // writable. `ro` is still read, as the search parser does.
+    ro: get('rdonly').toLowerCase() === 'true' || get('ro').toLowerCase() === 'true',
     taskvar: get('taskvar').toLowerCase() === 'true',
     storage: get('storage'),
     typurl: get('typurl'),
@@ -687,11 +769,27 @@ export function parseActiveUiInstruction(xml: string): UiInstruction | null {
 }
 
 /**
- * Parse a RAPID symbol search response into RapidSymbolInfo[].
- * XML: multiple <li class="rap-sympropvar-li"> elements.
+ * The `<li>` classes of a symbol-search hit, one per symbol kind. RW 6.16.03
+ * answers a task-scoped search with rap-sympropmod-li, rap-sympropvar-li,
+ * rap-symproppers-li and rap-sympropproc-li entries (live-verified 2026-09-29
+ * via `?json=1`, where the same names are the `_type`). Reading only the VAR
+ * class dropped every module, persistent and routine.
+ *
+ * Constants and functions are rap-sympropconstant-li and
+ * rap-sympropfunction-li (live-verified 2026-09-29 on RW 6.16.03, 7.21.4 and
+ * 8.2.1). The list had only `const-li` and `fun-li`, never seen live, so every
+ * CONST and FUNC hit was dropped; both short spellings stay as fallbacks. The
+ * trap class is not recorded yet.
+ */
+const RAPID_SYMBOL_SEARCH_LI =
+  /<li[^>]*class="[^"]*\brap-symprop(?:var|pers|constant|const|mod|proc|function|fun|trap)-li\b[^"]*"[^>]*>.*?<\/li>/gis;
+
+/**
+ * Parse a RAPID symbol search response into RapidSymbolInfo[], in document
+ * order. XML: multiple <li class="rap-symprop{kind}-li"> elements.
  */
 export function parseRapidSymbolSearch(xml: string): RapidSymbolInfo[] {
-  const blocks = [...xml.matchAll(/<li[^>]*class="[^"]*\brap-sympropvar-li\b[^"]*"[^>]*>.*?<\/li>/gis)];
+  const blocks = [...xml.matchAll(RAPID_SYMBOL_SEARCH_LI)];
   return blocks.map(([block]) => {
     function get(cls: string): string {
       const m = block.match(new RegExp(`<span[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>(.*?)</span>`, 'is'));

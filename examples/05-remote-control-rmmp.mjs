@@ -1,11 +1,14 @@
-// Acquire Remote Mastership Privilege (RMMP) before doing modify ops.
+// Request manual-mode privileges (RMMP) from the operator at the FlexPendant.
 //
-// Without RMMP, AUTO-mode modify operations (start RAPID, set PP, write
-// variables, etc.) return HTTP 403 even when mastership is acquired. RMMP
-// is a separate user-level grant: requesting it triggers a popup on the
-// FlexPendant; the operator taps Allow once and you have write access.
+// RMMP (Request Manual Mode Privileges) is ABB's manual-mode counterpart of a
+// mastership request: in manual mode a remote client gets mastership - and so
+// can jog - only after an operator at the FlexPendant grants RMMP. In AUTO it
+// is not used. RobotWare 7 accepts a request only in MANR; RobotWare 8 has no
+// RMMP (it uses control-station write access instead).
 //
-// This is what RobotStudio Online does - that's why it "just works".
+// requestRmmp() sends the request, polls it so it outlives ABB's 10 s window,
+// and resolves once the operator grants or denies it, or the wait runs out
+// (the request is then cancelled).
 //
 // Run: RWS_HOST=127.0.0.1 RWS_PORT=5466 node examples/05-remote-control-rmmp.mjs
 
@@ -19,32 +22,18 @@ const port = process.env.RWS_PORT ? Number(process.env.RWS_PORT) : undefined;
 const robot = new RobotManager();
 await robot.connect(host, process.env.RWS_USER || 'Admin', process.env.RWS_PASS || 'robotics', port);
 
-// 1) Check current RMMP state
-let priv = await robot.getRmmpPrivilege();
-console.log(`Current RMMP: ${priv}`);
-
-// 2) If no privilege, request it. The FlexPendant pops up; operator approves.
-if (priv === 'none') {
-  console.log('Requesting RMMP - operator must approve on the FlexPendant…');
-  await robot.requestRmmp('modify');
-
-  // Poll until the operator approves (or 30s timeout)
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    priv = await robot.getRmmpPrivilege();
-    if (priv === 'modify' || priv === 'exclusive') { break; }
-    process.stdout.write('.');
+try {
+  console.log(`Current RMMP: ${await robot.getRmmpPrivilege()}`);
+  const result = await robot.requestRmmp('modify', {
+    waitMs: 30_000,
+    onPending: () => console.log('Waiting for the operator at the FlexPendant to press Grant...'),
+  });
+  console.log(`${result.outcome}: ${result.detail}`);
+  if (result.outcome === 'granted') {
+    // Manual-mode work goes here, for example one jog with motors on:
+    // await robot.jog({ mode: 'Joint', axes: [0, 0, 0, 0, 0, 1], speed: 10, incMode: 'Small' });
+    await robot.cancelRmmp();   // give the privilege back when done
   }
-  console.log();
+} finally {
+  await robot.disconnect();     // also cancels a privilege still held
 }
-
-if (priv === 'modify' || priv === 'exclusive') {
-  console.log(`✓ ${priv} privilege granted. Modify ops will now work in AUTO.`);
-  // Example: PP-to-Main + start
-  // await robot.resetRapid();
-  // await robot.startRapid();
-} else {
-  console.log(`✗ Operator did not grant RMMP. Cannot do modify ops.`);
-}
-
-await robot.disconnect();

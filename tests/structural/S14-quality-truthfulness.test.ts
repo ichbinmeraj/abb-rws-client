@@ -112,7 +112,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
         if (manager.state.quality === 'disconnected') {
           // Only a real failure justifies this state - prove requests are failing.
           await expect(
-            manager.getControllerState(),
+            (manager as unknown as { adapter: { getControllerState(): Promise<string> } }).adapter.getControllerState(),
           ).rejects.toBeTruthy();
         }
         await new Promise(r => setTimeout(r, 150));

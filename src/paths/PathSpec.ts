@@ -32,13 +32,20 @@
  * symbol paths). It means one obvious home per operation, and a mechanical,
  * checkable path -> operation mapping.
  *
- * All paths and generation quirks in the tables are live-verified against the
- * running VCs (IRC5 RW6.16, OmniCore RW7.21 / RW8.1.1); the ABB PDF has errors,
- * so the controller wins. See docs/tasks/rws-conformance-loop.md.
+ * Paths come from the controllers' own forms and live calls on the VCs (IRC5
+ * RW6.16, OmniCore RW7.21 / RW8.x); the ABB PDF has errors, so the controller
+ * wins. Not every row has run: each row's `evidence` says whether its request
+ * has a logged success (`live`: a 2xx in a probe log or a functional-test
+ * trace) or not (`built`), and its `tier` says how central it is. `npm run conformance`
+ * checks the resource paths against the live controllers.
  */
 
-/** HTTP methods the RWS surface uses. */
-export type HttpVerb = 'GET' | 'POST' | 'PUT' | 'DELETE';
+/**
+ * HTTP methods the RWS surface uses. `HEAD` is RWS 2.0's file metadata read
+ * (`HEAD /fileservice/{path}`, ABB's file service page Rev L); RW 7.21.4 and
+ * 8.2.1 list it in a file's `Allow` header (read 2026-09-29).
+ */
+export type HttpVerb = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD';
 
 /**
  * One operation's URL on one generation.
@@ -60,6 +67,13 @@ export interface PathSpec {
    */
   action?: string;
   /**
+   * A fixed query that selects the resource, without the `?`: RWS 1.0 reads
+   * some resources as a query on their parent (`/rw/rapid/tasks/{task}` with
+   * `resource=task-struc-change-count`, ABB's RWS 1.0 manual Rev M), where
+   * RWS 2.0 has a path of their own. `buildPath` puts it before `action`.
+   */
+  query?: string;
+  /**
    * Body form-field names for a write, in the order the controller's OPTIONS
    * form lists them. Documentation and a conformance signal; the mapper still
    * owns turning caller arguments into values.
@@ -75,8 +89,45 @@ export interface PathSpec {
   gap?: string;
 }
 
+/**
+ * How much of the RWS surface an operation stands for.
+ *
+ * - `core`: what every robot application needs: motors, operating mode,
+ *   speed, RAPID run/stop/reset and variables, signals, mastership and RW8
+ *   write access, the event log, joint and Cartesian position reads.
+ * - `common`: what a cell tool reaches for regularly: modules and programs,
+ *   files, configuration, tasks, the program pointer, backups, I/O networks
+ *   and devices, kinematics, jogging, subscriptions.
+ * - `niche`: options, commissioning, diagnostics, virtual-controller
+ *   simulation and the rest of the long tail.
+ */
+export type Tier = 'core' | 'common' | 'niche';
+
+/**
+ * Whether a row's request has run against a controller.
+ *
+ * - `live`: a probe log or a functional-test trace holds this request with a
+ *   2xx answer. Nothing else counts: an unlogged record, a form read or a
+ *   resource listing is not `live`. tests/fixtures/evidence-index.json lists
+ *   one logged success per live side (scripts/evidence-index.mjs writes it).
+ * - `built`: built from the controller's own form or ABB's documentation, with
+ *   no logged success.
+ */
+export type Evidence = 'live' | 'built';
+
+/**
+ * A row's evidence: one value when every generation it wraps agrees, or one
+ * value per wrapped generation when they differ. A recorded `gap` side wraps
+ * nothing, so it carries no evidence; a row with only gap sides is `built`.
+ */
+export type OperationEvidence = Evidence | { readonly rws1: Evidence; readonly rws2: Evidence };
+
 /** An operation across both generations. Either side may be absent. */
 export interface Operation {
+  /** Which tier of the RWS surface the operation belongs to. */
+  readonly tier: Tier;
+  /** Whether the request has run against a controller, per generation where they differ. */
+  readonly evidence: OperationEvidence;
   /** One-line human description - what the operation does. */
   readonly summary: string;
   /** RWS 1.0 (IRC5 / RobotWare 6) spec, or undefined if 1.0 lacks it. */
@@ -95,6 +146,21 @@ export interface Operation {
 export type DomainTable = Readonly<Record<string, Operation>>;
 
 /**
+ * The evidence for one generation of an operation, or `undefined` when the
+ * generation is absent or a recorded gap (nothing is wrapped there).
+ */
+export function evidenceOf(op: Operation, generation: 'rws1' | 'rws2'): Evidence | undefined {
+  const spec = op[generation];
+  if (spec === undefined || spec.gap !== undefined) { return undefined; }
+  return typeof op.evidence === 'string' ? op.evidence : op.evidence[generation];
+}
+
+/** True when no generation of the operation has run against a controller. */
+export function isBuiltOnly(op: Operation): boolean {
+  return typeof op.evidence === 'string' ? op.evidence === 'built' : false;
+}
+
+/**
  * Fill `{param}` placeholders in a path spec.
  *
  * The one place path interpolation happens, so encoding is consistent and a
@@ -110,7 +176,8 @@ export function buildPath(spec: PathSpec, params: Record<string, string | number
     }
     return encodeURIComponent(String(v));
   });
-  return spec.action ? `${filled}?action=${spec.action}` : filled;
+  const query = [spec.query, spec.action ? `action=${spec.action}` : undefined].filter(Boolean).join('&');
+  return query ? `${filled}?${query}` : filled;
 }
 
 /**

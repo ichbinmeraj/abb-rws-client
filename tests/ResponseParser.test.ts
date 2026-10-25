@@ -490,7 +490,7 @@ const SYSTEM_XML = `<ul>
 
 // Live-verified 2026-07-09: a virtual controller reports no ctrl-id / ctrl-mac spans.
 const IDENTITY_XML = `<ul><li class="ctrl-identity-info" title="identity">
-<span class="ctrl-name">DESKTOP-64BUNCK</span><span class="ctrl-type">Virtual Controller</span>
+<span class="ctrl-name">DESKTOP-VC</span><span class="ctrl-type">Virtual Controller</span>
 <span class="ctrl-level">System Level</span></li></ul>`;
 
 const CLOCK_XML = `<ul><li class="ctrl-clock-info" title="clock"><span class="datetime">2026-07-09 T 02:55:41</span></li></ul>`;
@@ -644,9 +644,10 @@ describe('parseRapidSymbolProperties', () => {
     expect(p.dattyp).toBe('tooldata');
   });
 
-  // Live-verified 2026-07-09: RW6.16 emits <span class="rdonly">, never "ro" -
-  // the ro field therefore never reflects the controller's readonly flag.
-  it.fails('maps the live rdonly span onto the ro field', () => {
+  // Live-verified 2026-07-09: RW6.16 emits <span class="rdonly">, never "ro".
+  // The ro field read only "ro" and so never reflected the controller's
+  // readonly flag until 2026-09-30; it now reads rdonly.
+  it('maps the live rdonly span onto the ro field', () => {
     expect(parseRapidSymbolProperties(SYMBOL_PROPERTIES_READONLY_XML).ro).toBe(true);
   });
 
@@ -731,7 +732,7 @@ describe('parseSystemInfo', () => {
 describe('parseControllerIdentity', () => {
   it('parses name and type; id/mac are empty on virtual controllers (live shape)', () => {
     const id = parseControllerIdentity(IDENTITY_XML);
-    expect(id.name).toBe('DESKTOP-64BUNCK');
+    expect(id.name).toBe('DESKTOP-VC');
     expect(id.type).toBe('Virtual Controller');
     expect(id.id).toBe('');
     expect(id.mac).toBe('');
@@ -882,6 +883,32 @@ describe('parseRapidSymbolSearch', () => {
 
   it('returns an empty array when nothing matches', () => {
     expect(parseRapidSymbolSearch('<html></html>')).toEqual([]);
+  });
+
+  it('reads module, PERS and routine hits too, in document order (RW 6.16 task search)', () => {
+    // Synthetic XHTML, not a recorded body. The module, VAR, PERS and PROC
+    // classes are the `_type` names a task-scoped RW 6.16.03 search returned
+    // under `?json=1`. The FUNC and CONST classes here are the short
+    // `fun-li` / `const-li` spellings, never seen live and kept as fallbacks;
+    // the controller's own `function-li` / `constant-li` are covered in
+    // recorded-2026-09-30.test.ts. The TRAP class is not recorded. The XHTML
+    // li classes RW 6.16 uses are assumed from those names, not recorded.
+    const xml = `<ul>
+<li class="rap-sympropmod-li" title="RAPID/T_ROB1/Module1"><span class="symburl">RAPID/T_ROB1/Module1</span><span class="name">Module1</span><span class="symtyp">mod</span></li>
+<li class="rap-sympropvar-li" title="RAPID/T_ROB1/user/reg1"><span class="name">reg1</span><span class="symtyp">var</span><span class="dattyp">num</span><span class="ndim">0</span><span class="local">false</span><span class="rdonly">false</span><span class="taskvar">false</span></li>
+<li class="rap-symproppers-li" title="RAPID/T_ROB1/BASE/load0"><span class="name">load0</span><span class="symtyp">per</span><span class="dattyp">loaddata</span><span class="rdonly">false</span></li>
+<li class="rap-sympropproc-li" title="RAPID/T_ROB1/Module1/main"><span class="name">main</span><span class="symtyp">prc</span><span class="local">false</span></li>
+<li class="rap-sympropfun-li" title="RAPID/T_ROB1/Module1/f1"><span class="name">f1</span><span class="symtyp">fun</span></li>
+<li class="rap-sympropconst-li" title="RAPID/T_ROB1/Module1/c1"><span class="name">c1</span><span class="symtyp">con</span></li>
+<li class="rap-symproptrap-li" title="RAPID/T_ROB1/Module1/t1"><span class="name">t1</span><span class="symtyp">trp</span></li>
+<li class="rap-symproprecord-li" title="RAPID/num"><span class="name">num</span></li>
+</ul>`;
+    const syms = parseRapidSymbolSearch(xml);
+    expect(syms.map(s => [s.name, s.symtyp])).toEqual([
+      ['Module1', 'mod'], ['reg1', 'var'], ['load0', 'per'], ['main', 'prc'],
+      ['f1', 'fun'], ['c1', 'con'], ['t1', 'trp'],
+    ]);
+    expect(syms[3].symburl).toBe('RAPID/T_ROB1/Module1/main');
   });
 });
 

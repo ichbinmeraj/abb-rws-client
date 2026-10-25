@@ -1,0 +1,11 @@
+
+Aktive Verbindungen
+
+  Proto  Lokale Adresse         Remoteadresse          Status          PID
+  TCP    0.0.0.0:135            0.0.0.0:0              ABH™REN         1001
+  TCP    0.0.0.0:5466           0.0.0.0:0              ABH™REN         2102
+  TCP    0.0.0.0:14880          0.0.0.0:0              ABH™REN         2106
+  TCP    127.0.0.1:62214        0.0.0.0:0              ABH™REN         2107
+  TCP    127.0.0.1:52345        127.0.0.1:5466         HERGESTELLT     4444
+  TCP    192.0.2.99:445         192.0.2.123:52820      HERGESTELLT     4
+  TCP    [::]:5466              [::]:0                 ABH™REN         2102

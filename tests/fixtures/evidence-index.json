@@ -1,0 +1,3325 @@
+{
+  "cfgElogDipc.clearAllEventLogs.rws1": {
+    "successes": 1,
+    "example": "POST /rw/elog?action=clearall -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.clearAllEventLogs.rws2": {
+    "successes": 4,
+    "example": "POST /rw/elog/clearall -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.clearEventLog.rws1": {
+    "successes": 2,
+    "example": "POST /rw/elog/4?action=clear -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.clearEventLog.rws2": {
+    "successes": 4,
+    "example": "POST /rw/elog/0/clear -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.createCfgInstance.rws1": {
+    "successes": 4,
+    "example": "POST /rw/cfg/EIO/EIO_SIGNAL/instances?action=create-default -> 201",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.createCfgInstance.rws2": {
+    "successes": 10,
+    "example": "POST /rw/cfg/EIO/EIO_SIGNAL/instances/create-default -> 201",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.createDipcQueue.rws1": {
+    "successes": 8,
+    "example": "POST /rw/dipc?action=dipc-create -> 201",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.createDipcQueue.rws2": {
+    "successes": 25,
+    "example": "POST /rw/dipc -> 201",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getCfgInstance.rws1": {
+    "successes": 621,
+    "example": "GET /rw/cfg/SYS/CAB_TASKS/instances -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getCfgInstance.rws2": {
+    "successes": 1361,
+    "example": "GET /rw/cfg/SYS/MASTER_BOOL/instances/HeartBeat -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getCfgType.rws1": {
+    "successes": 9,
+    "example": "GET /rw/cfg/SYS/CAB_TASKS -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getCfgType.rws2": {
+    "successes": 20,
+    "example": "GET /rw/cfg/SYS/MASTER_BOOL -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getDipcQueueInfo.rws1": {
+    "successes": 5,
+    "example": "GET /rw/dipc/PyInternalslot0 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getDipcQueueInfo.rws2": {
+    "successes": 25,
+    "example": "GET /rw/dipc/ZZ_PROBE_Drw8811/information -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getEventLog.rws1": {
+    "successes": 1902,
+    "example": "GET /rw/elog/0?lang=en -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getEventLog.rws2": {
+    "successes": 11744,
+    "example": "GET /rw/elog/0?lang=en&order=lifo -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getEventLogMessage.rws1": {
+    "successes": 175,
+    "example": "GET /rw/elog/0/16 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getEventLogMessage.rws2": {
+    "successes": 332,
+    "example": "GET /rw/elog/0/44?lang=en -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.getEventLogMessageBySeqnum.rws2": {
+    "successes": 81,
+    "example": "GET /rw/elog/seqnum/44?lang=en -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgDomains.rws1": {
+    "successes": 19,
+    "example": "GET /rw/cfg -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgDomains.rws2": {
+    "successes": 26,
+    "example": "GET /rw/cfg -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgInstances.rws1": {
+    "successes": 621,
+    "example": "GET /rw/cfg/SYS/CAB_TASKS/instances -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgInstances.rws2": {
+    "successes": 444,
+    "example": "GET /rw/cfg/EIO/EIO_SIGNAL/instances -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgTypeAttributes.rws1": {
+    "successes": 12,
+    "example": "GET /rw/cfg/SYS/CAB_TASKS/attributes -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgTypeAttributes.rws2": {
+    "successes": 169,
+    "example": "GET /rw/cfg/EIO/SYSSIG_OUT/attributes -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgTypes.rws1": {
+    "successes": 58,
+    "example": "GET /rw/cfg/SYS -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listCfgTypes.rws2": {
+    "successes": 124,
+    "example": "GET /rw/cfg/EIO -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listDipcQueues.rws1": {
+    "successes": 717,
+    "example": "GET /rw/dipc -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listDipcQueues.rws2": {
+    "successes": 1554,
+    "example": "GET /rw/dipc -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listEventLogDomains.rws1": {
+    "successes": 18,
+    "example": "GET /rw/elog -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.listEventLogDomains.rws2": {
+    "successes": 132,
+    "example": "GET /rw/elog?lang=en -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.loadCfgFile.rws1": {
+    "successes": 3,
+    "example": "POST /rw/cfg?action=load -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.loadCfgFile.rws2": {
+    "successes": 1,
+    "example": "POST /rw/cfg/load -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.readDipcMessage.rws1": {
+    "successes": 12,
+    "example": "GET /rw/dipc/ZZ_PROBE_D661603?action=dipc-read&timeout=0 -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.readDipcMessage.rws2": {
+    "successes": 40,
+    "example": "GET /rw/dipc/ZZ_PROBE_Drw8811?dipc-timeout=0 -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.removeCfgInstance.rws1": {
+    "successes": 3,
+    "example": "DELETE /rw/cfg/EIO/EIO_SIGNAL/instances/ZZ_RW6W_SIG -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.removeCfgInstance.rws2": {
+    "successes": 5,
+    "example": "DELETE /rw/cfg/EIO/EIO_SIGNAL/instances/ZZ_PROBE_SIG -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.removeDipcQueue.rws1": {
+    "successes": 8,
+    "example": "DELETE /rw/dipc/ZZ_PROBE_D661603 -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.removeDipcQueue.rws2": {
+    "successes": 25,
+    "example": "DELETE /rw/dipc/ZZ_PROBE_Drw8811 -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.saveCfgFile.rws1": {
+    "successes": 2,
+    "example": "POST /rw/cfg/EIO?action=saveas -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.saveCfgFile.rws2": {
+    "successes": 4,
+    "example": "POST /rw/cfg/EIO/saveas -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.saveEventLogRaw.rws1": {
+    "successes": 2,
+    "example": "POST /rw/elog?action=saveraw -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.saveEventLogRaw.rws2": {
+    "successes": 4,
+    "example": "POST /rw/elog/saveraw -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.sendDipcMessage.rws1": {
+    "successes": 8,
+    "example": "POST /rw/dipc/ZZ_PROBE_D661603?action=dipc-send -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.sendDipcMessage.rws2": {
+    "successes": 25,
+    "example": "POST /rw/dipc/ZZ_PROBE_Drw8811 -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.setCfgInstance.rws1": {
+    "successes": 6,
+    "example": "POST /rw/cfg/EIO/EIO_SIGNAL/instances/ZZ_RW6W_SIG?action=set -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.setCfgInstance.rws2": {
+    "successes": 9,
+    "example": "POST /rw/cfg/EIO/EIO_SIGNAL/instances/ZZ_PROBE_DO3 -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "cfgElogDipc.validateCfgFile.rws1": {
+    "successes": 5,
+    "example": "POST /rw/cfg?action=validate -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.validateCfgFile.rws2": {
+    "successes": 11,
+    "example": "POST /rw/cfg/validate -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "cfgElogDipc.validateInstanceBeforeDelete.rws1": {
+    "successes": 1,
+    "example": "POST /rw/cfg?action=validate-inst-at-del -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.checkRestore.rws1": {
+    "successes": 2,
+    "example": "GET /ctrl/backup?action=check-restore&backup=%2Ffileservice%2F%24BACKUP%2FSPECCHECK_PRE_20261009 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.checkRestore.rws2": {
+    "successes": 4,
+    "example": "POST /ctrl/backup/check-restore -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.compressPath.rws1": {
+    "successes": 1,
+    "example": "POST /ctrl/compress?action=comp -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.compressPath.rws2": {
+    "successes": 8,
+    "example": "POST /ctrl/compress -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.createBackup.rws1": {
+    "successes": 12,
+    "example": "POST /ctrl/backup?action=backup -> 202",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.createBackup.rws2": {
+    "successes": 24,
+    "example": "POST /ctrl/backup/create -> 202",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getBackupState.rws2": {
+    "successes": 63,
+    "example": "GET /ctrl/backup/state -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getBackupStatus.rws1": {
+    "successes": 25,
+    "example": "GET /ctrl/backup -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getBackupStatus.rws2": {
+    "successes": 63,
+    "example": "GET /ctrl/backup/state -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getCertificates.rws2": {
+    "successes": 21,
+    "example": "GET /ctrl/certstore/controller -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getControllerClock.rws1": {
+    "successes": 72,
+    "example": "GET /ctrl/clock -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getControllerClock.rws2": {
+    "successes": 110,
+    "example": "GET /ctrl/clock -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getControllerIdentity.rws1": {
+    "successes": 325,
+    "example": "GET /ctrl/identity -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getControllerIdentity.rws2": {
+    "successes": 752,
+    "example": "GET /ctrl/identity -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getCyclicBrakeCheckStatus.rws2": {
+    "successes": 1,
+    "example": "GET /ctrl/safety/cbc?drivenum=1 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getEnv.rws1": {
+    "successes": 3,
+    "example": "GET /ctrl/%24TEMP -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getEnv.rws2": {
+    "successes": 24,
+    "example": "GET /ctrl/%24TEMP -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getNetworkConfig.rws1": {
+    "successes": 23,
+    "example": "GET /ctrl/network -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getRegistry.rws2": {
+    "successes": 17,
+    "example": "GET /ctrl/registry -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "ctrl.getRegistryFile.rws2": {
+    "successes": 4,
+    "example": "GET /ctrl/registry/cfgrules -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getRestartCount.rws2": {
+    "successes": 50,
+    "example": "GET /ctrl/restart/restartcount -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getSafetyConfig.rws2": {
+    "successes": 12,
+    "example": "GET /ctrl/safety/config -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getSafetyConfigChangeCount.rws2": {
+    "successes": 28,
+    "example": "GET /ctrl/safety/config/changecount -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getSafetyLoadStatus.rws2": {
+    "successes": 2,
+    "example": "GET /ctrl/safety/load -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getSafetyMode.rws2": {
+    "successes": 17,
+    "example": "GET /ctrl/safety/mode -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "ctrl.getSafetyStartupStatus.rws2": {
+    "successes": 19,
+    "example": "GET /ctrl/safety/config/startupstatus -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getSafetyStatus.rws1": {
+    "successes": 11,
+    "example": "GET /ctrl/safety -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getSafetyViolationInfo.rws2": {
+    "successes": 2,
+    "example": "GET /ctrl/safety/violation -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getVirtualTimeClock.rws1": {
+    "successes": 17,
+    "example": "GET /ctrl/virtualtime/vttime -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getVirtualTimeClock.rws2": {
+    "successes": 31,
+    "example": "GET /ctrl/virtualtime/vttime -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getVirtualTimeScale.rws1": {
+    "successes": 20,
+    "example": "GET /ctrl/virtualtime/vtspeed -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getVirtualTimeScale.rws2": {
+    "successes": 42,
+    "example": "GET /ctrl/virtualtime/vtspeed -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getVirtualTimeState.rws1": {
+    "successes": 23,
+    "example": "GET /ctrl/virtualtime/vtstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getVirtualTimeState.rws2": {
+    "successes": 45,
+    "example": "GET /ctrl/virtualtime/vtstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.getVirtualTimeTimeslice.rws1": {
+    "successes": 2,
+    "example": "GET /ctrl/virtualtime/vttimeslice -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.getVirtualTimeTimeslice.rws2": {
+    "successes": 11,
+    "example": "GET /ctrl/virtualtime/vttimeslice -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.listCertificateStores.rws2": {
+    "successes": 5,
+    "example": "GET /ctrl/certstore -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.listFeatures.rws2": {
+    "successes": 19,
+    "example": "GET /ctrl/features -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.restartController.rws1": {
+    "successes": 3,
+    "example": "POST /rw/panel?action=restart -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.restartController.rws2": {
+    "successes": 9,
+    "example": "POST /ctrl/restart -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "ctrl.restoreBackup.rws1": {
+    "successes": 2,
+    "example": "POST /ctrl/backup?action=restore -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.saveDiagnostics.rws2": {
+    "successes": 4,
+    "example": "POST /ctrl/diagnostics/save -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.setControllerLanguage.rws1": {
+    "successes": 1,
+    "example": "POST /ctrl?action=set-lang -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.setControllerLanguage.rws2": {
+    "successes": 4,
+    "example": "POST /ctrl/lang -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.setVirtualTimeScale.rws2": {
+    "successes": 9,
+    "example": "POST /ctrl/virtualtime/vtspeed -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.setVirtualTimeTimeslice.rws2": {
+    "successes": 4,
+    "example": "POST /ctrl/virtualtime/vttimeslice -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "ctrl.verifyControllerFeature.rws2": {
+    "successes": 2,
+    "example": "GET /ctrl/features/abb.***.robotcontrol.controllerhw.m28.01 -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "filesVision.copyFile.rws1": {
+    "successes": 10,
+    "example": "POST /fileservice/$HOME/ZZ_PROBE/ZZ_PROBE.txt -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.copyFile.rws2": {
+    "successes": 52,
+    "example": "POST /fileservice/HOME/ZZ_PROBE/ZZ_PROBE.txt/copy -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.createDirectory.rws1": {
+    "successes": 9,
+    "example": "POST /fileservice/$HOME -> 201",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.createDirectory.rws2": {
+    "successes": 135,
+    "example": "POST /fileservice/HOME/create -> 201",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.createSubscription.rws1": {
+    "successes": 378,
+    "example": "POST /subscription -> 201",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.createSubscription.rws2": {
+    "successes": 139,
+    "example": "POST /subscription -> 201",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.deleteFile.rws1": {
+    "successes": 616,
+    "example": "DELETE /fileservice/$HOME/ZZ_MP.mod -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.deleteFile.rws2": {
+    "successes": 1516,
+    "example": "DELETE /fileservice/HOME/ZZ_MP.mod -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.getFileMetadata.rws1": {
+    "successes": 2332,
+    "example": "GET /fileservice/$TEMP -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.getFileMetadata.rws2": {
+    "successes": 10,
+    "example": "HEAD /fileservice/TEMP/ZZ_PROBE_META_10rw8811.txt -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "filesVision.getSubscriptionGroup.rws1": {
+    "successes": 48,
+    "example": "GET /subscription/2 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.getSubscriptionGroup.rws2": {
+    "successes": 130,
+    "example": "GET /subscription/8 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.getVisionCameraCount.rws2": {
+    "successes": 9,
+    "example": "GET /rw/vision -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.listDirectory.rws1": {
+    "successes": 2332,
+    "example": "GET /fileservice/$TEMP -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.listDirectory.rws2": {
+    "successes": 4881,
+    "example": "GET /fileservice/HOME/ZZ_PROBE -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.listFileVolumes.rws1": {
+    "successes": 13,
+    "example": "GET /fileservice -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.listFileVolumes.rws2": {
+    "successes": 18,
+    "example": "GET /fileservice -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.listSubscriptionGroups.rws1": {
+    "successes": 57,
+    "example": "GET /subscription -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.listSubscriptionGroups.rws2": {
+    "successes": 151,
+    "example": "GET /subscription -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.listVisionSystems.rws1": {
+    "successes": 4,
+    "example": "GET /rw/vision -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.listVisionSystems.rws2": {
+    "successes": 9,
+    "example": "GET /rw/vision -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.readFile.rws1": {
+    "successes": 2332,
+    "example": "GET /fileservice/$TEMP -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.readFile.rws2": {
+    "successes": 4881,
+    "example": "GET /fileservice/HOME/ZZ_PROBE -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.refreshVisionCameras.rws2": {
+    "successes": 4,
+    "example": "POST /rw/vision/refresh -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.renameFile.rws1": {
+    "successes": 2,
+    "example": "POST /fileservice/$HOME/ZZ_PROBE/ZZ_PROBE_c1.txt -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.renameFile.rws2": {
+    "successes": 36,
+    "example": "POST /fileservice/HOME/ZZ_PROBE/ZZ_PROBE_c1.txt/rename -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.unsubscribeGroup.rws1": {
+    "successes": 361,
+    "example": "DELETE /subscription/36 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.unsubscribeGroup.rws2": {
+    "successes": 751,
+    "example": "DELETE /subscription/23 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.unsubscribeResource.rws1": {
+    "successes": 7,
+    "example": "DELETE /subscription/45/rw/mastership/rapid -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "filesVision.unsubscribeResource.rws2": {
+    "successes": 35,
+    "example": "DELETE /subscription/9/rw/iosystem/signals/IIO_di16;state -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "filesVision.updateSubscriptionGroup.rws1": {
+    "successes": 5,
+    "example": "PUT /subscription/34 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.updateSubscriptionGroup.rws2": {
+    "successes": 77,
+    "example": "PUT /subscription/8 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.uploadFile.rws1": {
+    "successes": 268,
+    "example": "PUT /fileservice/$HOME/ZZ_MP.mod -> 201",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "filesVision.uploadFile.rws2": {
+    "successes": 528,
+    "example": "PUT /fileservice/HOME/ZZ_MP.mod -> 201",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getIoDeviceConfig.rws1": {
+    "successes": 13,
+    "example": "GET /rw/iosystem/devices/DRV_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getIoDeviceConfig.rws2": {
+    "successes": 17,
+    "example": "GET /rw/iosystem/devices/Virtual/ZZ_PROBE_DEV/config?configtype=1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getIoDeviceInfo.rws1": {
+    "successes": 13,
+    "example": "GET /rw/iosystem/devices/DRV_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getIoDeviceInfo.rws2": {
+    "successes": 10,
+    "example": "GET /rw/iosystem/devices/IntBus/DrvSys -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "io.getIoNetwork.rws1": {
+    "successes": 13,
+    "example": "GET /rw/iosystem/networks/Local -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getIoNetwork.rws2": {
+    "successes": 10,
+    "example": "GET /rw/iosystem/networks/IntBus -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "io.getIoNetworkConfig.rws1": {
+    "successes": 13,
+    "example": "GET /rw/iosystem/networks/Local -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getIoNetworkConfig.rws2": {
+    "successes": 12,
+    "example": "GET /rw/iosystem/networks/IntBus/config?configtype=1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getSignalConfig.rws1": {
+    "successes": 28,
+    "example": "GET /rw/iosystem/signals/Local/DRV_1/DRV1TESTE2 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.getSignalConfig.rws2": {
+    "successes": 22,
+    "example": "GET /rw/iosystem/signals/Virtual/ZZ_PROBE_DEV/ZZ_PROBE_DO1/config -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listAllIoDevices.rws1": {
+    "successes": 96,
+    "example": "GET /rw/iosystem/devices?network=EtherNetIP -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listAllIoDevices.rws2": {
+    "successes": 256,
+    "example": "GET /rw/iosystem/devices?start=0&limit=100 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listAllSignals.rws1": {
+    "successes": 509,
+    "example": "GET /rw/iosystem/signals -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listAllSignals.rws2": {
+    "successes": 1485,
+    "example": "GET /rw/iosystem/signals?start=0&limit=200 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listDevices.rws1": {
+    "successes": 96,
+    "example": "GET /rw/iosystem/devices?network=EtherNetIP -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listDevices.rws2": {
+    "successes": 256,
+    "example": "GET /rw/iosystem/devices?start=0&limit=100 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listNetworks.rws1": {
+    "successes": 30,
+    "example": "GET /rw/iosystem/networks -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.listNetworks.rws2": {
+    "successes": 81,
+    "example": "GET /rw/iosystem/networks -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.readSignal.rws1": {
+    "successes": 28,
+    "example": "GET /rw/iosystem/signals/Local/DRV_1/DRV1TESTE2 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.readSignal.rws2": {
+    "successes": 117,
+    "example": "GET /rw/iosystem/signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.readSignalByName.rws1": {
+    "successes": 68,
+    "example": "GET /rw/iosystem/signals/DRV1BRAKE -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.readSignalByName.rws2": {
+    "successes": 65,
+    "example": "GET /rw/iosystem/signals/ZZ_PROBE_DO1 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "io.searchIoDevices.rws1": {
+    "successes": 66,
+    "example": "POST /rw/iosystem/devices?action=search -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "io.searchIoDevices.rws2": {
+    "successes": 154,
+    "example": "POST /rw/iosystem/devices?action=search -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "io.searchSignals.rws1": {
+    "successes": 272,
+    "example": "POST /rw/iosystem/signals?action=signal-search -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.searchSignals.rws2": {
+    "successes": 687,
+    "example": "POST /rw/iosystem/signals/signal-search -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.searchSignalsEx.rws1": {
+    "successes": 154,
+    "example": "POST /rw/iosystem/signals?action=signal-searchex -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.searchSignalsEx.rws2": {
+    "successes": 340,
+    "example": "POST /rw/iosystem/signals/signal-search-ex -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.setIoDeviceLState.rws2": {
+    "successes": 6,
+    "example": "POST /rw/iosystem/devices/Virtual/ZZ_PROBE_DEV/set-lstate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "io.setNetworkLState.rws2": {
+    "successes": 8,
+    "example": "POST /rw/iosystem/networks/Virtual/set-lstate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "io.setSignalSimulated.rws2": {
+    "successes": 30,
+    "example": "POST /rw/iosystem/signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_di16/set-lstate -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "io.unblockSignals.rws2": {
+    "successes": 4,
+    "example": "POST /rw/iosystem/signals/unblock-signal -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "io.writeSignal.rws1": {
+    "successes": 4,
+    "example": "POST /rw/iosystem/signals/Virtual/ZZ_PROBE_DEV/ZZ_PROBE_DO3?action=set -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "io.writeSignal.rws2": {
+    "successes": 52,
+    "example": "POST /rw/iosystem/signals/Virtual/ZZ_PROBE_DEV/ZZ_PROBE_DO1/set-value -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.writeSignalByName.rws1": {
+    "successes": 14,
+    "example": "POST /rw/iosystem/signals/ZZ_PROBE_DO1?action=set -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "io.writeSignalByName.rws2": {
+    "successes": 20,
+    "example": "POST /rw/iosystem/signals/ZZ_PROBE_DO1/set-value -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.calcCartesianFromJoints.rws1": {
+    "successes": 9,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1?action=CalcPoseFromJoints -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.calcCartesianFromJoints.rws2": {
+    "successes": 20,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1/pose-from-joints -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.calcJointsFromCartesian.rws1": {
+    "successes": 9,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1?action=CalcJointsFromPose -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.calcJointsFromCartesian.rws2": {
+    "successes": 20,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1/joints-from-cartesian -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.checkMotionChangeCount.rws1": {
+    "successes": 45,
+    "example": "GET /rw/motionsystem/checkchangecount?changecount=0 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.checkMotionChangeCount.rws2": {
+    "successes": 78,
+    "example": "GET /rw/motionsystem/checkchangecount/0 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getActivePayload.rws1": {
+    "successes": 105,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getActivePayload.rws2": {
+    "successes": 209,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getActiveTool.rws1": {
+    "successes": 105,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getActiveTool.rws2": {
+    "successes": 209,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getActiveWobj.rws1": {
+    "successes": 105,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getActiveWobj.rws2": {
+    "successes": 209,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getAxisPose.rws2": {
+    "successes": 2,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/axes/1/pose -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getCartesianFull.rws1": {
+    "successes": 1171,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/cartesian -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getCartesianFull.rws2": {
+    "successes": 4221,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/cartesian -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getCollisionPredictionMode.rws2": {
+    "successes": 10,
+    "example": "GET /rw/motionsystem/collisionprediction -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getCollisionPredictionModel.rws2": {
+    "successes": 2,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/coll-pred-model -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getCollisionPredictionModelName.rws2": {
+    "successes": 5,
+    "example": "GET /rw/motionsystem/collisionprediction/modelname?robotnumber=0 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getJointPositions.rws1": {
+    "successes": 2160,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/jointtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getJointPositions.rws2": {
+    "successes": 6223,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/jointtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getJointTargetFull.rws1": {
+    "successes": 2160,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/jointtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getJointTargetFull.rws2": {
+    "successes": 6223,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/jointtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getLeadThrough.rws1": {
+    "successes": 105,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getLeadThrough.rws2": {
+    "successes": 10,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/lead-through -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitAxes.rws1": {
+    "successes": 13,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/axes -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitAxes.rws2": {
+    "successes": 32,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/axes -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitBaseFrame.rws1": {
+    "successes": 15,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/baseframe -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitBaseFrame.rws2": {
+    "successes": 37,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/baseframe -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitCalib.rws2": {
+    "successes": 14,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/calib -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitInfo.rws1": {
+    "successes": 105,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitInfo.rws2": {
+    "successes": 209,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitMotorCalib.rws1": {
+    "successes": 6,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/motorcalib -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitMotorCalib.rws2": {
+    "successes": 10,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/motorcalib -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitPjoints.rws1": {
+    "successes": 6,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/pjoints -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitPjoints.rws2": {
+    "successes": 10,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/pjoints -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitSmbData.rws1": {
+    "successes": 6,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/smbdata -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMechunitSmbData.rws2": {
+    "successes": 5,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/smbdata -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.getMotionChangeCount.rws1": {
+    "successes": 77,
+    "example": "GET /rw/motionsystem -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMotionChangeCount.rws2": {
+    "successes": 154,
+    "example": "GET /rw/motionsystem?resource=change-count -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMotionErrorState.rws1": {
+    "successes": 13,
+    "example": "GET /rw/motionsystem/errorstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMotionErrorState.rws2": {
+    "successes": 28,
+    "example": "GET /rw/motionsystem/errorstate -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.getMotionSupervision.rws1": {
+    "successes": 8,
+    "example": "GET /rw/motionsystem/motionsupervision?mechunit=ROB_1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getMotionSupervision.rws2": {
+    "successes": 26,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/motionsupervision -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getNonMotionExecution.rws1": {
+    "successes": 31,
+    "example": "GET /rw/motionsystem/nonmotionexecution -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getNonMotionExecution.rws2": {
+    "successes": 39,
+    "example": "GET /rw/motionsystem/nonmotionexecution -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getPathSupervision.rws1": {
+    "successes": 4,
+    "example": "GET /rw/motionsystem/pathsupervision?mechunit=ROB_1 -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.getPathSupervision.rws2": {
+    "successes": 15,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/pathsupervision -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.getRobTarget.rws1": {
+    "successes": 3,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/robtarget -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.getRobTarget.rws2": {
+    "successes": 12,
+    "example": "GET /rw/motionsystem/mechunits/ROB_1/robtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.jog.rws2": {
+    "successes": 5,
+    "example": "POST /rw/motionsystem/jog -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.listMechunits.rws1": {
+    "successes": 450,
+    "example": "GET /rw/motionsystem/mechunits -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.listMechunits.rws2": {
+    "successes": 984,
+    "example": "GET /rw/motionsystem/mechunits -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.setActiveTool.rws1": {
+    "successes": 3,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1?action=set -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setActiveTool.rws2": {
+    "successes": 4,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1 -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setActiveWobj.rws1": {
+    "successes": 3,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1?action=set -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setActiveWobj.rws2": {
+    "successes": 4,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1 -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setCollisionPredictionMode.rws2": {
+    "successes": 4,
+    "example": "POST /rw/motionsystem/collisionprediction -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setMechunitBaseFrame.rws1": {
+    "successes": 1,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1/baseframe?action=set -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setMechunitBaseFrame.rws2": {
+    "successes": 4,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1/baseframe -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setMechunitForJogging.rws1": {
+    "successes": 5,
+    "example": "POST /rw/motionsystem?action=set-mechunit -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "motion.setMechunitForJogging.rws2": {
+    "successes": 10,
+    "example": "POST /rw/motionsystem/ROB_1 -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "motion.setNonMotionExecution.rws2": {
+    "successes": 8,
+    "example": "POST /rw/motionsystem/nonmotionexecution -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.setRobtargetForJogging.rws1": {
+    "successes": 2,
+    "example": "POST /rw/motionsystem?action=positiontarget -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "motion.teleportMechunit.rws2": {
+    "successes": 30,
+    "example": "POST /rw/motionsystem/mechunits/ROB_1/position -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "panel.getCollisionDetectionState.rws1": {
+    "successes": 1138,
+    "example": "GET /rw/panel/coldetstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getCollisionDetectionState.rws2": {
+    "successes": 4127,
+    "example": "GET /rw/panel/coldetstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getControllerState.rws1": {
+    "successes": 4088,
+    "example": "GET /rw/panel/ctrlstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getControllerState.rws2": {
+    "successes": 10348,
+    "example": "GET /rw/panel/ctrl-state -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getEnableRequest.rws2": {
+    "successes": 19,
+    "example": "GET /rw/panel/enreq -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getOperationMode.rws1": {
+    "successes": 3456,
+    "example": "GET /rw/panel/opmode -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getOperationMode.rws2": {
+    "successes": 9178,
+    "example": "GET /rw/panel/opmode -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getOperationModeLockState.rws2": {
+    "successes": 45,
+    "example": "GET /rw/panel/opmode/lock-state -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getSpeedRatio.rws1": {
+    "successes": 3383,
+    "example": "GET /rw/panel/speedratio -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.getSpeedRatio.rws2": {
+    "successes": 9052,
+    "example": "GET /rw/panel/speedratio -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.lockOperationMode.rws2": {
+    "successes": 6,
+    "example": "POST /rw/panel/opmode/lock -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "panel.restartController.rws1": {
+    "successes": 3,
+    "example": "POST /rw/panel?action=restart -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.restartController.rws2": {
+    "successes": 9,
+    "example": "POST /ctrl/restart -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.setControllerState.rws1": {
+    "successes": 98,
+    "example": "POST /rw/panel/ctrlstate?action=setctrlstate -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.setControllerState.rws2": {
+    "successes": 191,
+    "example": "POST /rw/panel/ctrl-state -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.setExternalEmergencyStop.rws2": {
+    "successes": 16,
+    "example": "POST /rw/panel/external-emergency-stop -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "panel.setKeylessMotorOn.rws1": {
+    "successes": 1,
+    "example": "POST /rw/cfg?action=keyless -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "panel.setKeylessMotorOn.rws2": {
+    "successes": 2,
+    "example": "POST /rw/panel/ctrl-state/keyless-motoron -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "panel.setOperationMode.rws2": {
+    "successes": 7,
+    "example": "POST /rw/panel/opmode -> 202",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.setPanelLanguage.rws1": {
+    "successes": 1,
+    "example": "POST /rw/panel?action=setlang -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "panel.setPanelLanguage.rws2": {
+    "successes": 6,
+    "example": "POST /rw/panel/lang -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "panel.setSpeedRatio.rws1": {
+    "successes": 291,
+    "example": "POST /rw/panel/speedratio?action=setspeedratio -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.setSpeedRatio.rws2": {
+    "successes": 471,
+    "example": "POST /rw/panel/speedratio?action=setspeedratio -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.simAutoStop.rws2": {
+    "successes": 25,
+    "example": "POST /rw/panel/auto-stop -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.simEmergencyStop.rws2": {
+    "successes": 31,
+    "example": "POST /rw/panel/emergency-stop -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.simEnableSwitch.rws2": {
+    "successes": 32,
+    "example": "POST /rw/panel/enable-switch -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "panel.simGeneralStop.rws2": {
+    "successes": 29,
+    "example": "POST /rw/panel/general-stop -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "panel.unlockOperationMode.rws2": {
+    "successes": 9,
+    "example": "POST /rw/panel/opmode/unlock -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.activateAllRapidTasks.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks?action=activate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.activateRapidTask.rws1": {
+    "successes": 2,
+    "example": "POST /rw/rapid/tasks/T_ROB1?action=activate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.activateRapidTask.rws2": {
+    "successes": 5,
+    "example": "POST /rw/rapid/tasks/T_ROB1/activate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.deactivateAllRapidTasks.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks?action=deactivate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.deactivateRapidTask.rws1": {
+    "successes": 2,
+    "example": "POST /rw/rapid/tasks/T_ROB1?action=deactivate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.deactivateRapidTask.rws2": {
+    "successes": 5,
+    "example": "POST /rw/rapid/tasks/T_ROB1/deactivate -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getActiveUiInstruction.rws1": {
+    "successes": 6,
+    "example": "GET /rw/rapid/uiinstr/active -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getActiveUiInstruction.rws2": {
+    "successes": 6,
+    "example": "GET /rw/rapid/uiinstr/active -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getBuildErrors.rws1": {
+    "successes": 11,
+    "example": "GET /rw/rapid/tasks/T_ROB1/program/builderror -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getBuildErrors.rws2": {
+    "successes": 34,
+    "example": "GET /rw/rapid/tasks/T_ROB1/program/builderror -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getExecutionErrorState.rws2": {
+    "successes": 1,
+    "example": "GET /rw/rapid/execution/execerrorstate -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getModPossibleAll.rws2": {
+    "successes": 10,
+    "example": "GET /rw/rapid/modules -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleAttributes.rws2": {
+    "successes": 3,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/attributes?attribute=%5Bnostepin%5D -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getModuleChangeCount.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/changecount -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getModuleExtension.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/module-extension -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getModuleInfo.rws1": {
+    "successes": 120,
+    "example": "GET /rw/rapid/modules/ZZ_PROBE_NOSUCH?task=T_ROB1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleInfo.rws2": {
+    "successes": 31,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleModPossible.rws2": {
+    "successes": 10,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/ZZ_PROBE_NEWOPS/mod-possible?startrow=1&startcol=1&endrow=13&endcol=1 -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleObject.rws2": {
+    "successes": 10,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/ZZ_PROBE_NEWOPS/object -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleSymbolInfo.rws2": {
+    "successes": 11,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/symbol?row=10&col=17 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleSyncPersStatus.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/sync-pers -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getModuleText.rws1": {
+    "successes": 120,
+    "example": "GET /rw/rapid/modules/ZZ_PROBE_NOSUCH?task=T_ROB1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleText.rws2": {
+    "successes": 140,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/ZZ_PROBE/text -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleTextRange.rws1": {
+    "successes": 120,
+    "example": "GET /rw/rapid/modules/ZZ_PROBE_NOSUCH?task=T_ROB1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getModuleTextRange.rws2": {
+    "successes": 48,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/text/range?startrow=1&startcol=1&endrow=3&endcol=-1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getMotionPointerSyncState.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/syncstate/motion-pointer -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getProgramPointer.rws1": {
+    "successes": 836,
+    "example": "GET /rw/rapid/tasks/T_ROB1/pcp -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getProgramPointer.rws2": {
+    "successes": 1878,
+    "example": "GET /rw/rapid/tasks/T_ROB1/pcp -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getProgramPointerSyncState.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/syncstate/program-pointer -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getRapidExecutionInfo.rws1": {
+    "successes": 4228,
+    "example": "GET /rw/rapid/execution -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidExecutionInfo.rws2": {
+    "successes": 10285,
+    "example": "GET /rw/rapid/execution -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidExecutionState.rws1": {
+    "successes": 4228,
+    "example": "GET /rw/rapid/execution -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidExecutionState.rws2": {
+    "successes": 10285,
+    "example": "GET /rw/rapid/execution -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidSymbolProperties.rws1": {
+    "successes": 225,
+    "example": "GET /rw/rapid/symbol/properties/RAPID/T_ROB1/BASE/tool0 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidSymbolProperties.rws2": {
+    "successes": 475,
+    "example": "GET /rw/rapid/symbol/RAPID/T_ROB1/BASE/tool0/properties -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidTask.rws1": {
+    "successes": 14,
+    "example": "GET /rw/rapid/tasks/T_ROB1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidTask.rws2": {
+    "successes": 10,
+    "example": "GET /rw/rapid/tasks/T_ROB1 -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidTasks.rws1": {
+    "successes": 1994,
+    "example": "GET /rw/rapid/tasks -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidTasks.rws2": {
+    "successes": 6043,
+    "example": "GET /rw/rapid/tasks -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidVariable.rws1": {
+    "successes": 2276,
+    "example": "GET /rw/rapid/symbol/data/RAPID/T_ROB1/BASE/tool0 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getRapidVariable.rws2": {
+    "successes": 3285,
+    "example": "GET /rw/rapid/symbol/RAPID/T_ROB1/BASE/tool0/data -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getSpyStatus.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/spy -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskChangeCount.rws2": {
+    "successes": 4,
+    "example": "GET /rw/rapid/tasks/T_ROB1/structural-changecount -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskExtJointState.rws2": {
+    "successes": 18,
+    "example": "GET /rw/rapid/tasks/T_ROB1/motion/extjointstate -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getTaskJointTarget.rws2": {
+    "successes": 28,
+    "example": "GET /rw/rapid/tasks/T_ROB1/motion/jointtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getTaskMechunits.rws2": {
+    "successes": 18,
+    "example": "GET /rw/rapid/tasks/T_ROB1/motion/mechunits -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getTaskMotion.rws1": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1/motion -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskMotion.rws2": {
+    "successes": 4,
+    "example": "GET /rw/rapid/tasks/T_ROB1/motion -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskProgramInfo.rws1": {
+    "successes": 11,
+    "example": "GET /rw/rapid/tasks/T_ROB1/program -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskProgramInfo.rws2": {
+    "successes": 6,
+    "example": "GET /rw/rapid/tasks/T_ROB1/program -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskRobTarget.rws2": {
+    "successes": 18,
+    "example": "GET /rw/rapid/tasks/T_ROB1/motion/robtarget -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.getTaskSelection.rws1": {
+    "successes": 1,
+    "example": "GET /rw/rapid/taskselection -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskSelection.rws2": {
+    "successes": 35,
+    "example": "GET /rw/rapid/taskselection -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskStructuralChangeCount.rws1": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1?resource=task-struc-change-count -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.getTaskStructuralChangeCount.rws2": {
+    "successes": 4,
+    "example": "GET /rw/rapid/tasks/T_ROB1/structural-changecount -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.holdToRun.rws1": {
+    "successes": 2,
+    "example": "POST /rw/rapid/execution?action=holdtorun-state -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.listAliasIO.rws1": {
+    "successes": 2,
+    "example": "GET /rw/rapid/aliasio -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.listBreakpoints.rws1": {
+    "successes": 11,
+    "example": "GET /rw/rapid/tasks/T_ROB1/program/breakpoint -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listBreakpoints.rws2": {
+    "successes": 32,
+    "example": "GET /rw/rapid/tasks/T_ROB1/program/breakpoints -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listInstructionCategories.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1/pallet-head -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.listInstructions.rws2": {
+    "successes": 2,
+    "example": "GET /rw/rapid/tasks/T_ROB1/pallet/1 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.listModuleRoutines.rws1": {
+    "successes": 90,
+    "example": "POST /rw/rapid/symbols?action=search-symbols -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listModuleRoutines.rws2": {
+    "successes": 188,
+    "example": "POST /rw/rapid/symbols/search -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listModules.rws1": {
+    "successes": 2977,
+    "example": "GET /rw/rapid/modules?task=T_ROB1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listModules.rws2": {
+    "successes": 8099,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listModulesDetailed.rws1": {
+    "successes": 2977,
+    "example": "GET /rw/rapid/modules?task=T_ROB1 -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listModulesDetailed.rws2": {
+    "successes": 8099,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.listServiceRoutines.rws1": {
+    "successes": 4,
+    "example": "GET /rw/rapid/tasks/T_ROB1/serviceroutine -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.listServiceRoutines.rws2": {
+    "successes": 6,
+    "example": "GET /rw/rapid/tasks/T_ROB1/serviceroutine -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.loadModule.rws1": {
+    "successes": 180,
+    "example": "POST /rw/rapid/tasks/T_ROB1?action=loadmod -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.loadModule.rws2": {
+    "successes": 362,
+    "example": "POST /rw/rapid/tasks/T_ROB1/loadmod -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.loadProgram.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program?action=loadprog -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.loadProgram.rws2": {
+    "successes": 4,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program/load -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.ppNextInst.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp?action=set-pp-next-inst -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.ppNextInst.rws2": {
+    "successes": 6,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp/next-inst -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.ppPrevInst.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp?action=set-pp-prev-inst -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.ppPrevInst.rws2": {
+    "successes": 3,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp/prev-inst -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.resetRapid.rws1": {
+    "successes": 12,
+    "example": "POST /rw/rapid/execution?action=resetpp -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.resetRapid.rws2": {
+    "successes": 28,
+    "example": "POST /rw/rapid/execution/resetpp -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.resetTaskProgramPointer.rws2": {
+    "successes": 3,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp/reset -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.saveModule.rws1": {
+    "successes": 3,
+    "example": "POST /rw/rapid/modules/ZZ_RW6W?task=T_ROB1&action=save -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.saveModule.rws2": {
+    "successes": 3,
+    "example": "POST /rw/rapid/tasks/T_ROB1/modules/ZZ_PROBE/save -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.saveProgram.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program?action=save -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.saveProgram.rws2": {
+    "successes": 5,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program/save -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.searchModuleText.rws2": {
+    "successes": 13,
+    "example": "GET /rw/rapid/tasks/T_ROB1/modules/BASE/text/search?text=tool0 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.searchRapidSymbols.rws1": {
+    "successes": 90,
+    "example": "POST /rw/rapid/symbols?action=search-symbols -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.searchRapidSymbols.rws2": {
+    "successes": 188,
+    "example": "POST /rw/rapid/symbols/search -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.setBreakpoint.rws1": {
+    "successes": 3,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program/breakpoint?action=set -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setBreakpoint.rws2": {
+    "successes": 8,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program/breakpoints -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setExecutionCycle.rws1": {
+    "successes": 116,
+    "example": "POST /rw/rapid/execution?action=setcycle -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.setExecutionCycle.rws2": {
+    "successes": 128,
+    "example": "POST /rw/rapid/execution/cycle -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.setModuleText.rws1": {
+    "successes": 7,
+    "example": "POST /rw/rapid/modules/ZZ_RW6W?action=set-module-text&task=T_ROB1 -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setModuleText.rws2": {
+    "successes": 6,
+    "example": "POST /rw/rapid/tasks/T_ROB1/modules/ZZ_PROBE/text -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setModuleTextRange.rws1": {
+    "successes": 3,
+    "example": "POST /rw/rapid/modules/ZZ_RW6W?action=set-text-range&task=T_ROB1 -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setModuleTextRange.rws2": {
+    "successes": 3,
+    "example": "POST /rw/rapid/tasks/T_ROB1/modules/ZZ_PROBE/text/range -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setPPToCursor.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp?action=set-pp-cursor -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setPPToCursor.rws2": {
+    "successes": 3,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp/cursor -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.setProgramPointer.rws1": {
+    "successes": 196,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp?action=set-pp-routine -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.setProgramPointer.rws2": {
+    "successes": 287,
+    "example": "POST /rw/rapid/tasks/T_ROB1/pcp/routine -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.setRapidVariable.rws1": {
+    "successes": 222,
+    "example": "POST /rw/rapid/symbol/data/RAPID/T_ROB1/ZZ_PROBE_RD/zz_probe_rd_vnum?action=set -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.setRapidVariable.rws2": {
+    "successes": 507,
+    "example": "POST /rw/rapid/symbol/RAPID/T_ROB1/ZZ_PROBE/zz_n10/data -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.setUiInstructionParam.rws1": {
+    "successes": 3,
+    "example": "POST /rw/rapid/uiinstr/active/param/RAPID/T_ROB1/%25%2416617/TPCompleted?action=set -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.startProductionEntry.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/execution?action=startprodentry -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.startProductionEntry.rws2": {
+    "successes": 1,
+    "example": "POST /rw/rapid/execution/startprodentry -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.startRapid.rws1": {
+    "successes": 162,
+    "example": "POST /rw/rapid/execution?action=start -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.startRapid.rws2": {
+    "successes": 166,
+    "example": "POST /rw/rapid/execution/start -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.stepRapid.rws2": {
+    "successes": 1,
+    "example": "POST /rw/rapid/execution/start -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.stopRapid.rws1": {
+    "successes": 104,
+    "example": "POST /rw/rapid/execution?action=stop -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.stopRapid.rws2": {
+    "successes": 109,
+    "example": "POST /rw/rapid/execution/stop -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.unloadModule.rws1": {
+    "successes": 180,
+    "example": "POST /rw/rapid/tasks/T_ROB1?action=unloadmod -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.unloadModule.rws2": {
+    "successes": 353,
+    "example": "POST /rw/rapid/tasks/T_ROB1/unloadmod -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "rapid.unloadProgram.rws1": {
+    "successes": 1,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program?action=unloadprog -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.unloadProgram.rws2": {
+    "successes": 2,
+    "example": "POST /rw/rapid/tasks/T_ROB1/program/unload -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "rapid.validateRapidValue.rws1": {
+    "successes": 24,
+    "example": "POST /rw/rapid/symbol/data?action=validate -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "rapid.validateRapidValue.rws2": {
+    "successes": 62,
+    "example": "POST /rw/rapid/symbols/validate -> 204",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "systemMastership.appealWriteAccessRelease.rws2": {
+    "successes": 3,
+    "example": "POST /rw/controlstation/writeaccess/release/appeal -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.getAllowMotionControl.rws2": {
+    "successes": 398,
+    "example": "GET /rw/controlstation/allowmotioncontrol -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getControlStationId.rws2": {
+    "successes": 31,
+    "example": "GET /rw/controlstation/id -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.getControlStationType.rws2": {
+    "successes": 98,
+    "example": "GET /rw/controlstation/type -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getEnergyStats.rws1": {
+    "successes": 11,
+    "example": "GET /rw/system/energy -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getEnergyStats.rws2": {
+    "successes": 31,
+    "example": "GET /rw/system/energy -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getLicenseInfo.rws1": {
+    "successes": 11,
+    "example": "GET /rw/system/license -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getLicenseInfo.rws2": {
+    "successes": 17,
+    "example": "GET /rw/system/license -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "systemMastership.getMastershipStatus.rws1": {
+    "successes": 200,
+    "example": "GET /rw/mastership/rapid -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getMastershipStatus.rws2": {
+    "successes": 282,
+    "example": "GET /rw/mastership/edit -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getRobotType.rws1": {
+    "successes": 27,
+    "example": "GET /rw/system/robottype -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getRobotType.rws2": {
+    "successes": 20,
+    "example": "GET /rw/system/robottype -> 200",
+    "sources": [
+      "functional trace"
+    ]
+  },
+  "systemMastership.getSystemInfo.rws1": {
+    "successes": 635,
+    "example": "GET /rw/system -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getSystemInfo.rws2": {
+    "successes": 2724,
+    "example": "GET /rw/system -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.getTpuSafetyProtocolStatus.rws2": {
+    "successes": 3,
+    "example": "GET /rw/controlstation/tpu/safety/protocol/status -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.getWriteAccessAppealChangeCount.rws2": {
+    "successes": 7,
+    "example": "GET /rw/controlstation/writeaccess/release/appeal/changecount -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.getWriteAccessStatus.rws2": {
+    "successes": 438,
+    "example": "GET /rw/controlstation/writeaccess/status -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.isLocalControlStationConnected.rws2": {
+    "successes": 1,
+    "example": "GET /rw/controlstation/local/isconnected -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.listControllerOptions.rws1": {
+    "successes": 12,
+    "example": "GET /rw/system/options -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.listControllerOptions.rws2": {
+    "successes": 30,
+    "example": "GET /rw/system/options -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.listMastershipDomains.rws1": {
+    "successes": 21,
+    "example": "GET /rw/mastership -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.listMastershipDomains.rws2": {
+    "successes": 39,
+    "example": "GET /rw/mastership -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.listProducts.rws1": {
+    "successes": 15,
+    "example": "GET /rw/system/products -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.listProducts.rws2": {
+    "successes": 28,
+    "example": "GET /rw/system/products -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.registerControlStationRemote.rws2": {
+    "successes": 252,
+    "example": "POST /rw/controlstation/register/remote -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.releaseMastership.rws1": {
+    "successes": 1456,
+    "example": "POST /rw/mastership/rapid?action=release -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.releaseMastership.rws2": {
+    "successes": 1910,
+    "example": "POST /rw/mastership/edit/release -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.releaseMastershipAll.rws1": {
+    "successes": 2,
+    "example": "POST /rw/mastership?action=release -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.releaseMastershipAll.rws2": {
+    "successes": 1,
+    "example": "POST /rw/mastership/release -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.releaseMastershipWithId.rws2": {
+    "successes": 7,
+    "example": "POST /rw/mastership/edit/release-with-id -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.releaseWriteAccess.rws2": {
+    "successes": 1106,
+    "example": "POST /rw/controlstation/writeaccess/release -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.requestMastership.rws1": {
+    "successes": 1465,
+    "example": "POST /rw/mastership/rapid?action=request -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.requestMastership.rws2": {
+    "successes": 1914,
+    "example": "POST /rw/mastership/edit/request -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.requestMastershipAll.rws1": {
+    "successes": 2,
+    "example": "POST /rw/mastership?action=request -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.requestMastershipAll.rws2": {
+    "successes": 1,
+    "example": "POST /rw/mastership/request -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.requestMastershipWithId.rws2": {
+    "successes": 7,
+    "example": "POST /rw/mastership/edit/request-with-id -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.requestWriteAccess.rws2": {
+    "successes": 1134,
+    "example": "POST /rw/controlstation/writeaccess/request -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.resetEnergy.rws2": {
+    "successes": 4,
+    "example": "POST /rw/system/energy/reset -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "systemMastership.resetMastershipWatchdog.rws2": {
+    "successes": 216,
+    "example": "POST /rw/mastership/watchdog -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "systemMastership.setAllowMotionControl.rws2": {
+    "successes": 5,
+    "example": "POST /rw/controlstation/allowmotioncontrol -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.cancelRmmp.rws1": {
+    "successes": 8,
+    "example": "POST /users/rmmp?action=cancel -> 204",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.cancelRmmp.rws2": {
+    "successes": 10,
+    "example": "POST /users/rmmp/cancel -> 204",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.checkGrantExists.rws2": {
+    "successes": 527,
+    "example": "GET /users/grant-exists?grant=UAS_ALLOW_REMOTE_ACCESS_IN_MAN_MODE -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.getLoginInfo.rws2": {
+    "successes": 19,
+    "example": "GET /users/login-info -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.getRmmpPrivilege.rws1": {
+    "successes": 105,
+    "example": "GET /users/rmmp -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.getRmmpPrivilege.rws2": {
+    "successes": 96,
+    "example": "GET /users/rmmp -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.getUasRole.rws2": {
+    "successes": 12,
+    "example": "GET /uas/roles/Operator -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.getUasRoleDescription.rws2": {
+    "successes": 2,
+    "example": "GET /uas/roles/Administrator/description -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.getUasUser.rws2": {
+    "successes": 12,
+    "example": "GET /uas/users/Default%20User -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.getUasUserDescription.rws2": {
+    "successes": 2,
+    "example": "GET /uas/users/Admin/description -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.isPasswordChangeAllowed.rws2": {
+    "successes": 13,
+    "example": "GET /uas/user/password-change-allow -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.isUasUserEnabled.rws2": {
+    "successes": 2,
+    "example": "GET /uas/users/Admin/enable -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.isUasUserPasswordChangeAllowed.rws2": {
+    "successes": 11,
+    "example": "GET /uas/users/Default%20User/password-change-allow -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listAllGrants.rws2": {
+    "successes": 54,
+    "example": "GET /uas/grants -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listCurrentUserGrants.rws1": {
+    "successes": 15,
+    "example": "GET /users/grants -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listCurrentUserGrants.rws2": {
+    "successes": 85,
+    "example": "GET /uas/user/grants -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listLdapResources.rws2": {
+    "successes": 21,
+    "example": "GET /uas/ldap -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listUasRoleGrants.rws2": {
+    "successes": 2,
+    "example": "GET /uas/roles/Administrator/grants -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.listUasRoles.rws2": {
+    "successes": 2,
+    "example": "GET /uas/roles -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.listUasUserGrants.rws2": {
+    "successes": 15,
+    "example": "GET /uas/users/Default%20User/grants -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listUasUserRoles.rws2": {
+    "successes": 41,
+    "example": "GET /uas/users/Default%20User/roles -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.listUasUsers.rws2": {
+    "successes": 2,
+    "example": "GET /uas/users -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.pollRmmp.rws1": {
+    "successes": 129,
+    "example": "GET /users/rmmp/poll -> 200",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.pollRmmp.rws2": {
+    "successes": 205,
+    "example": "GET /users/rmmp/poll -> 200",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  },
+  "usersUas.registerUser.rws2": {
+    "successes": 4,
+    "example": "POST /users/register -> 201",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.requestRmmp.rws1": {
+    "successes": 4,
+    "example": "POST /users/rmmp -> 202",
+    "sources": [
+      "probe log"
+    ]
+  },
+  "usersUas.requestRmmp.rws2": {
+    "successes": 6,
+    "example": "POST /users/rmmp -> 202",
+    "sources": [
+      "probe log",
+      "functional trace"
+    ]
+  }
+}

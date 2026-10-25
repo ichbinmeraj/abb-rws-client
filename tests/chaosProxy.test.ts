@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { startChaosProxy, type ChaosProxy } from './helpers/chaosProxy.js';
+import { asksUpgrade, startChaosProxy, type ChaosProxy } from './helpers/chaosProxy.js';
+import { REFUSED_LISTEN_PORTS, listenOnRefusedPort } from './helpers/refusedPorts.js';
+import { answer, scriptedServer, type ScriptedServer } from './helpers/scriptedHttp.js';
+import { FETCH_BAD_PORTS, fetchRefusesUrl } from '../src/badPorts.js';
+import { HttpSession } from '../src/HttpSession.js';
+import { RwsError } from '../src/types.js';
 
 /** Echo server used as the proxy target. */
 async function startEcho(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -149,9 +154,131 @@ describe('chaosProxy', () => {
   });
 
   it('close shuts the listener down', async () => {
+    const before = proxy.stats().connectionsTotal;
     await proxy.close();
-    await expect(connect(proxy.port)).rejects.toThrow();
+    // The closed proxy accepts nothing. The freed port itself may already belong to a
+    // listener another test file just opened (ports are reused under load), so a
+    // connect there can succeed: what counts is that this proxy never saw it.
+    const late = await connect(proxy.port).catch(() => null);
+    late?.destroy();
+    expect(proxy.stats().connectionsTotal).toBe(before);
     // afterEach double-close must not throw
+  });
+
+  it('openConnections lists the open connections by index and tells the one whose first request asked for a WebSocket upgrade', async () => {
+    const plain = await connect(proxy.port);
+    await sendAndReceive(plain, 'GET /rw/system HTTP/1.1\r\nHost: x\r\n\r\n');
+    const ws = await connect(proxy.port);
+    await sendAndReceive(ws, 'GET /poll/1 HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
+    const tls = await connect(proxy.port);
+    await sendAndReceive(tls, '\x16\x03\x01\x02\x00\x01');
+
+    expect(proxy.openConnections()).toEqual([
+      { index: 1, upgrade: false },
+      { index: 2, upgrade: true },
+      { index: 3, upgrade: null },
+    ]);
+    const closed = new Promise<void>(resolve => ws.once('close', () => resolve()));
+    ws.destroy();
+    await closed;
+    await until(() => proxy.openConnections().length === 2);
+    expect(proxy.openConnections().map(c => c.index)).toEqual([1, 3]);
+    plain.destroy();
+    tls.destroy();
+  });
+});
+
+describe('asksUpgrade', () => {
+  it('reads the first request head only, and says null when it is not readable HTTP or not complete', () => {
+    expect(asksUpgrade('GET /poll/1 HTTP/1.1\r\nupgrade: WebSocket\r\n\r\n')).toBe(true);
+    expect(asksUpgrade('GET /rw/system HTTP/1.1\r\nHost: x\r\n\r\nGET /x HTTP/1.1\r\nUpgrade: websocket\r\n\r\n')).toBe(false);
+    expect(asksUpgrade('GET /poll/1 HTTP/1.1\r\nUpgrade: websocket\r\n')).toBeNull();
+    expect(asksUpgrade('\x16\x03\x01')).toBeNull();
+    expect(asksUpgrade('')).toBeNull();
+  });
+});
+
+async function until(check: () => boolean, ms = 2000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) { throw new Error('condition not met in time'); }
+    await wait(10);
+  }
+}
+
+describe('chaosProxy - the port it listens on, and the RWS 1.0 transport behind it', () => {
+  const opened: Array<{ close: () => Promise<void> }> = [];
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    for (const o of opened.splice(0).reverse()) { await o.close(); }
+  });
+
+  it('the ports a test may listen on for node:http are the bad ports from 1024 up, every one refused by fetch', () => {
+    expect(REFUSED_LISTEN_PORTS.slice(0, 6)).toEqual([10080, 6665, 6666, 6667, 6668, 6669]);
+    expect([...REFUSED_LISTEN_PORTS].sort((a, b) => a - b))
+      .toEqual([...FETCH_BAD_PORTS].filter(p => p >= 1024).sort((a, b) => a - b));
+    expect(new Set(REFUSED_LISTEN_PORTS).size).toBe(REFUSED_LISTEN_PORTS.length);
+    for (const p of REFUSED_LISTEN_PORTS) { expect(fetchRefusesUrl(`http://127.0.0.1:${p}`), String(p)).toBe(true); }
+  });
+
+  it('a held refused port is passed over for the next free one, and none free fails naming each port', async () => {
+    const first = net.createServer();
+    const p1 = await listenOnRefusedPort(first);
+    opened.push({ close: () => new Promise<void>(r => first.close(() => r())) });
+    const second = net.createServer();
+    const p2 = await listenOnRefusedPort(second);
+    opened.push({ close: () => new Promise<void>(r => second.close(() => r())) });
+    expect(p2).not.toBe(p1);
+    expect(REFUSED_LISTEN_PORTS).toContain(p2);
+
+    const third = net.createServer();
+    await expect(listenOnRefusedPort(third, '127.0.0.1', [p1, p2]))
+      .rejects.toThrow(`none of the ports Node's fetch refuses could be listened on at 127.0.0.1 (${p1} EADDRINUSE, ${p2} EADDRINUSE)`);
+    expect(third.listening).toBe(false);
+  });
+
+  it('listens on a port fetch accepts by default, and on one it refuses when asked', async () => {
+    const echo = await startEcho();
+    opened.push(echo);
+    const plain = await startChaosProxy('127.0.0.1', echo.port);
+    opened.push(plain);
+    const refused = await startChaosProxy('127.0.0.1', echo.port, { listen: 'fetch-refused' });
+    opened.push(refused);
+    expect(fetchRefusesUrl(`http://127.0.0.1:${plain.port}`)).toBe(false);
+    expect(fetchRefusesUrl(`http://127.0.0.1:${refused.port}`)).toBe(true);
+    const client = await connect(refused.port);
+    expect(await sendAndReceive(client, 'through a refused port')).toBe('through a refused port');
+    client.destroy();
+  });
+
+  it('an RWS 1.0 session through a proxy on a refused port sends through node:http: a cut answer is a typed error, then it recovers', async () => {
+    const srv: ScriptedServer = await scriptedServer();
+    opened.push(srv);
+    srv.alwaysBy(r => (r.headers.authorization
+      ? answer(200, '<html><body><span class="ctrlstate">motoroff</span></body></html>')
+      : answer(401, '', { 'www-authenticate': 'Digest realm="robot", nonce="proxy-nonce", qop="auth", algorithm=MD5' })));
+    const proxy = await startChaosProxy('127.0.0.1', srv.port, { listen: 'fetch-refused' });
+    opened.push(proxy);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const session = new HttpSession({
+      baseUrl: `http://127.0.0.1:${proxy.port}`, username: 'Default User', password: 'robotics',
+      requestIntervalMs: 0, timeoutMs: 3000,
+    });
+    opened.push({ close: async () => { session.close(); } });
+
+    expect((await session.get('/rw/panel/ctrlstate')).status).toBe(200);
+
+    // Cut the next answer 20 bytes in and drop the connection, as cell S01 does.
+    proxy.setCorruption({ kind: 'truncate-and-drop', afterBytes: 20 });
+    const err = await session.get('/rw/panel/ctrlstate').then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(RwsError);
+    expect((err as RwsError).code).toBe('NETWORK_ERROR');
+
+    proxy.setCorruption({ kind: 'none' });
+    expect((await session.get('/rw/panel/ctrlstate')).status).toBe(200);
+    // Every request went through the proxy, and none through fetch.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(srv.requests.length).toBeGreaterThanOrEqual(4);
   });
 });
 

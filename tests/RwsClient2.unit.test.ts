@@ -100,6 +100,50 @@ describe('RwsClient2 (unit)', () => {
     });
   });
 
+  describe('resourcePathToName (event href → friendly name)', () => {
+    const name = (href: string): string => RwsClient2.resourcePathToName(href);
+
+    it('maps the panel and execution resources, in both generations\' spellings', () => {
+      expect(name('/rw/panel/ctrl-state')).toBe('controllerstate');
+      expect(name('/rw/panel/ctrlstate;ctrlstate')).toBe('controllerstate');
+      expect(name('/rw/panel/opmode')).toBe('operationmode');
+      expect(name('/rw/panel/opmode;opmode')).toBe('operationmode');
+      expect(name('/rw/panel/speedratio;speedratio')).toBe('speedratio');
+      expect(name('/rw/rapid/execution')).toBe('execution');
+      expect(name('/rw/rapid/execution;ctrlexecstate')).toBe('execution');
+      // The href captured live on an RW8.1.1 subscription.
+      expect(name('/rw/panel/coldetstate')).toBe('coldetstate');
+      expect(name('/rw/elog/0/42')).toBe('elog');
+      expect(name('https://127.0.0.1:9403/rw/panel/speedratio')).toBe('speedratio');
+      expect(name('rw/panel/opmode')).toBe('operationmode');
+    });
+
+    it('passes a signal whose name starts with a panel word through untouched', () => {
+      for (const href of [
+        '/rw/iosystem/signals/opmode_sel;state',
+        '/rw/iosystem/signals/Local/DRV_1/execution_done;state',
+        '/rw/iosystem/signals/speedratio_ao;state',
+        '/rw/iosystem/signals/ctrlstate_di;state',
+        '/rw/iosystem/signals/coldetstate1;state',
+        '/rw/iosystem/signals/EtherNetIP/elog/di_1;state',
+      ]) {
+        expect(name(href)).toBe(href);
+      }
+    });
+
+    it('does not take a longer panel name or the execution cycle for the resource', () => {
+      expect(name('/rw/panel/opmodelock')).toBe('/rw/panel/opmodelock');
+      expect(name('/rw/panel/speedratiox')).toBe('/rw/panel/speedratiox');
+      expect(name('/rw/rapid/execution;rapidexeccycle')).toBe('/rw/rapid/execution;rapidexeccycle');
+    });
+
+    it('returns a friendly name unchanged', () => {
+      for (const n of ['controllerstate', 'operationmode', 'speedratio', 'execution', 'coldetstate', 'elog']) {
+        expect(name(n)).toBe(n);
+      }
+    });
+  });
+
   describe('constructor signature', () => {
     it('accepts (baseUrl, username, password)', () => {
       // Construction shouldn't throw - actual network only happens on .connect().
@@ -161,12 +205,19 @@ describe('RwsClient2 (unit)', () => {
   });
 
   describe('writeSignal', () => {
-    it('rejects with RwsError instead of firing a malformed request when network/device are unknown', async () => {
+    // Up to 1.3.x an uncached name was refused before sending, which made every
+    // signal with no device unwritable. The client now reads the signal by name
+    // first; an answer that does not say where the signal lives still sends no
+    // write, and never a malformed /signals///{name}/set-value.
+    it('sends no write when the lookup answer does not say where the signal lives', async () => {
       const { server, port, requests } = await startServer(ok204);
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
-        await expect(client.writeSignal('', '', 'doGripper', '1')).rejects.toBeInstanceOf(RwsError);
-        expect(requests.length).toBe(0); // nothing must go on the wire
+        const err = await client.writeSignal('', '', 'doGripper', '1').catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RwsError);
+        expect((err as RwsError).code).toBe('PARSE_ERROR');
+        expect((err as RwsError).message).toMatch(/nothing was written/);
+        expect(requests.map(r => `${r.method} ${r.url}`)).toEqual(['GET /rw/iosystem/signals/doGripper']);
       } finally { server.close(); }
     });
 
@@ -188,6 +239,205 @@ describe('RwsClient2 (unit)', () => {
         expect(requests.some(r =>
           r.method === 'POST' && r.url === '/rw/iosystem/signals/Net/Dev/doGripper/set-value',
         )).toBe(true);
+      } finally { server.close(); }
+    });
+
+    // Bodies as an RW 8.1.1 VC answered a bare-name read (2026-09-27). The
+    // entry's own self link points at the DEVICE, not the signal, so only the
+    // title may be used; for a signal with no device the title is the bare
+    // name, devicenm is empty and the self link is `devices/`.
+    const HAL_DEVICE_BOUND = '{ "_links" : { "base" : { "href" : "https://127.0.0.1:80/rw/iosystem/" }, "self" : { "href" : "signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8" } }  , "_embedded" : { "resources" : [ { "_links" : { "self" : { "href" : "devices/IntegratedIOInternalDevice" } }, "_type" : "ios-signal-li", "_title" : "IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8", "name" : "IIO_do8", "type" : "DO", "category" : "", "lvalue" : "0", "lstate" : "not simulated", "devicenm" : "IntegratedIOInternalDevice", "phstate" : "valid", "pvalue" : "0", "quality" : "good", "access-level" : "Default", "write-access" : "Rapid|LocalManual", "safe-level" : "DefaultSafeLevel" } ] }}';
+    const HAL_NO_DEVICE = '{ "_links" : { "base" : { "href" : "https://127.0.0.1:80/rw/iosystem/" }, "self" : { "href" : "signals/CollaborativeOperationIsActive" } }  , "_embedded" : { "resources" : [ { "_links" : { "self" : { "href" : "devices/" } }, "_type" : "ios-signal-li", "_title" : "CollaborativeOperationIsActive", "name" : "CollaborativeOperationIsActive", "type" : "DO", "category" : "", "lvalue" : "0", "lstate" : "not simulated", "devicenm" : "", "phstate" : "valid", "pvalue" : "0", "quality" : "good", "access-level" : "Default", "write-access" : "Rapid|LocalManual", "safe-level" : "DefaultSafeLevel" } ] }}';
+    const XHTML_DEVICE_BOUND = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><base href="https://127.0.0.1:80/rw/iosystem/"/></head><body><div class="state"><a href="signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8" rel="self"></a><ul><li class="ios-signal-li" title="IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8"> <a href="devices/IntegratedIOInternalDevice" rel="self"></a> <span class="name">IIO_do8</span> <span class="type">DO</span> <span class="lvalue">0</span> <span class="devicenm">IntegratedIOInternalDevice</span></li></ul></div></body></html>';
+    const hal = (res: http.ServerResponse, body: string): void => {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' }); res.end(body);
+    };
+    const wire = (requests: RecordedRequest[]): string[] => requests.map(r => `${r.method} ${r.url}`);
+
+    it('writes a signal with no device at its bare-name path, after reading it by name', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/rw/iosystem/signals/CollaborativeOperationIsActive') { hal(res, HAL_NO_DEVICE); return; }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.writeSignal('', '', 'CollaborativeOperationIsActive', '1');
+        expect(wire(requests)).toEqual([
+          'GET /rw/iosystem/signals/CollaborativeOperationIsActive',
+          'POST /rw/iosystem/signals/CollaborativeOperationIsActive/set-value',
+        ]);
+        expect(requests[1].body).toBe('lvalue=1');
+        // Remembered: the next write sends no second read.
+        await client.writeSignal('', '', 'CollaborativeOperationIsActive', '0');
+        expect(wire(requests).slice(2)).toEqual(['POST /rw/iosystem/signals/CollaborativeOperationIsActive/set-value']);
+        expect(requests.some(r => r.url.includes('///'))).toBe(false);
+      } finally { server.close(); }
+    });
+
+    it('writes an unlisted device-bound signal at its full path, from the title and not the device link', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/rw/iosystem/signals/IIO_do8') { hal(res, HAL_DEVICE_BOUND); return; }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.writeSignal('', '', 'IIO_do8', '1');
+        await client.writeSignal('', '', 'IIO_do8', '0');
+        expect(wire(requests)).toEqual([
+          'GET /rw/iosystem/signals/IIO_do8',
+          'POST /rw/iosystem/signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8/set-value',
+          'POST /rw/iosystem/signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8/set-value',
+        ]);
+      } finally { server.close(); }
+    });
+
+    it('reads the location from an XHTML answer too', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/rw/iosystem/signals/IIO_do8') {
+          res.writeHead(200, { 'Content-Type': 'application/xhtml+xml;v=2.0' }); res.end(XHTML_DEVICE_BOUND); return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.writeSignal('', '', 'IIO_do8', '1');
+        const posts = requests.filter(r => r.method === 'POST').map(r => r.url);
+        expect(posts).toEqual(['/rw/iosystem/signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8/set-value']);
+      } finally { server.close(); }
+    });
+
+    it('writes a listed signal with no device at its bare-name path without a read', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET' && (req.url ?? '').startsWith('/rw/iosystem/signals?')) {
+          res.writeHead(200, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+          res.end('<html><body><ul>'
+            + '<li class="ios-signal-li" title="SCnCBC1"><a href="signals/SCnCBC1" rel="self"></a><span class="name">SCnCBC1</span><span class="type">DO</span><span class="lvalue">0</span></li>'
+            + '<li class="ios-signal-li" title="Net/Dev/doGripper"><span class="name">doGripper</span><span class="type">DO</span><span class="lvalue">0</span></li>'
+            + '</ul></body></html>');
+          return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.listAllSignals();
+        const before = requests.length;
+        await client.writeSignal('', '', 'SCnCBC1', '1');
+        expect(wire(requests).slice(before)).toEqual(['POST /rw/iosystem/signals/SCnCBC1/set-value']);
+      } finally { server.close(); }
+    });
+
+    it('passes a refused write on unchanged and does not retry it in another form', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET') { hal(res, HAL_NO_DEVICE); return; }
+        res.writeHead(403, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end('<html><body><div class="status"><span class="code">-1073445881</span><span class="msg">rws_resource_iosystem.cpp[3156] Rejected code:-1073445881 icode:-2</span></div></body></html>');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.writeSignal('', '', 'CollaborativeOperationIsActive', '1').catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RwsError);
+        expect((err as RwsError).httpStatus).toBe(403);
+        expect((err as RwsError).controllerCode).toBe(-1073445881);
+        expect(requests.filter(r => r.method === 'POST').map(r => r.url))
+          .toEqual(['/rw/iosystem/signals/CollaborativeOperationIsActive/set-value']);
+      } finally { server.close(); }
+    });
+
+    it('refuses an unknown name with the lookup\'s own code and sends no write', async () => {
+      const { server, port, requests } = await startServer((_req, res) => {
+        res.writeHead(404, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+        res.end('<html><body><div class="status"><span class="code">-1073445866</span><span class="msg">Invalid IO signal name passed in the uri</span></div></body></html>');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.writeSignal('', '', 'noSuchSignal', '1').catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RwsError);
+        expect((err as RwsError).code).toBe('RESOURCE_NOT_FOUND');
+        expect((err as RwsError).httpStatus).toBe(404);
+        expect((err as RwsError).controllerCode).toBe(-1073445866);
+        expect((err as RwsError).message).toMatch(/^writeSignal: nothing was written; reading signal "noSuchSignal" by name/);
+        expect(wire(requests)).toEqual(['GET /rw/iosystem/signals/noSuchSignal']);
+      } finally { server.close(); }
+    });
+
+    it('refuses a name that is not a bare signal name before sending anything', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        for (const bad of ['Net/Dev/do1', 'do1?x=1', '../ctrl', '']) {
+          const err = await client.writeSignal('', '', bad, '1').catch((e: unknown) => e);
+          expect(err, bad).toBeInstanceOf(RwsError);
+          expect((err as RwsError).code, bad).toBe('INVALID_ARGUMENT');
+        }
+        expect(requests.length).toBe(0);
+      } finally { server.close(); }
+    });
+
+    it('does not trust a bare title that names a device', async () => {
+      const contradictory = HAL_NO_DEVICE.replace('"devicenm" : ""', '"devicenm" : "SomeDev"');
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET') { hal(res, contradictory); return; }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.writeSignal('', '', 'CollaborativeOperationIsActive', '1').catch((e: unknown) => e);
+        expect((err as RwsError).code).toBe('PARSE_ERROR');
+        expect(requests.filter(r => r.method === 'POST')).toEqual([]);
+      } finally { server.close(); }
+    });
+
+    it('does not use an answer for a different signal', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET') { hal(res, HAL_DEVICE_BOUND); return; }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.writeSignal('', '', 'IIO_do9', '1').catch((e: unknown) => e);
+        expect((err as RwsError).code).toBe('PARSE_ERROR');
+        expect(requests.filter(r => r.method === 'POST')).toEqual([]);
+      } finally { server.close(); }
+    });
+
+    it('forgets a remembered location the controller answers 404 for, and reads the signal again next time', async () => {
+      let postCount = 0;
+      const { server, port, requests } = await startServer((req, res) => {
+        if (req.method === 'GET' && (req.url ?? '').startsWith('/rw/iosystem/signals?')) {
+          res.writeHead(200, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+          res.end('<html><body><ul><li class="ios-signal-li" title="OldNet/OldDev/IIO_do8"><span class="name">IIO_do8</span></li></ul></body></html>');
+          return;
+        }
+        if (req.method === 'GET') { hal(res, HAL_DEVICE_BOUND); return; }
+        postCount++;
+        if (postCount === 1) {
+          res.writeHead(404, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+          res.end('<html><body><div class="status"><span class="code">-1073445866</span><span class="msg">Invalid IO signal name passed in the uri</span></div></body></html>');
+          return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.listAllSignals();
+        const before = requests.length;
+        await expect(client.writeSignal('', '', 'IIO_do8', '1')).rejects.toMatchObject({ code: 'RESOURCE_NOT_FOUND' });
+        await client.writeSignal('', '', 'IIO_do8', '1');
+        expect(wire(requests).slice(before)).toEqual([
+          'POST /rw/iosystem/signals/OldNet/OldDev/IIO_do8/set-value',
+          'GET /rw/iosystem/signals/IIO_do8',
+          'POST /rw/iosystem/signals/IntegratedIONetwork/IntegratedIOInternalDevice/IIO_do8/set-value',
+        ]);
+      } finally { server.close(); }
+    });
+
+    it('with network and device given, writes at the full path and reads nothing', async () => {
+      const { server, port, requests } = await startServer(ok204);
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.writeSignal('Net', 'Dev', 'do1', '1');
+        expect(wire(requests)).toEqual(['POST /rw/iosystem/signals/Net/Dev/do1/set-value']);
       } finally { server.close(); }
     });
   });
@@ -213,7 +463,13 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.setCfgInstance('SYS', 'CAB_TASKS', 'T_ROB1', { StackSize: '25000', Entry: 'main' });
-        const post = requests.find(r => r.method === 'POST');
+        // The write is held under edit mastership (the adapter takes it itself).
+        expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+          'POST /rw/mastership/edit/request',
+          'POST /rw/cfg/SYS/CAB_TASKS/instances/T_ROB1',
+          'POST /rw/mastership/edit/release',
+        ]);
+        const post = requests.find(r => r.url === '/rw/cfg/SYS/CAB_TASKS/instances/T_ROB1');
         expect(post?.url).toBe('/rw/cfg/SYS/CAB_TASKS/instances/T_ROB1');
         expect(post?.body).toBe('StackSize=[25000,1]&Entry=[main,1]');
         expect(post?.contentType).toBe('application/x-www-form-urlencoded;v=2.0');
@@ -225,7 +481,14 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.createCfgInstance('SYS', 'CAB_TASKS', 'ZZ_NEW', { Entry: 'probeMain' });
-        const posts = requests.filter(r => r.method === 'POST');
+        // One edit hold around the create and the attribute set.
+        expect(requests.map(r => r.url)).toEqual([
+          '/rw/mastership/edit/request',
+          '/rw/cfg/SYS/CAB_TASKS/instances/create-default',
+          '/rw/cfg/SYS/CAB_TASKS/instances/ZZ_NEW',
+          '/rw/mastership/edit/release',
+        ]);
+        const posts = requests.filter(r => r.method === 'POST' && r.url.startsWith('/rw/cfg/'));
         expect(posts[0].url).toBe('/rw/cfg/SYS/CAB_TASKS/instances/create-default');
         expect(posts[0].body).toBe('name=ZZ_NEW');
         expect(posts[1].url).toBe('/rw/cfg/SYS/CAB_TASKS/instances/ZZ_NEW');
@@ -238,7 +501,7 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.createCfgInstance('SYS', 'CAB_TASKS', 'ZZ_NEW', {});
-        expect(requests.filter(r => r.method === 'POST').length).toBe(1);
+        expect(requests.filter(r => r.method === 'POST' && r.url.startsWith('/rw/cfg/')).length).toBe(1);
       } finally { server.close(); }
     });
 
@@ -247,8 +510,11 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.removeCfgInstance('SYS', 'CAB_TASKS', 'ZZ_NEW');
-        expect(requests[0].method).toBe('DELETE');
-        expect(requests[0].url).toBe('/rw/cfg/SYS/CAB_TASKS/instances/ZZ_NEW');
+        expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+          'POST /rw/mastership/edit/request',
+          'DELETE /rw/cfg/SYS/CAB_TASKS/instances/ZZ_NEW',
+          'POST /rw/mastership/edit/release',
+        ]);
       } finally { server.close(); }
     });
   });
@@ -340,7 +606,10 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.loadProgram('T_ROB1', 'HOME/myprog.pgf', 'replace');
-        const post = requests.find(r => r.method === 'POST');
+        expect(requests.map(r => r.url)).toEqual([
+          '/rw/mastership/edit/request', '/rw/rapid/tasks/T_ROB1/program/load', '/rw/mastership/edit/release',
+        ]);
+        const post = requests.find(r => r.url === '/rw/rapid/tasks/T_ROB1/program/load');
         expect(post?.url).toBe('/rw/rapid/tasks/T_ROB1/program/load');
         expect(post?.body).toBe('progpath=HOME%2Fmyprog.pgf&loadmode=replace');
       } finally { server.close(); }
@@ -351,7 +620,10 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.saveProgram('T_ROB1', 'HOME/backup');
-        const post = requests.find(r => r.method === 'POST');
+        expect(requests.map(r => r.url)).toEqual([
+          '/rw/mastership/edit/request', '/rw/rapid/tasks/T_ROB1/program/save', '/rw/mastership/edit/release',
+        ]);
+        const post = requests.find(r => r.url === '/rw/rapid/tasks/T_ROB1/program/save');
         expect(post?.url).toBe('/rw/rapid/tasks/T_ROB1/program/save');
         expect(post?.body).toBe('path=HOME%2Fbackup');
       } finally { server.close(); }
@@ -377,7 +649,12 @@ describe('RwsClient2 (unit)', () => {
         await client.createBackup('mybak');
         await client.checkRestore('mybak');
         await client.saveCfgFile('SYS', 'TEMP/sys.cfg');
-        const posts = requests.filter(r => r.method === 'POST');
+        // The backup calls take no access; the CFG save is held under edit.
+        expect(requests.map(r => r.url)).toEqual([
+          '/ctrl/backup/create', '/ctrl/backup/check-restore',
+          '/rw/mastership/edit/request', '/rw/cfg/SYS/saveas', '/rw/mastership/edit/release',
+        ]);
+        const posts = requests.filter(r => r.method === 'POST' && !r.url.startsWith('/rw/mastership/'));
         expect(posts[0].url).toBe('/ctrl/backup/create');
         expect(posts[0].body).toBe('backup=%2Ffileservice%2FBACKUP%2Fmybak');
         expect(posts[1].url).toBe('/ctrl/backup/check-restore');
@@ -584,17 +861,21 @@ describe('RwsClient2 (unit)', () => {
   });
 
   describe('coverage additions (batch 7, OPTIONS-verified niche writes)', () => {
-    it('setMotionSupervisionSensitivity wraps motion mastership and uses field `sensitivity`', async () => {
+    it('setMotionSupervisionSensitivity holds edit and motion mastership and uses field `sensitivity`', async () => {
       const { server, port, requests } = await startServer(ok204);
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.setMotionSupervisionSensitivity(50);
+        // ABB's RobotWare 7 page asks for mastership on all domains here; the
+        // write used to take motion alone.
         expect(requests.map(r => `${r.method} ${r.url}`)).toEqual([
+          'POST /rw/mastership/edit/request',
           'POST /rw/mastership/motion/request',
           'POST /rw/motionsystem/mechunits/ROB_1/motionsupervision/level',
           'POST /rw/mastership/motion/release',
+          'POST /rw/mastership/edit/release',
         ]);
-        expect(requests[1].body).toBe('sensitivity=50');
+        expect(requests[2].body).toBe('sensitivity=50');
       } finally { server.close(); }
     });
 
@@ -650,13 +931,14 @@ describe('RwsClient2 (unit)', () => {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.ppPrevInst('T_ROB1');
         await client.ppNextInst('T_ROB1');
-        await client.setPPToRoutineFromUrl('T_ROB1', 'RAPID/T_ROB1/mod/rt');
+        await client.setPPToRoutineFromUrl('T_ROB1', '/RAPID/T_ROB1/mod/rt');
         await client.setVirtualTimeTimeslice(5);
         const urls = requests.map(r => `${r.method} ${r.url}`);
         expect(urls).toContain('POST /rw/rapid/tasks/T_ROB1/pcp/prev-inst');
         expect(urls).toContain('POST /rw/rapid/tasks/T_ROB1/pcp/next-inst');
         const from = requests.find(r => r.url.includes('routine-from-url'));
-        expect(from?.body).toBe('routineurl=RAPID%2FT_ROB1%2Fmod%2Frt');
+        // ABB's documented form: the routine URL and userlevel (false unless asked), always both.
+        expect(from?.body).toBe('routineurl=%2FRAPID%2FT_ROB1%2Fmod%2Frt&userlevel=false');
         const vt = requests.find(r => r.url.includes('vttimeslice'));
         expect(vt?.body).toBe('vttimeslice=5');
       } finally { server.close(); }
@@ -768,15 +1050,15 @@ describe('RwsClient2 (unit)', () => {
   });
 
   describe('coverage additions (batch 10, RW8 RMMP regression and vision)', () => {
-    it('getRmmpPrivilege reports none when the controller RMMP service 500s (RW8.1.1)', async () => {
+    it('getRmmpPrivilege reports unsupported, not none, when the controller answers "service not supported" (RW8.1.1)', async () => {
       const { server, port } = await startServer((_req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
         res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"rapi_user_resource.cpp[1088] Unspecified Error"}}');
       });
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
-        // A raw 500 must not escape to every caller that merely polls this.
-        expect(await client.getRmmpPrivilege()).toBe('none');
+        // It used to read as 'none' ("no privilege held") for any 500.
+        expect(await client.getRmmpPrivilege()).toBe('unsupported');
       } finally { server.close(); }
     });
 
@@ -790,7 +1072,32 @@ describe('RwsClient2 (unit)', () => {
         const err = await client.requestRmmp('modify').then(() => null, (e: unknown) => e as RwsError);
         expect(err).toBeInstanceOf(RwsError);
         expect(err!.code).toBe('UNSUPPORTED_OPERATION');
-        expect(err!.message).toContain('RobotWare 8.1.1');
+        // The affected range is 8.1.x (8.1.1 verified, 8.1.0 field-reported),
+        // so no single build is hard-coded; without a connect() the version is
+        // unknown and the message says so instead of guessing.
+        expect(err!.message).toContain('this RobotWare release');
+        expect(err!.message).not.toContain('8.1.1');
+        expect(err!.controllerCode).toBe(-1073445885);
+      } finally { server.close(); }
+    });
+
+    it('requestRmmp names the RobotWare version read at connect(), not a hard-coded release', async () => {
+      const { server, port } = await startServer((req, res) => {
+        if (req.url === '/rw/system') {
+          res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"sys-system","_title":"system","rwversion":"8.1.0+123"}]}');
+          return;
+        }
+        res.writeHead(500, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073445885,"msg":"Unspecified Error"}}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.connect();
+        const err = await client.requestRmmp('modify').then(() => null, (e: unknown) => e as RwsError);
+        expect(err!.code).toBe('UNSUPPORTED_OPERATION');
+        expect(err!.message).toContain('RobotWare 8.1.0+123');
+        expect(err!.message).not.toContain('8.1.1');
       } finally { server.close(); }
     });
 
@@ -887,7 +1194,7 @@ describe('RwsClient2 (unit)', () => {
       });
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
-        const syms = await client.searchRapidSymbols({ blockurl: 'RAPID/T_ROB1/BASE' });
+        const syms = await client.searchRapidSymbols({ task: 'T_ROB1', blockurl: 'RAPID/T_ROB1/BASE' });
         // The class was misspelled 'rap-syproppers-li' (no 'm'), so persistents -
         // tool0/wobj0/load0, the most common symbols anywhere - were dropped.
         expect(syms.map(s => s.name)).toEqual(['tool0', 'wobj0']);
@@ -932,7 +1239,11 @@ describe('RwsClient2 (unit)', () => {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         await client.setProgramPointer('T_ROB1', { module: 'mod', routine: 'main', row: 5, col: 1 });
         // The form is routine/module/userlevel - no row or column.
-        expect(requests[0].body).toBe('routine=main&module=mod');
+        const pcp = requests.find(r => r.url === '/rw/rapid/tasks/T_ROB1/pcp/routine');
+        expect(pcp?.body).toBe('routine=main&module=mod');
+        expect(requests.map(r => r.url)).toEqual([
+          '/rw/mastership/edit/request', '/rw/rapid/tasks/T_ROB1/pcp/routine', '/rw/mastership/edit/release',
+        ]);
       } finally { server.close(); }
     });
   });
@@ -1044,7 +1355,7 @@ describe('RwsClient2 (unit)', () => {
   });
 
   describe('request pacing', () => {
-    it('keeps 55 ms between concurrent request starts, not just sequential ones', async () => {
+    it('keeps 100 ms between concurrent request starts, not just sequential ones', async () => {
       // The old code read lastReqTime, awaited a timer, then wrote it back, so
       // callers that arrived together all saw the same stale timestamp and all
       // fired at once. Going over the controller's 20 req/s ceiling is what
@@ -1063,8 +1374,8 @@ describe('RwsClient2 (unit)', () => {
         // Assert on the span rather than each gap: individual arrival times
         // compress when the event loop is busy, but the total cannot shrink
         // below the enforced spacing. The bug produced roughly zero here.
-        expect(starts[starts.length - 1] - starts[0]).toBeGreaterThanOrEqual(4 * 45);
-        expect(Date.now() - t0).toBeGreaterThanOrEqual(4 * 45);
+        expect(starts[starts.length - 1] - starts[0]).toBeGreaterThanOrEqual(4 * 90);
+        expect(Date.now() - t0).toBeGreaterThanOrEqual(4 * 90);
       } finally { server.close(); }
     });
 
@@ -1110,15 +1421,21 @@ describe('RwsClient2 (unit)', () => {
         const reg = requests.find(r => r.url === '/rw/controlstation/register/remote');
         expect(reg?.body).toBe('control-station-name=test-cs&control-station-id=%7B11111111-2222-3333-4444-555555555555%7D&pincode=9999');
 
-        // Second acquire goes straight to write access: no more mastership tries,
-        // no re-registration (session-scoped, already registered).
+        // Second acquire: every domain is the one write access on RW8, and this
+        // session already holds it, so nothing is sent - no mastership try, no
+        // re-registration, and no second request. Releasing one of the two
+        // holds sends nothing either; only the release that ends the last hold
+        // goes out. (This used to send a request per acquire and a release per
+        // release, and that first release ended the other hold too.)
         const before = requests.length;
         await client.requestMastership('motion');
-        const later = requests.slice(before).map(r => `${r.method} ${r.url}`);
-        expect(later).toEqual(['POST /rw/controlstation/writeaccess/request']);
+        expect(requests.slice(before)).toEqual([]);
 
         await client.releaseMastership('motion');
-        expect(requests[requests.length - 1].url).toBe('/rw/controlstation/writeaccess/release');
+        expect(requests.slice(before)).toEqual([]);
+        await client.releaseMastership('rapid');
+        expect(requests.slice(before).map(r => `${r.method} ${r.url}`))
+          .toEqual(['POST /rw/controlstation/writeaccess/release']);
       } finally { server.close(); }
     });
 
@@ -1145,10 +1462,8 @@ describe('RwsClient2 (unit)', () => {
     });
 
     it('disconnect releases write access before logging out', async () => {
-      // RW8 keeps control-station write access after the session ends, so a
-      // client that logs out still holding it blocks every other client with
-      // "Remote Control Station cannot take SPoC when it is taken" until
-      // someone releases it. Observed for real on RW8.1.1.
+      // On RobotWare 8 the client releases control-station write access
+      // itself before logging out.
       const { server, port, requests } = await startServer(rw8Handler);
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
@@ -1204,8 +1519,144 @@ describe('RwsClient2 (unit)', () => {
       try {
         const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
         expect(await client.getWriteAccessStatus()).toEqual({
-          held: true, heldById: '{1111}', heldByName: 'probe-cs', externalControlEnabled: true,
+          held: true, heldByMe: false, heldById: '{1111}', heldByName: 'probe-cs', externalControlEnabled: true,
         });
+      } finally { server.close(); }
+    });
+
+    it('getWriteAccessStatus reports heldByMe when the holder is this client\'s control station', async () => {
+      // held=true alone cannot tell "I can write" from "someone else owns it";
+      // the PC SDK exposes HeldByMe for this and the RWS resource does not, so
+      // the client derives it from the holder id (case-insensitive - the
+      // controller echoes the GUID as registered, callers may not).
+      const { server, port } = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end('{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"controlstation-write-access-status","_title":"write-access-status","held-by-control-station-Id":"{AAAAAAAA-0000-4000-8000-000000000001}","held-by-control-station-name":"me","control-station-write-access-held":"true","control-station-external-control-enabled":"true"}]}');
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p',
+          { controlStation: { id: '{aaaaaaaa-0000-4000-8000-000000000001}' } });
+        const s = await client.getWriteAccessStatus();
+        expect(s.held).toBe(true);
+        expect(s.heldByMe).toBe(true);
+      } finally { server.close(); }
+    });
+
+    it('adopts an explicit identity passed to registerControlStationRemote, so heldByMe still works', async () => {
+      // registerControlStationRemote(name, id, pincode) used to send the explicit
+      // id on the wire without adopting it, while getWriteAccessStatus derived
+      // heldByMe by comparing the holder against the CONSTRUCTOR default. A caller
+      // that registered with its own id therefore read heldByMe=false even when it
+      // was the holder. Live-verified 2026-09-23 on RW8.1.1: explicit id gave
+      // held=true/heldByMe=false; no-args gave held=true/heldByMe=true.
+      const EXPLICIT = '{BBBBBBBB-0000-4000-8000-000000000002}';
+      const { server, port } = await startServer((req, res) => {
+        if (req.url?.includes('/register/remote')) {
+          res.writeHead(204, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' });
+        res.end(`{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"controlstation-write-access-status","_title":"write-access-status","held-by-control-station-Id":"${EXPLICIT}","held-by-control-station-name":"probe","control-station-write-access-held":"true","control-station-external-control-enabled":"true"}]}`);
+      });
+      try {
+        // Constructor default is a random GUID - deliberately NOT the explicit id.
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.registerControlStationRemote('probe', EXPLICIT, '1234');
+        const s = await client.getWriteAccessStatus();
+        expect(s.held).toBe(true);
+        expect(s.heldById).toBe(EXPLICIT);
+        expect(s.heldByMe).toBe(true);
+      } finally { server.close(); }
+    });
+
+    it('re-registers the control station after the controller re-issues the session cookie', async () => {
+      // Registration is session-scoped on RW8. A new session cookie (controller
+      // restart, idle expiry) means the registration is gone, and the next
+      // write-access request would answer 403 "Session is not part of a
+      // Control Station" (-1073435871, live 2026-09-15) if the client still
+      // believed it was registered.
+      let session = 'A';
+      const { server, port, requests } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        // Flip the session once the first hold is released: the next response
+        // carries a different -http-session- value.
+        if (url === '/rw/controlstation/writeaccess/release') { session = 'B'; }
+        res.writeHead(204, { 'Set-Cookie': [`-http-session-=${session}; path=/`, 'ABBCX=x; path=/'] });
+        res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        await client.releaseMastership('rapid');   // response re-issues the cookie
+        await client.requestMastership('rapid');
+        const registers = requests.filter(r => r.url === '/rw/controlstation/register/remote').length;
+        expect(registers).toBe(2);
+        expect(client.getSessionCookie()).toContain('-http-session-=B');
+      } finally { server.close(); }
+    });
+
+    it('does not re-register while the session cookie is unchanged', async () => {
+      const { server, port, requests } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        // Same session echoed on every response (some controllers re-send it).
+        res.writeHead(204, { 'Set-Cookie': ['-http-session-=A; path=/', 'ABBCX=y; path=/'] });
+        res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        await client.releaseMastership('rapid');
+        await client.requestMastership('rapid');
+        expect(requests.filter(r => r.url === '/rw/controlstation/register/remote').length).toBe(1);
+      } finally { server.close(); }
+    });
+
+    it('treats 403 "already registered" on register as registered and carries on', async () => {
+      // -1073435874 (icode -20102), live 2026-09-15 on RW8.1.1: the session IS
+      // registered, the client's flag was merely behind.
+      const { server, port, requests } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        if (url === '/rw/controlstation/register/remote') {
+          res.writeHead(403, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073435874,"msg":"rws_resource_controlstation.cpp[1] A control station has already been registered. code:-1073435874 icode:-20102"}}');
+          return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        await client.requestMastership('rapid');
+        const urls = requests.map(r => `${r.method} ${r.url}`);
+        expect(urls).toContain('POST /rw/controlstation/register/remote');
+        expect(urls[urls.length - 1]).toBe('POST /rw/controlstation/writeaccess/request');
+      } finally { server.close(); }
+    });
+
+    it('a write-access conflict with another control station is MASTERSHIP_REQUIRED, not GRANT_DENIED', async () => {
+      // -1073435870 "Remote Control Station cannot take SPoC when it is taken"
+      // (live 2026-09-15). Until 1.3.1 it read as a UAS/RMMP permission problem
+      // and told users to approve a pendant popup that does not exist.
+      const { server, port } = await startServer((req, res) => {
+        const url = req.url ?? '';
+        if (url.startsWith('/rw/mastership')) { res.writeHead(410); res.end(); return; }
+        if (url === '/rw/controlstation/writeaccess/request') {
+          res.writeHead(403, { 'Content-Type': 'application/hal+json;v=2.0' });
+          res.end('{"_links":{"base":{"href":"https://x/"}},"status":{"code":-1073435870,"msg":"rws_resource_controlstation.cpp[1] Remote Control Station cannot take SPoC when it is taken. code:-1073435870 icode:-20109"}}');
+          return;
+        }
+        res.writeHead(204); res.end();
+      });
+      try {
+        const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+        const err = await client.requestMastership('rapid').then(() => null, (e: unknown) => e as RwsError);
+        expect(err!.code).toBe('MASTERSHIP_REQUIRED');
+        expect(err!.controllerCode).toBe(-1073435870);
+        expect(err!.message).toContain('another control station');
+        expect(err!.message).not.toContain('RMMP');
       } finally { server.close(); }
     });
 
@@ -1219,5 +1670,78 @@ describe('RwsClient2 (unit)', () => {
         expect(await client.getAllowMotionControl()).toBe(false);
       } finally { server.close(); }
     });
+  });
+});
+
+// ─── A disconnected client refuses requests instead of signing in again ──────
+
+describe('RwsClient2 after disconnect() (closed client)', () => {
+  // A request after disconnect is refused (NOT_CONNECTED) and nothing is sent. The
+  // client closes in the same tick it reserves the /logout slot.
+  // hal+json, so one read is exactly one request: an XHTML answer to a hal+json
+  // GET makes the client re-issue it as XHTML through a second slot.
+  const CTRLSTATE = '{"_links":{"base":{"href":"https://x/"}},"state":[{"_type":"pnl-ctrlstate","_title":"ctrl-state","ctrlstate":"motoron"}]}';
+  const serve = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    if ((req.url ?? '').includes('ctrl')) {
+      res.writeHead(200, { 'Content-Type': 'application/hal+json;v=2.0' }); res.end(CTRLSTATE); return;
+    }
+    res.writeHead(204); res.end();
+  };
+
+  it('refuses every later request with NOT_CONNECTED, sends nothing, and a second disconnect() sends no second /logout', async () => {
+    const { server, port, requests } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      await client.connect();
+      await client.disconnect();
+      const urls = (): string[] => requests.map(r => r.url);
+      expect(urls().filter(u => u === '/logout')).toHaveLength(1);
+      const sent = requests.length;
+
+      await expect(client.getControllerState()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+      await client.disconnect();
+      expect(requests.length).toBe(sent); // nothing reached the controller
+      expect(urls()[urls().length - 1]).toBe('/logout');
+    } finally { server.close(); }
+  });
+
+  it('a request queued before disconnect() still goes out ahead of /logout; one queued after it is refused', async () => {
+    const { server, port, requests } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      await client.connect();
+      const before = client.getControllerState();
+      const teardown = client.disconnect();
+      const after = client.getControllerState().then(() => 'sent', (e: RwsError) => e.code);
+      expect(await before).toBe('motoron');
+      await teardown;
+      expect(await after).toBe('NOT_CONNECTED');
+      const urls = requests.map(r => r.url);
+      expect(urls.indexOf('/logout')).toBe(urls.length - 1);
+      expect(urls.filter(u => u.includes('ctrl'))).toHaveLength(1);
+    } finally { server.close(); }
+  });
+
+  it('connect() re-opens the client: requests are served again on the new session', async () => {
+    const { server, port, requests } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      await client.connect();
+      await client.disconnect();
+      await expect(client.getControllerState()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+      await client.connect();
+      expect(await client.getControllerState()).toBe('motoron');
+      const urls = requests.map(r => r.url);
+      expect(urls.filter(u => u.includes('ctrl'))).toHaveLength(1);
+      expect(urls.lastIndexOf('/logout')).toBeLessThan(urls.length - 1);
+    } finally { server.close(); }
+  });
+
+  it('a client that never connected is not closed (connect()-less use keeps working)', async () => {
+    const { server, port } = await startServer(serve);
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${port}`, 'u', 'p');
+      expect(await client.getControllerState()).toBe('motoron');
+    } finally { server.close(); }
   });
 });

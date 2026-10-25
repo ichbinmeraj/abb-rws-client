@@ -1,0 +1,14 @@
+{
+  "protocol": "rws2",
+  "scenario": "403-exec-start-motion-control-off-xhtml",
+  "request": {
+    "method": "POST",
+    "path": "/rw/rapid/execution/start",
+    "body": "regain=continue&execmode=continue&cycle=asis&condition=none&stopatbp=disabled&alltaskbytsp=false"
+  },
+  "response": {
+    "status": 403,
+    "contentType": "application/xhtml+xml;v=2.0",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><base href=\"https://127.0.0.1:80/\"/></head><body><div class=\"status\"><span class=\"code\">-1073435864</span><span class=\"msg\">rws_resource_rapid_execution.cpp[1458] Unspecified Error code:-1073435864 icode:-1073435864</span></div></body></html>"
+  }
+}

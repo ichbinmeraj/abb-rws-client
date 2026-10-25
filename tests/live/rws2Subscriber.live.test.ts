@@ -5,37 +5,36 @@
  * configured base URL, which is what makes these tests possible at all).
  *
  * Enabled only when RWS_TEST_HOST is set; skipped in plain `npm test` runs.
- *   RWS_TEST_HOST       - VC host, MUST be localhost (hard-fails otherwise)
- *   RWS_TEST_PORT_RW7   - OmniCore RWS port (default 5466)
+ *   RWS_TEST_HOST       - VC host, MUST be this PC (hard-fails otherwise): a
+ *                         bare host (127.0.0.1) or an http(s) URL naming one,
+ *                         as RAPID Live's host harness sets it
+ *                         (https://127.0.0.1:80); only its host is used
+ *                         (tests/helpers/liveHost.ts)
+ *   RWS_TEST_PORT_RW7   - OmniCore RWS port (default: found by the client's own
+ *                         discovery of this PC, the lowest RobotWare major first)
  *   RWS_TEST_USER/PASS  - credentials (default 'Default User' / 'robotics')
  *   RWS_TEST_ALLOW_RESTART=1 - additionally run the real warm-restart test
- *                              (restarts the VC - disruptive, ~1 min)
+ *                              (restarts the VC - disruptive, ~1 min), on a
+ *                              lane off the never-restart list only
+ *                              (tests/helpers/restartPolicy.ts): the lane is
+ *                              the RobotWare major of the controller found, so
+ *                              RW7 restarts and RW8 never does
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import https from 'node:https';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { RwsClient2 } from '../../src/RwsClient2.js';
 import type { SubscriptionEvent } from '../../src/types.js';
 import { startChaosProxy, type ChaosProxy } from '../helpers/chaosProxy.js';
+import { controllerFor, findVcAgain, listLocalControllers, type LiveController } from '../helpers/liveControllers.js';
+import { restartVerdict } from '../helpers/restartPolicy.js';
+import { liveHost } from '../helpers/liveHost.js';
 
-const execFileP = promisify(execFile);
-
-const HOST = process.env.RWS_TEST_HOST;
-const RW7_PORT = Number(process.env.RWS_TEST_PORT_RW7 ?? '5466');
+// Throws at import for a host that is not this PC: live suites must never
+// point at a real or workplace robot.
+const HOST = liveHost();
 const USER = process.env.RWS_TEST_USER ?? 'Default User';
 const PASS = process.env.RWS_TEST_PASS ?? 'robotics';
 const ALLOW_RESTART = process.env.RWS_TEST_ALLOW_RESTART === '1';
-
-// Safety guard: live suites must never point at a real or workplace robot.
-const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
-if (HOST && !LOCAL_HOSTS.has(HOST)) {
-  throw new Error(
-    `RWS_TEST_HOST=${HOST} is not localhost. Live suites only ever target local ` +
-    'virtual controllers - refusing to run against a possibly real robot.',
-  );
-}
 
 const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -48,58 +47,39 @@ async function until(cond: () => boolean, timeoutMs: number, stepMs = 100): Prom
   return cond() ? Date.now() - t0 : -1;
 }
 
-/** True when the port answers HTTPS with the RWS 2.0 Basic realm. */
-function probeRws2Basic(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const req = https.request({
-      host: '127.0.0.1', port, path: '/rw/panel/speedratio', timeout: 2500,
-      rejectUnauthorized: false,
-    }, res => {
-      const auth = String(res.headers['www-authenticate'] ?? '');
-      res.resume();
-      resolve(res.statusCode === 401 && auth.includes('robapi'));
-    });
-    req.on('timeout', () => { req.destroy(); resolve(false); });
-    req.on('error', () => resolve(false));
-    req.end();
-  });
-}
-
 /**
  * Find the port the OmniCore VC currently serves RWS on. Like the IRC5 VC,
  * a warm restart may re-bind RWS to a fresh dynamic port (real OmniCore
- * hardware keeps :443/:80). OmniCore VCs run as Vrchost64.exe.
+ * hardware keeps :443/:80). OmniCore VCs run as Vrchost64.exe, and this rig
+ * runs several: one paced discovery of this PC keeps the Vrchost64.exe
+ * listeners that answer the RWS 2.0 challenge, drops the ports the other VCs
+ * held before the restart, keeps only the same system when its name is known,
+ * and prefers the port before the restart.
  */
-async function findLiveRws2Port(): Promise<number | null> {
-  if (process.platform !== 'win32') { return null; }
-  const pids: string[] = [];
-  for (const image of ['Vrchost64.exe', 'RobVC.exe']) {
-    const { stdout } = await execFileP('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH'])
-      .catch(() => ({ stdout: '' }));
-    pids.push(...[...stdout.matchAll(/"(?:Vrchost64|RobVC)\.exe","(\d+)"/g)].map(m => m[1]));
-  }
-  if (pids.length === 0) { return null; }
-  const ports = new Set<number>();
-  for (const proto of ['TCP', 'TCPv6']) {
-    const { stdout } = await execFileP('netstat', ['-ano', '-p', proto]).catch(() => ({ stdout: '' }));
-    for (const line of stdout.split('\n')) {
-      const m = line.match(/TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/);
-      if (m && pids.includes(m[2])) { ports.add(Number(m[1])); }
-    }
-  }
-  for (const port of ports) {
-    if (await probeRws2Basic(port)) { return port; }
-  }
-  return null;
+async function findLiveRws2Port(origin: LiveController, others: ReadonlySet<number>): Promise<number | null> {
+  const again = await findVcAgain('rws2', {
+    originPort: origin.port, excludePorts: others,
+    ...(origin.systemName ? { systemName: origin.systemName } : {}),
+  });
+  return again?.port ?? null;
 }
 
 describe.skipIf(!HOST)('RWS 2.0 subscriber resilience (RW7 VC via chaos proxy)', () => {
+  let VC: LiveController;
+  let RW7_PORT = 0;
   let proxy: ChaosProxy;
   let client: RwsClient2;
   let unsubscribe: (() => Promise<void>) | null = null;
   let events: SubscriptionEvent[];
   let restored: number;
   let lost: number;
+
+  beforeAll(async () => {
+    const vc = await controllerFor('rws2');
+    if (!vc) { throw new Error('no RWS 2.0 virtual controller found on this PC - start the RW7 VC, or set RWS_TEST_PORT_RW7'); }
+    VC = vc;
+    RW7_PORT = vc.port;
+  }, 120000);
 
   beforeEach(async () => {
     proxy = await startChaosProxy(HOST!, RW7_PORT);
@@ -204,7 +184,20 @@ describe.skipIf(!HOST)('RWS 2.0 subscriber resilience (RW7 VC via chaos proxy)',
     await expectSpeedEvent(65);
   });
 
-  it.skipIf(!ALLOW_RESTART)('survives a real warm restart of the VC', async () => {
+  it.skipIf(!ALLOW_RESTART)('survives a real warm restart of the VC', async t => {
+    // The never-restart list decides first, whatever RWS_TEST_ALLOW_RESTART
+    // says. The lane is the RobotWare major the controller answers through
+    // this test's client (the one the restart goes out on), and the version
+    // discovery named, which can be stale, must agree (restartVerdict).
+    const { lane, refusal } = await restartVerdict(VC, () => client.getRobotWareVersion());
+    if (refusal) {
+      console.warn(`warm-restart test skipped on ${VC.label} (lane ${lane ?? 'unknown'}): ${refusal}`);
+      // A skipped test's afterEach does not run, so free what beforeEach opened.
+      await client.disconnect().catch(() => undefined);
+      await proxy.close();
+      t.skip();
+    }
+
     // Live-measured cycle on RW7.21 VC (2026-08-02): the controller keeps
     // serving ~110 s after accepting the restart, is down for ~260 s, then
     // returns - roughly 6.5 min end to end. Budget generously.
@@ -214,6 +207,10 @@ describe.skipIf(!HOST)('RWS 2.0 subscriber resilience (RW7 VC via chaos proxy)',
       reconnectCapMs: 10000,
     });
     await expectSpeedEvent(66);
+
+    // Every other controller on this PC, before the restart: the chase must
+    // never retarget the proxy at one of them.
+    const others = new Set((await listLocalControllers()).map(c => c.port).filter(p => p !== RW7_PORT));
 
     await client.restartController('restart');
 
@@ -229,7 +226,7 @@ describe.skipIf(!HOST)('RWS 2.0 subscriber resilience (RW7 VC via chaos proxy)',
     const deadline = Date.now() + 480000;
     const downDeadline = Date.now() + 240000;
     while (Date.now() < deadline) {
-      const port = await findLiveRws2Port();
+      const port = await findLiveRws2Port(VC, others);
       if (port) {
         consecutiveMisses = 0;
         proxy.setTarget('127.0.0.1', port);

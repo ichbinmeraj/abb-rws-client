@@ -2,10 +2,17 @@
  * S03 - Controller warm restart.
  *
  * The destructive ceiling of the whole matrix: this cell really restarts the
- * user's running virtual controller, which is unusable for several minutes
- * afterwards. It is therefore OFF unless explicitly armed with
+ * user's running virtual controller, which takes several minutes to come
+ * back. It is therefore OFF unless explicitly armed with
  * RWS_STRUCTURAL_ALLOW_RESTART=1 - a skipped cell is reported `untested`, never
  * green, which is the right outcome for a fault nobody agreed to inject.
+ * Armed or not, it never restarts a lane on the never-restart list
+ * (tests/helpers/restartPolicy.ts): the lane is the RobotWare major of the
+ * controller the cell found, so the rws1 cell (RW6) is always skipped, and the
+ * rws2 cell runs on RW7 and is skipped on RW8, with the reason. On rws2 the
+ * major is read from the controller itself before anything is opened, checked
+ * against the version discovery named, and read again through the cell's own
+ * client just before the restart is sent.
  *
  * What a warm restart breaks, and what the client must do about it:
  *   - the HTTP session dies. RWS 1.0 must re-run the digest handshake silently;
@@ -22,34 +29,28 @@
  *     :80/:443). The chaos proxy is retargeted so the client keeps seeing one
  *     stable address - the client itself has to recover unaided.
  *
- * RIG CAVEAT (recorded 2026-08-03 in tests/live/wsSubscriber.live.test.ts): the
- * RobotStudio IRC5 VC does not reliably survive an RWS-initiated warm restart -
- * observed dying outright (RobVC gone, never re-listens) on 2 of 3 attempts in
- * one night. When that happens the rws1 cell fails on its recovery window and
- * the VC needs a manual start in RobotStudio. That is a rig limitation, not a
- * client defect - but the assertion stays strict, because a client that cannot
- * be distinguished from a dead controller is not evidence of anything.
+ * RIG NOTE: if the IRC5 virtual controller is still down after the warm
+ * restart, start it from RobotStudio; this cell then fails on its recovery
+ * window. The assertion stays strict, because a client that cannot be told
+ * apart from a controller that is down is not evidence of anything.
  */
 
 import { it, expect, afterEach } from 'vitest';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import http from 'node:http';
 import https from 'node:https';
 import type { ChaosProxy } from '../helpers/chaosProxy.js';
 import type { RobotManager } from '../../src/RobotManager.js';
 import type { RwsClient } from '../../src/RwsClient.js';
-import type { RwsClient2 } from '../../src/RwsClient2.js';
+import { RwsClient2 } from '../../src/RwsClient2.js';
 import type { SubscriptionEvent } from '../../src/types.js';
 import {
   cell, until, assertQualityHonest, RwsError, type AnyClient,
 } from '../helpers/structuralHarness.js';
 import {
-  forgetControllers, controllerFor, discoverControllers, TEST_USER, TEST_PASS,
+  findVcAgain, listLocalControllers, TEST_USER, TEST_PASS,
   type Generation, type LiveController,
 } from '../helpers/liveControllers.js';
-
-const execFileP = promisify(execFile);
+import { laneOf, restartVerdict } from '../helpers/restartPolicy.js';
 
 /** Arming switch - see the file header for why this cell is opt-in. */
 const ALLOW_RESTART = process.env.RWS_STRUCTURAL_ALLOW_RESTART === '1';
@@ -59,11 +60,11 @@ const GATE = ALLOW_RESTART
 
 /** How long the controller is given to go down and come back up. */
 const RESTART_WINDOW_MS = 480000;
-/** Cadence of the port chase. Each tick costs a tasklist + netstat + probes. */
+/** Cadence of the port chase. A tick that misses the original port runs one paced discovery (several seconds). */
 const CHASE_STEP_MS = 3000;
 /**
  * How long quality is allowed to keep claiming `live` after the controller has
- * stopped answering. The manager needs one poll cycle plus three consecutive
+ * become unreachable. The manager needs one poll cycle plus three consecutive
  * failures to notice; anything past this is a lie, not latency (S14).
  */
 const QUALITY_DETECT_BUDGET_MS = 90000;
@@ -90,9 +91,9 @@ afterEach(async () => {
 
 /**
  * Poll a live condition. Deliberately gentler than the harness `until` (25 ms):
- * every probe here is a real request to a controller that is booting, and a
- * 40 Hz retry loop against a VC is exactly the kind of careless traffic that
- * wedges one. Still condition-based - never a fixed sleep.
+ * every probe here is a real request to a controller that is booting, and
+ * gentle polling keeps load off a booting VC. Still condition-based - never a
+ * fixed sleep.
  */
 async function pollLive(
   cond: () => boolean | Promise<boolean>, timeoutMs: number, stepMs = 1000,
@@ -102,6 +103,20 @@ async function pollLive(
     if (await cond()) { return true; }
     if (Date.now() >= deadline) { return false; }
     await new Promise(r => setTimeout(r, stepMs));
+  }
+}
+
+/**
+ * The RobotWare version of an RWS 2.0 controller, read on a short session of
+ * its own straight to the controller (no proxy), logged out after: the lane
+ * the never-restart list decides on, read before anything else is opened.
+ */
+async function readRws2Version(c: LiveController): Promise<string> {
+  const reader = new RwsClient2(c.baseUrl, TEST_USER, TEST_PASS, { timeout: 15000 });
+  try {
+    return await reader.getRobotWareVersion();
+  } finally {
+    await reader.disconnect().catch(() => undefined);
   }
 }
 
@@ -128,65 +143,36 @@ function probeGeneration(port: number, tls: boolean, timeoutMs = 1500): Promise<
   });
 }
 
-/** Ports the RobotStudio VC processes are currently LISTENING on, per Windows. */
-async function vcListeningPorts(): Promise<number[]> {
-  if (process.platform !== 'win32') { return []; }
-  const pids: string[] = [];
-  for (const image of ['RobVC.exe', 'Vrchost64.exe']) {
-    const { stdout } = await execFileP(
-      'tasklist', ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH'],
-    ).catch(() => ({ stdout: '' }));
-    pids.push(...[...stdout.matchAll(/"(?:RobVC|Vrchost64)\.exe","(\d+)"/g)].map(m => m[1]));
-  }
-  if (pids.length === 0) { return []; }
-  const ports = new Set<number>();
-  for (const proto of ['TCP', 'TCPv6']) {
-    const { stdout } = await execFileP('netstat', ['-ano', '-p', proto]).catch(() => ({ stdout: '' }));
-    for (const line of stdout.split('\n')) {
-      const m = line.match(/TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/);
-      if (m && pids.includes(m[2])) { ports.add(Number(m[1])); }
-    }
-  }
-  return [...ports];
-}
-
 /**
  * Find this generation's controller again after a restart moved it.
  *
- * The harness caches the port it discovered at setup, and liveControllers only
- * knows a fixed candidate list - neither survives an IRC5 coming back as a NEW
- * RobVC process on a fresh dynamic port. So: try the original endpoint first
- * (cheapest, and the only answer during the RW7 drain phase), then forget the
- * cache and retry the known ports, and only then ask Windows which ports the VC
- * processes hold.
+ * The harness caches the port it discovered at setup, which does not survive
+ * an IRC5 coming back as a NEW RobVC process on a fresh dynamic port. So: try
+ * the original endpoint first (cheapest, and the only answer during the RW7
+ * drain phase), then one paced discovery through the client's own
+ * `findControllers`: the listening ports of this generation's VC process, the
+ * original port preferred, and, when the system name is known (OmniCore VCs),
+ * that system only.
  *
  * `excludePorts` is load-bearing, not defensive: this rig runs several OmniCore
- * VCs (9805 / 5466 / 9403 are all in the candidate list) and discovery returns
- * the FIRST match of a generation. Without the exclusion, a restarted RW7 that
- * is still down would be "rediscovered" as the RW8 next door, the proxy would be
- * retargeted at a controller that never restarted, and every recovery assertion
- * below would pass against the wrong machine - a falsely green cell.
+ * VCs and discovery would otherwise return the first one of a generation.
+ * Without the exclusion, a restarted RW7 that is still down would be
+ * "rediscovered" as the RW8 next door, the proxy would be retargeted at a
+ * controller that never restarted, and every recovery assertion below would
+ * pass against the wrong machine - a falsely green cell.
  */
 async function rediscover(
   generation: Generation, origin: LiveController, excludePorts: ReadonlySet<number>,
 ): Promise<LiveController | null> {
   if (await probeGeneration(origin.port, origin.tls) === generation) { return origin; }
-  forgetControllers();
-  const known = await controllerFor(generation).catch(() => null);
-  if (known && !excludePorts.has(known.port)) { return known; }
-  for (const port of await vcListeningPorts()) {
-    if (excludePorts.has(port)) { continue; }
-    for (const tls of [false, true]) {
-      if (await probeGeneration(port, tls) === generation) {
-        return {
-          generation, host: '127.0.0.1', port, tls,
-          baseUrl: `${tls ? 'https' : 'http'}://127.0.0.1:${port}`,
-          label: `${generation} :${port} (rediscovered after restart)`,
-        };
-      }
-    }
-  }
-  return null;
+  const again = await findVcAgain(generation, {
+    originPort: origin.port, excludePorts,
+    ...(origin.systemName ? { systemName: origin.systemName } : {}),
+  });
+  if (!again) { return null; }
+  return again.port === origin.port
+    ? origin
+    : { ...again, label: `${generation} :${again.port} (rediscovered after restart)` };
 }
 
 // ─── Session / subscription identity ─────────────────────────────────────────
@@ -230,12 +216,22 @@ for (const generation of ['rws1', 'rws2'] as const) {
      */
     it.skipIf(!ALLOW_RESTART)(
       `survives a real warm restart: silent re-auth, subscription re-registration, no phantom hold${GATE}`,
-      async () => {
+      async t => {
         const before = await ctx.controller();
-        // Every OTHER controller on this rig, captured before anything is
-        // forgotten. Rediscovery must never hand the proxy one of these.
+        // The never-restart list decides before anything is opened: a skipped
+        // test's afterEach does not run. RWS 1.0 is always rw6; an RWS 2.0
+        // controller's lane is the RobotWare major it answers now, and the
+        // version discovery named must agree (restartVerdict).
+        const { lane, refusal } = await restartVerdict(
+          before, generation === 'rws2' ? () => readRws2Version(before) : undefined,
+        );
+        if (refusal) { ctx.skip(t, `${before.label} (lane ${lane ?? 'unknown'}): ${refusal}`); }
+
+        // Every OTHER controller on this rig (all of them, not one per
+        // generation), captured before the restart. Rediscovery must never
+        // hand the proxy one of these.
         const otherPorts = new Set(
-          (await discoverControllers()).filter(x => x.port !== before.port).map(x => x.port),
+          (await listLocalControllers()).filter(x => x.port !== before.port).map(x => x.port),
         );
 
         // Registered in `open` as each resource appears rather than after all
@@ -300,11 +296,18 @@ for (const generation of ['rws1', 'rws2'] as const) {
           await c.releaseMastership('motion').catch(() => undefined);
         };
 
+        // The version again, through this cell's own client: the controller
+        // the restart goes out to must still be on the lane cleared above. A
+        // mismatch fails here, before the restart, and afterEach frees what
+        // is open.
+        const rwVersion = generation === 'rws2' ? await (client as RwsClient2).getRobotWareVersion() : '';
+        if (generation === 'rws2' && laneOf('rws2', rwVersion) !== lane) {
+          throw new Error(`the controller behind the proxy answers RobotWare ${rwVersion || '(none)'}, not the `
+            + `${lane ?? 'unknown'} lane the restart was cleared for - no restart sent`);
+        }
         // RW8 removed mastership for the Control Station Service; the two paths
         // behave differently across a restart and are branched on below.
-        const rwMajor = generation === 'rws2'
-          ? Number(((await (client as RwsClient2).getRobotWareVersion()) || '0').split('.')[0])
-          : 6;
+        const rwMajor = generation === 'rws2' ? Number((rwVersion || '0').split('.')[0]) : 6;
         const controlStationPath = rwMajor >= 8;
 
         // ── Steady state before the fault ─────────────────────────────────────
@@ -453,7 +456,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
           if (sawDown && !answering && Date.now() - downAt > QUALITY_DETECT_BUDGET_MS
               && (q === 'live' || q === 'polling')) {
             qualityLie = `quality stayed "${q}" ${Math.round((Date.now() - downAt) / 1000)} s `
-              + `after the controller stopped answering (reason: ${manager.state.qualityReason})`;
+              + `after the controller became unreachable (reason: ${manager.state.qualityReason})`;
           }
           await new Promise(r => setTimeout(r, CHASE_STEP_MS));
         }
@@ -535,7 +538,7 @@ for (const generation of ['rws1', 'rws2'] as const) {
         // resumed events on a NEW registration is the available proof.
         //
         // The baseline is the restore count AT the down phase, not before the
-        // restart: RW7 kills the session minutes before it stops answering, so a
+        // restart: RW7 ends the session minutes before it goes down, so a
         // restore observed in that drain phase says nothing about surviving the
         // reboot. Counting it would make this cell falsely green.
         const restoredBaseline = sawDown ? restoredAtDown : restoredBefore;
@@ -588,8 +591,8 @@ for (const generation of ['rws1', 'rws2'] as const) {
         // ── Property: quality returns to live/polling, not stuck reconnecting ──
         // The manager auto-disconnects after 3 failed polls and waits for its
         // host to act (no errorListener is installed here - its 'Reconnect'
-        // action would run a wide port scan while the VC is down, which is
-        // exactly the traffic that wedges a controller). So the consumer-driven
+        // action would run a wide port scan while the VC is down; gentle
+        // polling keeps load off a booting VC). So the consumer-driven
         // recovery is performed explicitly, now that the backend is verified up
         // and the proxy points at it.
         // Retried, not one-shot: a VC seconds out of a restart refuses the first

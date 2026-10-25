@@ -1,7 +1,8 @@
 import { FILES_VISION } from '../paths/index.js';
 import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import * as R2 from '../ResourceMapper2.js';
-import { RwsError, type FileEntry } from '../types.js';
+import { fileMetadataFromHeaders } from '../commonReads.js';
+import { RwsError, type FileEntry, type FileMetadata } from '../types.js';
 import { parse } from './core.js';
 import type { GConstructor, Rws2Base } from './mixin.js';
 
@@ -11,7 +12,9 @@ import type { GConstructor, Rws2Base } from './mixin.js';
  */
 function filesOps<TBase extends Rws2Base>(Base: TBase) {
   return class extends Base {
-    /** Refresh the connected integrated-vision camera(s). POST, no body. */
+    /**
+     * Refresh the connected integrated-vision camera(s). POST, no body.
+     */
     async refreshVisionCameras(): Promise<void> {
       await this.req('POST', buildPath(FILES_VISION.refreshVisionCameras.rws2 as PathSpec));
     }
@@ -24,6 +27,30 @@ function filesOps<TBase extends Rws2Base>(Base: TBase) {
     }
 
     readFile(path: string): Promise<string> { return this.req('GET', `/fileservice/${this.rws2Path(path)}`); }
+
+    /**
+     * A file's metadata without downloading it: `HEAD /fileservice/{path}`,
+     * ABB's file service page Rev L, "Get File Meta Data" (documented answer
+     * 204). RW 7.21.4+417 and 8.2.1+1023 list HEAD in a file's `Allow` header
+     * (read 2026-09-29); no HEAD answer has been captured, so every response
+     * header is kept in `fields` (cookies left out) and `Last-Modified`,
+     * `Content-Type` and, on a 200, `Content-Length` are named. A missing
+     * file is the controller's typed refusal (a HEAD answer has no body, so
+     * the error carries the status alone).
+     */
+    async getFileMetadata(path: string): Promise<FileMetadata> {
+      if (typeof path !== 'string' || path.trim() === '') {
+        throw new RwsError('RWS2 getFileMetadata: the file path must not be empty', 'INVALID_ARGUMENT');
+      }
+      // The verb comes from the table row; the URL is built like readFile's,
+      // because buildPath would %2F the slashes of a multi-segment file path.
+      const verb = (FILES_VISION.getFileMetadata.rws2 as PathSpec).method;
+      let status = 0;
+      let headers: Record<string, string | string[] | undefined> = {};
+      await this.req(verb, `/fileservice/${this.rws2Path(path)}`, undefined, undefined, undefined, [], undefined,
+        (s, h) => { status = s; headers = h; });
+      return fileMetadataFromHeaders(path, status, headers);
+    }
 
     uploadFile(path: string, content: string): Promise<void> {
       // RWS 2.0 requires the versioned content type: 'text/plain;v=2.0' or
@@ -113,21 +140,50 @@ function filesOps<TBase extends Rws2Base>(Base: TBase) {
       } catch { return 0; }
     }
 
+    /**
+     * One camera's details: GET /rw/vision/{camera}/info, ABB's documented
+     * child (Integrated_Vision_Service.yaml Rev L, class camera-info-li). The
+     * bare /rw/vision/{name} this used to read is not routed on RW 7.21.4 or
+     * 8.2.1 (spec check 2026-10-07). The class names are ABB's example: no VC
+     * carries the option, so `camera-info` is read as well in case the
+     * controller drops the -li suffix on the single resource.
+     *
+     * @experimental Built from the controller form; never run against an RWS 2.0 controller.
+     */
     async getVisionSystemInfo(name: string): Promise<Record<string, string>> {
       const p = parse(await this.req('GET', buildPath(FILES_VISION.getVisionSystemInfo.rws2 as PathSpec, { name })));
-      return p.getState('vision-system');
+      const d = p.getState('camera-info-li');
+      return Object.keys(d).length ? d : p.getState('camera-info');
     }
 
+    /**
+     * A camera's job: RWS 2.0 has one job name per camera at
+     * GET /rw/vision/{camera}/job-name (Rev L, class vision-camera-job, field
+     * jobname), not a list. Answers one entry, or [] when the camera reports no
+     * job. The `jobs` path this used to read is not routed (404) on either
+     * OmniCore build (spec check 2026-10-07). `active` is not part of the
+     * resource and is left out.
+     *
+     * @experimental Built from the controller form; never run against an RWS 2.0 controller.
+     */
     async listVisionJobs(system: string): Promise<Array<{ name: string; active?: boolean }>> {
       const p = parse(await this.req('GET', buildPath(FILES_VISION.listVisionJobs.rws2 as PathSpec, { system })));
-      return p.getAllStates('vision-job-li').map(j => ({
-        name: j['name'] ?? j['_title'] ?? '',
-        active: j['active'] === 'true',
-      }));
+      const name = (p.getState('vision-camera-job')['jobname'] ?? '').trim();
+      return name ? [{ name }] : [];
     }
 
+    /**
+     * RWS 2.0 documents no way to trigger a vision job (Rev L has 13 paths and
+     * no trigger), and the path this used to POST sits under the unrouted
+     * `jobs` segment (404 on RW 7.21.4 and 8.2.1, 2026-10-07). Throws
+     * `RwsError` `UNSUPPORTED_OPERATION` before anything is sent; the method
+     * stays so the public surface does not change.
+     */
     async triggerVisionJob(system: string, job: string): Promise<void> {
-      await this.req('POST', buildPath(FILES_VISION.triggerVisionJob.rws2 as PathSpec, { system, job }));
+      throw new RwsError(
+        `RWS 2.0 has no operation to trigger a vision job (asked for '${job}' on '${system}'): ABB's Integrated Vision service documents job-name, status and info reads only`,
+        'UNSUPPORTED_OPERATION',
+      );
     }
 
     /**
@@ -159,6 +215,7 @@ export interface FilesMethods {
   refreshVisionCameras(): Promise<void>;
   listDirectory(path: string): Promise<FileEntry[]>;
   readFile(path: string): Promise<string>;
+  getFileMetadata(path: string): Promise<FileMetadata>;
   uploadFile(path: string, content: string): Promise<void>;
   deleteFile(path: string): Promise<void>;
   createDirectory(parentPath: string, dirName: string): Promise<void>;
