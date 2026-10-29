@@ -1,16 +1,17 @@
 # Trademarks and project names
 
-## ABB's marks
+## The marks named here
 
-ABB, IRC5, OmniCore, RobotWare, RobotStudio, RAPID, FlexPendant, GoFa and
-Robot Web Services are trademarks or registered trademarks of ABB Ltd.
+ABB is a trademark of ABB Asea Brown Boveri Ltd. IRC5, OmniCore, RobotWare,
+RobotStudio, RAPID, FlexPendant, GoFa and Robot Web Services are trademarks or
+registered trademarks of their respective owners.
 
-**This project is not affiliated with, endorsed by, sponsored by, or supported
-by ABB Ltd.** It is an independent, clean-room implementation built from
-publicly available documentation and from observed behaviour of controllers the
-maintainer operates.
+**This project is not affiliated with, endorsed by, sponsored by or supported by
+ABB, ABB Robotics or any later owner of these products.** It is an independent,
+clean-room implementation built from publicly available documentation and from
+the observed behaviour of RobotStudio virtual controllers.
 
-## Why ABB's marks appear here
+## Why these marks appear here
 
 They appear for one reason only: to describe accurately what this software is
 compatible with. Software that speaks ABB Robot Web Services cannot be described
@@ -37,20 +38,23 @@ which is why the rest of this section exists.
 
 **What this project will not do:**
 
-- Use ABB's logo, wordmark, colours, product photography, or any part of ABB's
-  visual identity.
-- Describe itself as official, certified, approved, endorsed, or supported by
-  ABB, or use phrasing that invites that reading.
+- Use the logo, wordmark, colours, product photography or any part of the visual
+  identity of ABB, ABB Robotics or a later owner of these products.
+- Describe itself as official, certified, approved, endorsed or supported by
+  ABB, ABB Robotics or a later owner of these products, or use phrasing that
+  invites that reading.
 - Apply to register `abb-rws-*` or any confusingly similar mark, anywhere.
-- Sell, license, or offer paid support for this software under ABB's name.
-- Use ABB's marks as anything other than a plain-text reference to ABB's own
-  products.
+- Sell, license, or offer paid support for this software under the name of any
+  of these owners.
+- Use these marks as anything other than a plain-text reference to the products
+  they name.
 
-**If ABB asks us to change the naming, we will.** No argument, no delay for
-negotiation. In practice that means: new package names published within 30 days
-of a written request, the old names marked deprecated with a pointer to the new
-ones so existing users are not stranded, and repositories renamed with redirects
-left in place. Reach the maintainer through the contact route below.
+**If ABB, ABB Robotics or a later owner of these products asks us to change the
+naming, we will.** No argument, no delay for negotiation. In practice that
+means: new package names published within 30 days of a written request, the old
+names marked deprecated with a pointer to the new ones so existing users are not
+stranded, and repositories renamed with redirects left in place. Reach the
+maintainer through the contact route below.
 
 We would rather be told early and fix it cheaply than discover a problem once
 other projects depend on these names.

@@ -219,6 +219,8 @@ They stay and keep their signatures:
 
 Port 80 can be either scheme: plain HTTP on an IRC5, HTTPS on the RW 8.1.1 virtual controller. Without `https`, `createClient` / `createAdapter` try both on 80 and on any port not in [the port tables](#ports).
 
+Building an app that runs on the OmniCore FlexPendant? ABB's [OmniCore App SDK](https://developercenter.robotstudio.com/omnicore-sdk) is made for that. This client is for code that runs on a PC or a server, and it speaks RWS 1.0 to IRC5 as well as RWS 2.0 to OmniCore.
+
 The two generations expose one API: `RwsClient2` carries **312 public methods** (counted from the generated type declarations, so TypeScript-private helpers are excluded), the RWS 1.0 side is checked by `npm run conformance` against what live controllers advertise (the last full crawl, 2026-10-03, did not get below `/rw`; see `CONFORMANCE.md`), and the shared cross-protocol contract - **`IRWSAdapter`, 226 methods** (59 required + 167 optional) (controller state, RAPID execution, modules, variables, motion, I/O, file service, CFG database, mastership, event log, search, …) - has the same names and signatures on both. The protocol differences (URL shapes, query-action vs path-action forms, response format, mastership-domain naming, `$HOME` vs `HOME`) are handled internally - your code looks the same.
 
 If you need a single typed reference that holds either:
@@ -457,7 +459,7 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **`startRapid()`** - starts from where the program pointer is: the start does not move the program pointer. To run a routine from its start, call `setPPToRoutine` first. On RobotWare 6 and 7 a start right after a `jog` first ends the jog's own motion hold (see `jog` above). On RobotWare 8 a virtual controller (8.2.1) refused a start from a station for which motion control was not allowed, also for a program that does not move the robot, and ran it once it was allowed; another station, which registers with its own id, read it as not allowed. That refusal (-1073435864) is `GRANT_DENIED` with `refusal.kind` `motion-control-off` on every call that gets it. The refusal's `remedy` is `declare-motion-control`. It names `setAllowMotionControl(true)` and the confirmation a person gives; the client never calls it.
 - **`setAllowMotionControl(allow)`**, **`getAllowMotionControl()`**, **`getLocalStationStatus()`** - RobotWare 8 only (`UNSUPPORTED_OPERATION` on 6 and 7, nothing sent): allow or withdraw motion control for this control station, read it (null, and nothing sent, before the session is a registered control station), and read whether the FlexPendant is connected (`{ flexPendantConnected, safetyProtocolConnected }`, each null when its read fails or its answer has no such field; ABB's `control-station-local-isconnected` and `is-connected`). See [RobotWare 8 motion control](#robotware-8-motion-control).
 - **`read(name, ...args)`** - one read of the adapter by its name, for the reads with no manager method of their own (`AdapterReads` lists each one's arguments, answer and generation; `ADAPTER_READ_NAMES` the names): `getEventLogMessage(domain, seqnum, lang?)`, `getEventLogMessageBySeqnum(seqnum, lang?)` (RWS 2.0), `listEventLogDomains()`, the RobotWare 8 control-station reads `getControlStationType()`, `getControlStationId()`, `isLocalControlStationConnected()`, `getTpuSafetyProtocolStatus()` and `getWriteAccessAppealChangeCount()`, `listCurrentUserGrants()`, `checkGrantExists(grant)` (RWS 2.0), `describeReturnCode(code)` (the code in words, with its severity), `getBuildErrors(task)` (a program's build errors) and `getExecutionErrorState()` (RobotWare 8.2 and later: whether the last stop was caused by an error). The adapter's own method runs on the manager's session and its answer and errors pass through unchanged. A name that is not one of these reads is `INVALID_ARGUMENT`; a read the adapter does not have (RobotWare 6 has no control stations, for one) is `UNSUPPORTED_OPERATION`; nothing is sent for either. **`appealWriteAccessRelease()`** - RobotWare 8: ask the station that holds write access to release it (ABB's `POST /rw/controlstation/writeaccess/release/appeal`); the holder decides. ABB lists a registered control station as its prerequisite, so the session registers first when it is not yet, as for `setAllowMotionControl`; it takes no write access. `UNSUPPORTED_OPERATION` on RWS 1.0.
-- **`setPPToRoutine(task, module, routine, { stopIfRunning? })`**, **`unloadModule(task, module, { stopIfRunning? })`**, **`unloadProgram(task, { stopIfRunning? })`**, **`loadProgram(localFile, task, { stopIfRunning?, resetPP? })`** - never stop a running program unasked: each reads the execution state first; `stopIfRunning: true` stops the program before the write. Without it the write is sent anyway (ABB lists no execution-state prerequisite for these) and the controller decides; while the program ran, an execution-state refusal (-1073442809) or a 400 or 403 the controller leaves unexplained is explained as the running program (`WRONG_MODE`, `refusal.kind` `wrong-state`), and a refusal the controller explains more specifically, a mode refusal (-1073445860) among them, keeps its own explanation. `loadProgram` unloads a loaded module of the same name, uploads the file to `$HOME`, loads it and, when it declares `PROC main()`, sets the program pointer to main (`resetPP: false` skips that); any failed step fails the call, and the message says which step failed and what was already done.
+- **`setPPToRoutine(task, module, routine, { stopIfRunning? })`**, **`unloadModule(task, module, { stopIfRunning? })`**, **`unloadProgram(task, { stopIfRunning? })`**, **`loadProgram(localFile, task, { stopIfRunning?, resetPP? })`** - never stop a running program unasked: each reads the execution state first; `stopIfRunning: true` stops the program before the write. Without it the write is sent anyway (ABB lists no execution-state prerequisite for these) and the controller decides; while the program ran, an execution-state refusal (-1073442809) or a 400 or 403 the controller leaves unexplained is explained as the running program (`WRONG_MODE`, `refusal.kind` `wrong-state`), and a refusal the controller explains more specifically, a mode refusal (-1073445860) among them, keeps its own explanation. `loadProgram` unloads a loaded module of the same name, uploads the file to `$HOME`, loads it and, when it declares `PROC main()`, sets the program pointer to main (`resetPP: false` skips that); any failed step fails the call, and the message says which step failed and what was already done. `loadProgram` reads the local file as UTF-8 and refuses it with `INVALID_ARGUMENT` before anything is sent when it is not valid UTF-8 (the message names the line of the first bad byte sequence) or when it has no text. A file saved as Windows-1252 or Latin-1 with accented letters is refused this way. Up to 1.5.1 those bytes were uploaded as U+FFFD replacement characters. A byte order mark is sent as it is.
 - **`activateAllRapidTasks()`**, **`deactivateAllRapidTasks()`** - RWS 2.0 sends one request per task: a refused task makes the call throw, naming the tasks that were done and each refused task with the controller's reason. RWS 1.0 sends ABB's one all-tasks action.
 - **`setOperationMode('AUTO' | 'MANR' | 'MANF')`** - RWS 2.0 only: on RobotWare 6 (RWS 1.0, which has no operating-mode change) it throws `UNSUPPORTED_OPERATION` before sending anything, mastership included. Verified on virtual controllers only: ABB's RWS 2.0 pages require Local Client privileges for it, which station virtual controllers do not enforce for a remote session; a real controller may refuse it, and a refusal says so. Switch with auto-routing through MANR for AUTO ↔ MANF (the controller rejects direct transitions). Acquires `edit` mastership for the higher-privilege direction on RobotWare 7; on RobotWare 8 holds control-station write access around every switch, and sends nothing when that access is refused. A switch to Auto then waits in `AUTO_CH` until someone confirms it at the FlexPendant (RobotWare 7.21 and 8.2 virtual controllers): the confirmation is the person's there, and `setOperationMode` does not send it. No controller state is read before a switch: an RW 8.2.1 virtual controller in guard stop accepted it both ways.
 - **`setSpeedRatio(0..100)`** - holds `edit` mastership (RobotWare 7) or control-station write access (RobotWare 8); sends `speed-ratio=N` with `?action=setspeedratio`, a query the controller ignores: the documented plain POST works the same (verified 2026-09-27 on RobotWare 7.21 and 8.1.1).
@@ -909,11 +911,13 @@ motion control is allowed for it (403 -1073435864, `refusal.kind`
 program that moves nothing. ABB: a control station needs an emergency stop and a
 normal stop to start RAPID or to jog, and allowing motion control is the
 station's confirmation that both are available (Control Station Service, Allow
-Motion Control). ABB's PC SDK lets a tool allow it automatically on virtual
-controllers only. This client never allows it on its own, on a virtual
-controller or a real one: `RobotManager.setAllowMotionControl(true)` is for a
-tool to call after a person has confirmed that both stops are within their
-reach, with the text `confirmationFor(refusal.remedy, target)` gives.
+Motion Control). ABB's PC SDK has an Automatic policy that turns it on before
+each action, and ABB allows that policy on virtual controllers only. On a real
+controller the tool has to turn it on itself, and ABB asks it to confirm both
+stops first. This client never allows it on its own, on a virtual controller or
+a real one. `RobotManager.setAllowMotionControl(true)` is for a tool to call
+after a person has confirmed that both stops are within their reach, with the
+text `confirmationFor(refusal.remedy, target)` gives.
 
 Withdrawing only removes the permission and is not a stop. The client does it
 on its own:
@@ -1357,7 +1361,7 @@ without a `call`. An unknown kind is text.
 | `holder-releases` | The holder releases it (RobotWare 8: the FlexPendant can always take write access back) | |
 | `release-own-hold` | This session's own hold ends first | |
 | `stop-program-first` | A person stops RAPID (a program stop), then runs the operation again | `stopRapid` |
-| `motors-on` | RobotWare 6 and 7 in Auto: from this tool after a person confirms; otherwise at the controller (RobotWare 8: Reset; manual mode: the enabling device) | `setMotorsOn` (RobotWare 6 and 7 in Auto only) |
+| `motors-on` | RobotWare 6 and 7 in Auto: from this tool after a person confirms; otherwise at the controller (RobotWare 8: Reset; manual mode: the enabling device) | `setMotorsOn` (offered on RobotWare 6 and 7 in Auto) |
 | `reset-safety-stop` | Someone at the cell clears and resets a guard stop or emergency stop | |
 | `mode`, `confirm-mode-change` | The operating mode changes at the controller; a pending change is confirmed at the FlexPendant | |
 | `do-at-pendant` | Someone does it at the FlexPendant | |
@@ -1372,7 +1376,10 @@ every refusal with such a remedy also carries one without a `call`.
 answered -1073435864; a jog refused while motion control merely read as not
 allowed gets `check-state` first. `request-rmmp` is never offered on RobotWare
 8, in Auto, for a start, PP to Main, another pointer move, a signal write, a jog,
-a motors write or a missing option. A jog is never sent to Auto: on RobotWare 6
+a motors write or a missing option. The `motors-on` call is offered on RobotWare
+6 and 7 only, and that is the remedy's rule, not a limit of `setMotorsOn`. On an
+8.2.1 virtual controller in Auto, `setMotorsOn` after `setMotorsOff` was
+accepted (204), and in guard stop it was refused (403 -1073445806). A jog is never sent to Auto: on RobotWare 6
 and 7 in manual mode its remedy is `do-at-pendant` alone. Every remedy string is
 one line, under 1000 characters. More kinds may be added in minor releases.
 
@@ -2051,9 +2058,8 @@ What it does on a controller:
   sent only when the controller identifies itself as a virtual controller, and
   each test releases what it engaged. The manual-mode jog holds the simulated
   enable switch and reads the joints back from the controller after each jog.
-- On RobotWare 8 the motors can only be switched on at the FlexPendant, so the
-  motion and RAPID-run tests on that lane skip unless the motors are already
-  on, and Remote Access must be enabled at the pendant. RobotWare 8 also
+- On RobotWare 8 the motion and RAPID-run tests on that lane skip unless the
+  motors are already on, and Remote Access must be enabled at the pendant. RobotWare 8 also
   refuses a RAPID start from this client until motion control is allowed for
   its station, so those tests run there only under
   `RWS_FUNCTIONAL_ALLOW_MOTION_CONTROL=<system name>`, on the virtual
@@ -2148,6 +2154,8 @@ Contributions are accepted under the DCO - see [CONTRIBUTING.md](./CONTRIBUTING.
 ## Disclaimer
 
 Independent open-source project by [Meraj Safari](https://github.com/ichbinmeraj).
-ABB, IRC5, OmniCore, RobotWare, RobotStudio and FlexPendant are trademarks of
-ABB Ltd. **This project is not affiliated with, endorsed by, or supported by ABB Ltd.**
-Project names and trademark position: see [TRADEMARKS.md](./TRADEMARKS.md).
+ABB is a trademark of ABB Asea Brown Boveri Ltd. IRC5, OmniCore, RobotWare, RobotStudio
+and FlexPendant are trademarks of their respective owners. **This project is not
+affiliated with, endorsed by, sponsored by or supported by ABB, ABB Robotics or any later
+owner of these products.** Project names and trademark position: see
+[TRADEMARKS.md](./TRADEMARKS.md).

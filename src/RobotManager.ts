@@ -33,6 +33,7 @@ import {
 } from './access/AccessManager.js';
 import { checkJog, isJogPostError, rws2JogUnitSegment } from './jog.js';
 import { Logger } from './Logger.js';
+import { decodeUtf8Strict } from './utf8.js';
 import { discoverControllersMdns } from './MdnsDiscovery.js';
 import type { MdnsController } from './MdnsDiscovery.js';
 import { KNOWN_RWS_PORTS } from './detect.js';
@@ -2891,8 +2892,10 @@ export class RobotManager {
    * code, HTTP status and refusal, and its message starts with which step
    * failed and what was already done - for one, that the module was loaded
    * but the program pointer was not moved, or that the old module was unloaded
-   * and the new one did not load. A local file that cannot be read throws
-   * `INVALID_ARGUMENT` before anything is sent.
+   * and the new one did not load. A local file that cannot be read, that is
+   * not valid UTF-8, or that has no text throws `INVALID_ARGUMENT` before
+   * anything is sent; the message of a file that is not UTF-8 names the line
+   * of its first bad byte sequence. A byte order mark is sent as it is.
    *
    * A controller can load a module under another name: RobotWare 7.21.4
    * listed a module whose name clashed with one of its own names as
@@ -2911,12 +2914,31 @@ export class RobotManager {
     const fileName   = path.basename(localFilePath);
     const moduleName = fileName.replace(/\.(mod|sys)$/i, '');
     const remotePath = `$HOME/${fileName}`;
-    let content: string;
+    let bytes: Uint8Array;
     try {
-      content = fs.readFileSync(localFilePath, 'utf8');
+      bytes = fs.readFileSync(localFilePath);
     } catch (e) {
       throw new RwsError(
         `loadProgram: the file ${localFilePath} cannot be read (${e instanceof Error ? e.message : String(e)}). Nothing was sent to the controller.`,
+        'INVALID_ARGUMENT');
+    }
+    // Up to 1.5.1 the file was read as 'utf8', which uploads U+FFFD in place
+    // of every byte sequence that is not UTF-8 (see src/utf8.ts).
+    const decoded = decodeUtf8Strict(bytes);
+    if ('fault' in decoded) {
+      const hex = decoded.fault.byte.toString(16).toUpperCase().padStart(2, '0');
+      throw new RwsError(
+        `loadProgram: the file ${localFilePath} is not valid UTF-8. Line ${decoded.fault.line} has a byte sequence that is not UTF-8, `
+        + `starting with byte 0x${hex} (files saved as Windows-1252, Latin-1 or UTF-16 have such bytes). `
+        + 'Save the file as UTF-8 and load it again. Nothing was sent to the controller.',
+        'INVALID_ARGUMENT');
+    }
+    const content = decoded.text;
+    // A file with no text holds no module, and loading it would first unload
+    // the loaded module of the same name. trim() takes a byte order mark too.
+    if (content.trim() === '') {
+      throw new RwsError(
+        `loadProgram: the file ${localFilePath} has no text, so it holds no module. Nothing was sent to the controller.`,
         'INVALID_ARGUMENT');
     }
     // Match `PROC main(` allowing whitespace + comments above.

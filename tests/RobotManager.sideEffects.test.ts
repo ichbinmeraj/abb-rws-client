@@ -380,6 +380,74 @@ describe('loadProgram: no silent stop, and every failed step is reported', () =>
     expect(e.message).toMatch(/^loadProgram: the file .*missing\.mod cannot be read \(.*\)\. Nothing was sent to the controller\.$/);
     expect(wire).toEqual([]);
   });
+
+  /** The text each upload carried: the body of the RWS 2.0 file PUT. */
+  function uploads(adapter: unknown): string[] {
+    const a = adapter as Record<string, unknown>;
+    const req = a.req as (...args: unknown[]) => Promise<unknown>;
+    const sent: string[] = [];
+    a.req = async (...args: unknown[]) => {
+      if (args[0] === 'PUT' && String(args[1]).startsWith('/fileservice/')) { sent.push(args[3] as string); }
+      return req(...args);
+    };
+    return sent;
+  }
+
+  function file(name: string, content: Uint8Array | string): string {
+    const p = path.join(dir, 'enc', name, 'ZZ_SIDE.mod');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content);
+    return p;
+  }
+
+  it('a UTF-8 file with non-ASCII text is uploaded as its exact text', async () => {
+    const text = 'MODULE ZZ_SIDE\n  ! Größe 20 °C, ½ Hub\n  PROC main()\n  ENDPROC\nENDMODULE\n';
+    const { adapter, wire } = rws2('rw7');
+    const sent = uploads(adapter);
+    await manager(adapter).loadProgram(file('utf8', text), 'T_ROB1');
+    expect(sent).toEqual([text]);
+    expect(wire).toEqual([EDIT_REQ, 'READ execstate', 'READ modules', UPLOAD, LOADMOD, 'READ modules', RESETPP, EDIT_REL]);
+  });
+
+  it('a Latin-1 file: INVALID_ARGUMENT naming the file and the line, nothing sent (1.5.1 uploaded U+FFFD in its place)', async () => {
+    const latin1 = Buffer.from('MODULE ZZ_SIDE\n  ! Größe\n  PROC main()\n  ENDPROC\nENDMODULE\n', 'latin1');
+    const p = file('latin1', latin1);
+    const { adapter, wire } = rws2('rw7', { modules: ['ZZ_SIDE'] });
+    const sent = uploads(adapter);
+    const e = await rejection(manager(adapter).loadProgram(p, 'T_ROB1'));
+    expect(e.code).toBe('INVALID_ARGUMENT');
+    expect(e.message).toBe(`loadProgram: the file ${p} is not valid UTF-8. Line 2 has a byte sequence that is not UTF-8, `
+      + 'starting with byte 0xF6 (files saved as Windows-1252, Latin-1 or UTF-16 have such bytes). '
+      + 'Save the file as UTF-8 and load it again. Nothing was sent to the controller.');
+    // Not even the access request: the loaded module of the same name stays.
+    expect(wire).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('a byte order mark is sent as it is, as 1.5.1 sent it, and PROC main is still found', async () => {
+    const text = 'MODULE ZZ_SIDE\n  PROC main()\n  ENDPROC\nENDMODULE\n';
+    const p = file('bom', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text)]));
+    const { adapter, wire } = rws2('rw7');
+    const sent = uploads(adapter);
+    await manager(adapter).loadProgram(p, 'T_ROB1');
+    expect(sent).toEqual([`﻿${text}`]);
+    expect(sent).toEqual([fs.readFileSync(p, 'utf8')]);
+    expect(wire).toContain(RESETPP);
+  });
+
+  it('a file with no text (empty, a byte order mark only, or white space only): INVALID_ARGUMENT, nothing sent', async () => {
+    const empties: Array<[string, Uint8Array | string]> = [
+      ['empty', ''], ['bom-only', Buffer.from([0xef, 0xbb, 0xbf])], ['blank', ' \r\n\t\r\n'],
+    ];
+    for (const [name, content] of empties) {
+      const p = file(name, content);
+      const { adapter, wire } = rws2('rw7', { modules: ['ZZ_SIDE'] });
+      const e = await rejection(manager(adapter).loadProgram(p, 'T_ROB1'));
+      expect(e.code).toBe('INVALID_ARGUMENT');
+      expect(e.message).toBe(`loadProgram: the file ${p} has no text, so it holds no module. Nothing was sent to the controller.`);
+      expect(wire).toEqual([]);
+    }
+  });
 });
 
 describe('RWS 2.0 activate / deactivate all tasks report each refused task', () => {

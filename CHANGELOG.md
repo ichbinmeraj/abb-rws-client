@@ -6,6 +6,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-10-29
+
+### Fixed
+
+- **`RobotManager.loadProgram` refuses a local file that is not valid
+  UTF-8.** Up to 1.5.1 it read the file as UTF-8 text, and Node turns every
+  byte sequence that is not UTF-8 into U+FFFD without a word. A module saved
+  as Windows-1252 or Latin-1 was uploaded with replacement characters where
+  its accented letters had been. Now the bytes are decoded strictly. Such a
+  file is refused with `INVALID_ARGUMENT` before anything is sent, the access
+  request included. The message names the file, the line where the first bad
+  byte sequence starts, and its first byte. Save the file as UTF-8 and load
+  it again.
+- **`loadProgram` refuses a file with no text** (empty, white space only, or
+  a byte order mark only) the same way. It holds no module, and loading it
+  would first unload the loaded module of the same name.
+- A valid UTF-8 file is sent exactly as before, a byte order mark included.
+  No error code and no signature changed.
+
+### Documentation
+
+- The README's RobotWare 8 motion-control section no longer says ABB's PC
+  SDK lets a tool allow motion control automatically on virtual controllers
+  only. ABB's PC SDK has an Automatic policy that turns it on before each
+  action, and ABB allows that policy on virtual controllers only. On a real
+  controller the tool has to turn it on itself, and ABB asks it to confirm
+  both stops first. This client still never allows it on its own.
+- The `motors-on` remedy row no longer reads as if `setMotorsOn` worked on
+  RobotWare 6 and 7 only. The remedy offers that call on RobotWare 6 and 7.
+  On an 8.2.1 virtual controller in Auto, `setMotorsOn` after `setMotorsOff`
+  was accepted (204), and in guard stop it was refused (403 -1073445806).
+  The functional-suite notes no longer say RobotWare 8 motors come on only
+  at the FlexPendant.
+- A line on ABB's OmniCore App SDK, the library for apps that run on the
+  OmniCore FlexPendant. This client is for code on a PC or a server.
+- The trademark and disclaimer lines in the README, `TRADEMARKS.md` and
+  `NOTICE` name ABB Asea Brown Boveri Ltd. as the owner of the ABB mark and
+  the product names as trademarks of their respective owners. The project is
+  not affiliated with, endorsed by, sponsored by or supported by ABB, ABB
+  Robotics or any later owner of these products. In `TRADEMARKS.md` the list
+  of what this project will not do and the promise to rename on request cover
+  all of them, and the clean-room line names RobotStudio virtual controllers
+  as the controllers observed.
+
+### Removed
+
+- **`VALIDATION.md`** (not part of the npm package). Its manual scenarios
+  covered RWS 1.0 only, and several no longer matched the client. The live
+  checks are described under Functional tests in the README.
+
 ## [1.5.1] - 2026-10-25
 
 1.4.0 and 1.5.0 were prepared but not published; their changes ship in

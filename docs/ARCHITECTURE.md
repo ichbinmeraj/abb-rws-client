@@ -364,7 +364,7 @@ npm publish       # prepublishOnly runs build + test automatically
 node validate.mjs # manual smoke against a live controller (hardcoded 192.168.125.1, 'Default User')
 ```
 
-Live validation: `VALIDATION.md` (15 manual scenarios, **RWS 1.0 only**) plus the VS Code
+Live validation: `VALIDATION.md` (15 manual scenarios, **RWS 1.0 only**, removed in 1.5.2 in favour of the README's "Functional tests") plus the VS Code
 extension repo's `test-*.js` live suites. README's claim of "116 unit tests" is exact;
 the "339 live protocol-coverage tests" refers to the extension-side live scripts
 **(inferred - not re-counted)**.
@@ -385,7 +385,7 @@ kept so earlier references still point at the same row.
 
 | # | Discrepancy | Evidence |
 |---|---|---|
-| 7 | Default username: the code default is `'Admin'` (`src/RwsClient.ts:158`, `src/detect.ts:353`), as README and examples say; the `VALIDATION.md` harness passes no username (so it logs in as `'Admin'`), yet its scenario 2 expects `username="Default User"`. `validate.mjs` passes `'Default User'` explicitly | `VALIDATION.md:19, 63`, `validate.mjs:5` |
+| 7 | Default username: the code default is `'Admin'` (`src/RwsClient.ts:158`, `src/detect.ts:353`), as README and examples say; the `VALIDATION.md` harness passes no username (so it logs in as `'Admin'`), yet its scenario 2 expects `username="Default User"`. `validate.mjs` passes `'Default User'` explicitly | `VALIDATION.md:19, 63` (removed in 1.5.2), `validate.mjs:5` |
 | 9 | CHANGELOG 0.7.0 says examples/ has "four scripts"; six exist; 0.7.2 claims to be "bit-for-bit identical to v0.7.1"; 0.7.3 records the rewrite of examples 05/06 but not when they were added | `CHANGELOG.md` 0.7.0, 0.7.2 and 0.7.3 entries |
 | 10 | `ResponseParser` docstrings cite the path `/rw/mechunit/{unit}/…`; the client reads `/rw/motionsystem/mechunits/…` - trust the code | `src/ResponseParser.ts:228, 284` |
 | 11 | The `\b` word-boundary class matching does **not** prevent hyphen-suffix collisions (`\b` fires at letter↔`-`); the comment claiming `'rap-task-li'` won't match `'rap-task-li-selected'` is wrong (behavior benign today) | `src/ResponseParser.ts:85-91` |
