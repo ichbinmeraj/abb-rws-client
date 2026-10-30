@@ -48,6 +48,18 @@ a hardware guarantee.
 - Protocol claims must cite evidence - the probe or controller and the date, and
   whether it was observed on a virtual controller (VC) or on real hardware.
 
+## Releases
+
+A release takes three steps by the owner, and no npm token is stored anywhere. Push the
+release commit to master. Push the tag `v<version>`, which must match the version in
+package.json. The tag starts the Release workflow (`.github/workflows/release.yml`): it runs
+the lint and the test suite, packs the tarball and prints its sha1, sha256 and integrity in
+the run summary. Then approve the `npm` environment in that run, after comparing the tarball
+with a local `npm pack` of the same commit. The publish job sends that same file to npm
+through trusted publishing, with a provenance statement. A run started by hand from the
+Actions tab packs the branch it runs on and publishes nothing, unless it runs on a tag with
+dry run turned off.
+
 ## Reporting a security issue
 
 Do not open a public issue. See [SECURITY.md](./SECURITY.md).

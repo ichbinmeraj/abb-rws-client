@@ -1,0 +1,142 @@
+name: Release
+
+# Publishes a tagged release to npm through trusted publishing (OpenID Connect): no npm
+# token is stored anywhere. The npm side is a trusted publisher on the abb-rws-client
+# package naming this repository, this file (release.yml) and the environment "npm". That
+# environment carries the gate: the owner as required reviewer, and deployments only from
+# tags v*.
+#
+# Two jobs. "package" builds and tests the tagged commit and packs the tarball the way a
+# local release does (npm pack, whose prepack runs the build and the test suite), then
+# uploads it with its hashes. "publish" waits for the approval in the environment, then
+# publishes that uploaded file (not a new build) after checking its sha256 again. Before
+# approving, the owner compares the uploaded tarball with a local pack of the same commit.
+#
+# Run it by hand (Actions, Release, Run workflow) to see the package job on any branch:
+# with dry_run on, or on a branch, nothing is published.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Package only, never publish'
+        type: boolean
+        default: true
+
+# One release at a time. A second tag waits instead of racing the first.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # The npm that publishes. Trusted publishing needs npm 11.5.1 or later and Node 22.14.0
+  # or later, and Node 22 comes with npm 10. An exact version, never a range or a tag.
+  NPM_PUBLISH: 'npm@11.21.1'
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Nothing is packed from a tag that is not on master or whose version is not the one
+      # package.json carries. A run by hand on a branch packs whatever the branch holds.
+      - name: Guard the tag
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME is not v$version from package.json"; exit 1; }
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/master || { echo "$GITHUB_REF_NAME ($GITHUB_SHA) is not on master"; exit 1; }
+          else
+            echo "$GITHUB_REF_NAME is not a tag: package only, nothing is published"
+          fi
+      - run: npm ci
+      - run: npm run lint
+      # npm pack runs prepack: npm ls, a clean build and the test suite, as a local pack does.
+      - name: Build, test and pack
+        id: pack
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          mkdir -p pack
+          npm pack --pack-destination pack
+          tarball="abb-rws-client-$version.tgz"
+          [ -f "pack/$tarball" ] || { echo "no pack/$tarball"; exit 1; }
+          [ "$(ls pack | wc -l)" = 1 ] || { echo "pack/ holds more than $tarball"; exit 1; }
+          mv "pack/$tarball" "$tarball"
+          sha1="$(sha1sum "$tarball" | cut -d' ' -f1)"
+          sha256="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+          files="$(tar -tzf "$tarball" | wc -l)"
+          # In the log, and the sha256 as an annotation as well, which the API serves while
+          # the publish job waits for its approval.
+          echo "tarball sha1 $sha1 $tarball"
+          echo "tarball sha256 $sha256 $tarball"
+          echo "tarball integrity $integrity $tarball"
+          echo "::notice title=$tarball::tarball sha256 $sha256 $tarball"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $tarball"
+            echo "- ref: $GITHUB_REF_NAME, commit $GITHUB_SHA"
+            echo "- size: $(stat -c %s "$tarball") bytes, $files files"
+            echo "- sha1 (npm shasum): \`$sha1\`"
+            echo "- sha256: \`$sha256\`"
+            echo "- integrity: \`$integrity\`"
+            echo "- Before approving the npm environment: the owner compares this tarball with a local pack of the same commit."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: package
+    # Only a tag publishes, and a run by hand only when dry_run is off. The environment's
+    # tag rule refuses any other ref as well.
+    if: startsWith(github.ref, 'refs/tags/v') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    runs-on: ubuntu-latest
+    # Required reviewer (the owner) and the tag rule live in this environment's settings.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+      # The file published is the file the package job uploaded and the owner checked.
+      - name: Same file as packaged
+        env:
+          TARBALL: ${{ needs.package.outputs.tarball }}
+          SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          echo "$SHA256  $TARBALL" | sha256sum -c -
+      - name: npm with trusted publishing
+        run: |
+          npm install -g "$NPM_PUBLISH"
+          npm --version
+      # No token: npm trades the job's OIDC token for a short-lived publish token, and
+      # attaches a provenance statement for the tarball.
+      - name: Publish to npm (trusted publishing)
+        env:
+          TARBALL: ${{ needs.package.outputs.tarball }}
+        run: npm publish "./$TARBALL" --provenance --access public
