@@ -508,6 +508,11 @@ export interface IRWSAdapter {
    * extended by it. On RWS 1.0 the wait occupies the client's serial request
    * queue, so every later request on that client waits until the read
    * answers. On RWS 2.0 the requests behind it are not held up.
+   *
+   * A write despite its name: the controller removes the message from the
+   * queue when it is read (ABB DIPC Service Rev L), so no other reader gets
+   * it. RWS has no read that leaves it there; `getDipcQueueInfo` reads the
+   * queue's counts without taking anything.
    */
   readDipcMessage?(queue: string, timeoutMs?: number): Promise<{ payload: string; type: string } | null>;
   removeDipcQueue?(name: string): Promise<void>;

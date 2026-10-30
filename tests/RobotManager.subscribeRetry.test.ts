@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { RobotManager } from '../src/RobotManager.js';
+import { CUT_CREATE } from '../src/HttpSession.js';
 import { RwsError } from '../src/types.js';
 import { Logger } from '../src/Logger.js';
 
@@ -443,6 +444,52 @@ describe('RobotManager subscribes again while connected without an event stream'
       'WS subscriptions started on retry 5 - events streaming, resyncing state',
     ]);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a failed mechanical-unit read leaves the list as it was, never a guessed ROB_1', async () => {
+    start();
+    const fake = makeFakeAdapter();
+    fake.listMechunits
+      .mockRejectedValueOnce(new RwsError('Request timed out after 5000ms: GET /rw/motionsystem/mechunits', 'NETWORK_ERROR'))
+      .mockResolvedValueOnce(['ROB_1', 'ROB_2'])
+      .mockRejectedValueOnce(new RwsError('Controller busy (503) - retry later', 'CONTROLLER_BUSY', 503));
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    expect(fake.listMechunits).toHaveBeenCalledTimes(1);
+    expect(mgr.state.mechunits).toEqual([]);
+    await vi.advanceTimersByTimeAsync(30_000);   // the list is read again every 30th poll
+    expect(fake.listMechunits).toHaveBeenCalledTimes(2);
+    expect(mgr.state.mechunits).toEqual(['ROB_1', 'ROB_2']);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fake.listMechunits).toHaveBeenCalledTimes(3);
+    expect(mgr.state.mechunits).toEqual(['ROB_1', 'ROB_2']);
+  });
+
+  it('a create cut short for a stop (RWS 1.0) neither adds to the unanswered creates in a row nor ends them', async () => {
+    const { info } = start();
+    const fake = makeFakeAdapter();
+    const CUT = `${CUT_CREATE}POST /rw/rapid/execution?action=stop`;
+    const answers: Array<() => never> = [
+      () => { throw new RwsError(TIMED_OUT, 'NETWORK_ERROR'); },                 // 0 s, at connect: 1 unanswered
+      () => { throw new RwsError(TIMED_OUT, 'NETWORK_ERROR'); },                 // 5 s: 2
+      () => { throw new RwsError(CUT, 'NETWORK_ERROR'); },                       // 15 s: still 2
+      () => { throw new RwsError(TIMED_OUT, 'NETWORK_ERROR'); },                 // 35 s: 3
+      () => { throw new RwsError('Controller busy (503) - retry later', 'CONTROLLER_BUSY', 503); }, // 635 s: answered
+    ];
+    const handle = vi.fn(async () => {});
+    recordSubscribes(fake, async () => {
+      const next = answers[times.get(fake)!.length - 1];
+      if (next) { next(); }
+      return handle;
+    });
+    mgr = managerWith(fake);
+
+    await mgr.connect('vc-a', 'u', 'p', 80);
+    await vi.advanceTimersByTimeAsync(695_000);
+    expect(subscribeTimes(fake)).toEqual([0, 5, 15, 35, 635, 695]);
+    expect(subscribeLines(info)[2]).toBe(`WS subscriptions: retry 2 failed (${CUT}); polling continues, the next retry in 20 s`);
+    expect(mgr.state.quality).toBe('live');
   });
 
   it('a retry whose group leaves a status resource unbound ends at the fast rate, `polling`, the reason naming it', async () => {

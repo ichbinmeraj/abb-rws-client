@@ -419,6 +419,42 @@ describe('loadProgram and unloadModule: what the controller did, read back', () 
     expect(wire.filter(w => w === 'read event log')).toHaveLength(1);
   });
 
+  it('replays the recorded name clash: a module loaded as <NAME>#2, then the unload by its own name', async () => {
+    // RobotWare 7.21.4 virtual controller 'IRB1600_6_120_5', 2026-10-12: a
+    // test module declared a variable named like the module, ignoring case
+    // (here ZZ_CLASH and zz_clash stand in for the names of that run). The
+    // controller listed it as <NAME>#2, and unloading that name cleaned up.
+    // The 400 and 403 answers are the recorded ones. The event log was not
+    // read in that run, so it is empty here.
+    const clash = path.join(dir, 'ZZ_CLASH.mod');
+    fs.writeFileSync(clash, 'MODULE ZZ_CLASH\n  VAR num zz_clash := 0;\n  PROC main()\n    WHILE TRUE DO\n      zz_clash := zz_clash + 1;\n      WaitTime 0.2;\n    ENDWHILE\n  ENDPROC\nENDMODULE\n');
+    const semantic = (() => {
+      const body = JSON.stringify({ status: { code: -1073442802, msg: 'Semantic error' } });
+      const info = classifyControllerError({ httpStatus: 400, body, method: 'POST', path: '/rw/rapid/execution/resetpp' });
+      return new RwsError(info.message, info.code, 400, body, info.controllerCode ?? undefined, info.controllerMsg ?? undefined, info.refusal);
+    })();
+    const s: Script = { lists: [['BASE'], ['BASE', 'ZZ_CLASH#2']], resetFails: semantic };
+    const { adapter, wire } = adapterFor(s);
+    const mgr = managerOf(adapter);
+    (mgr as unknown as { _state: { systemInfo: { name: string } } })._state.systemInfo.name = 'IRB1600_6_120_5';
+
+    const load = await caught(mgr.loadProgram(clash, 'T_ROB1'));
+    expect(load.code).toBe('WRONG_MODE');
+    expect(load.message).toContain('loaded module ZZ_CLASH into T_ROB1 as ZZ_CLASH#2, the name the controller gave it (unload it by that name).');
+    expect(load.message).toContain('refused to set the program pointer to Main: the loaded RAPID program has semantic errors');
+    expect(load.message).not.toContain('loaded module ZZ_CLASH into T_ROB1;');
+
+    s.unloadFails = reasonInLog();
+    const unload = await caught(mgr.unloadModule('T_ROB1', 'ZZ_CLASH'));
+    expect(unload.httpStatus).toBe(403);
+    expect(unload.controllerCode).toBe(-1073414145);
+    expect(unload.refusal?.sentence).toBe("Controller 'IRB1600_6_120_5' refused to unload module ZZ_CLASH from T_ROB1 and wrote its reason in the event log. "
+      + 'The event log has no message. The task lists the module as ZZ_CLASH#2, the name the controller gave it on load; unload it by that name.');
+    expect(unload.refusal?.fix).toBe('Unload the module by the name the task lists, ZZ_CLASH#2.');
+    expect(unload.message).not.toContain('gave no reason this client can explain');
+    expect(wire.filter(w => w.startsWith('unload'))).toEqual(['unload T_ROB1 ZZ_CLASH']);
+  });
+
   it('when the event log cannot be read, the sentence says so and the controller\'s answer is kept', async () => {
     const { adapter } = adapterFor({ lists: [['BASE']], unloadFails: reasonInLog(), logFails: true });
     const err = await caught(managerOf(adapter, { T_ROB1: ['BASE', 'Other'] }).unloadModule('T_ROB1', 'Other'));

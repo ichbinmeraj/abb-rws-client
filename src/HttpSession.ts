@@ -40,6 +40,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** sleep(), ended early when `cut` aborts; the caller checks `cut` next. */
+function pause(ms: number, cut: AbortSignal | undefined): Promise<void> {
+  if (!cut) { return sleep(ms); }
+  if (cut.aborted) { return Promise.resolve(); }
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (): void => { clearTimeout(timer); cut.removeEventListener('abort', done); resolve(); };
+    timer = setTimeout(done, ms);
+    cut.addEventListener('abort', done, { once: true });
+  });
+}
+
+/**
+ * How the error of a subscription group create cut short by a reducing
+ * request begins (HttpSession.enqueue); the method and path of that request
+ * follow. RobotManager keys on it.
+ */
+export const CUT_CREATE = 'Request cut short: POST /subscription gave way to ';
+
 /** Longest delay a Node timer takes (2^31-1 ms, about 24.8 days); a longer one fires after 1 ms. */
 export const MAX_TIMER_MS = 2 ** 31 - 1;
 
@@ -276,6 +295,9 @@ export class HttpSession {
   /** Promise chain that serialises all outbound requests */
   private requestQueue: Promise<void> = Promise.resolve();
 
+  /** One per subscription group create queued or in flight, and whether it was sent; a reducing request aborts them (see enqueue). */
+  private readonly cuttable = new Map<AbortController, { sent: boolean }>();
+
   /** Set by close(), cleared by reopen(); see close(). */
   private closed = false;
 
@@ -343,6 +365,35 @@ export class HttpSession {
   private static readonly NOT_REPEATABLE = /[?&]action=dipc-read(?:&|$)|^\/logout(?:[?#]|$)/i;
 
   /**
+   * Requests that only take something away. One of them queued behind a
+   * subscription group create cuts that create short (see enqueue). `sent`:
+   * Stop RAPID, motors off, deleting a subscription group and /logout cut a
+   * create already sent as well as one not yet sent. `queued`: a mastership
+   * release (one domain or all) and the RMMP cancel cut only a create not yet
+   * sent, and wait for one already sent (RW 6.16.03 answered creates in 0.8 s
+   * at the median), so a write's release does not abort the create the
+   * subscriber sent a moment before. Matched on the wire form, so the calls
+   * RWS1Adapter sends through RwsClient.request (with `&json=1`) count too.
+   */
+  private static readonly REDUCING: ReadonlyArray<{ method: string; path: RegExp; body?: RegExp; cuts: 'sent' | 'queued' }> = [
+    { method: 'POST', path: /^\/rw\/rapid\/execution\?action=stop(?:&|$)/, cuts: 'sent' },
+    { method: 'POST', path: /^\/rw\/panel\/ctrlstate\?action=setctrlstate(?:&|$)/, body: /(?:^|&)ctrl-state=motoroff(?:&|$)/, cuts: 'sent' },
+    { method: 'DELETE', path: /^\/subscription\/[^/?]+$/, cuts: 'sent' },
+    { method: 'GET', path: /^\/logout(?:[?#]|$)/, cuts: 'sent' },
+    { method: 'POST', path: /^\/rw\/mastership(?:\/[^/?]+)?\?action=release(?:&|$)/, cuts: 'queued' },
+    { method: 'POST', path: /^\/users\/rmmp\?action=cancel(?:&|$)/, cuts: 'queued' },
+  ];
+
+  /** The subscription group create, the one request a reducing request cuts short (WsSubscriber.createGroup). */
+  private static readonly CUTTABLE = /^\/subscription$/;
+
+  /** What a reducing request cuts, or null for any other request. */
+  private static cutsOf(method: string, path: string, body: string | Uint8Array | undefined): 'sent' | 'queued' | null {
+    const text = typeof body === 'string' ? body : '';
+    return HttpSession.REDUCING.find(r => r.method === method && r.path.test(path) && (!r.body || r.body.test(text)))?.cuts ?? null;
+  }
+
+  /**
    * A failure on a dead pooled connection arrives within a round trip of the
    * request going out: the controller's close was already on its way. One
    * that arrives later can follow a request the controller read and worked
@@ -385,22 +436,24 @@ export class HttpSession {
   // before it answers (a DIPC read waiting for a message, say). This one
   // request's timeout is extended by it, so the client does not abort such a
   // wait; every other request keeps the instance's timeout. The request still
-  // occupies the serial queue for as long as the controller holds it.
+  // occupies the serial queue for as long as the controller holds it, except
+  // a subscription group create, which a reducing request cuts short (see
+  // enqueue).
 
   get(path: string, holdMs = 0): Promise<HttpResponse> {
-    return this.enqueue('GET', path, () => this.execute('GET', path, undefined, holdMs));
+    return this.enqueue('GET', path, undefined, cut => this.execute('GET', path, undefined, holdMs, cut));
   }
 
   post(path: string, body?: string, holdMs = 0): Promise<HttpResponse> {
-    return this.enqueue('POST', path, () => this.execute('POST', path, body, holdMs));
+    return this.enqueue('POST', path, body, cut => this.execute('POST', path, body, holdMs, cut));
   }
 
   put(path: string, body: string | Uint8Array, holdMs = 0): Promise<HttpResponse> {
-    return this.enqueue('PUT', path, () => this.execute('PUT', path, body, holdMs));
+    return this.enqueue('PUT', path, body, cut => this.execute('PUT', path, body, holdMs, cut));
   }
 
   delete(path: string, holdMs = 0): Promise<HttpResponse> {
-    return this.enqueue('DELETE', path, () => this.execute('DELETE', path, undefined, holdMs));
+    return this.enqueue('DELETE', path, undefined, cut => this.execute('DELETE', path, undefined, holdMs, cut));
   }
 
   /** Returns the current cookie string for use in WebSocket connections */
@@ -429,7 +482,9 @@ export class HttpSession {
 
   /**
    * Refuse every request from now on (NOT_CONNECTED) until `reopen()`.
-   * Requests queued before this call still go out, in order.
+   * Requests queued before this call still go out, in order, except a
+   * subscription group create, which the /logout queued with it cuts short
+   * (see enqueue).
    *
    * RwsClient.disconnect() calls this in the same tick it queues /logout, so
    * nothing is sent after the logout.
@@ -469,8 +524,27 @@ export class HttpSession {
    * Append a function to the serial request queue, enforcing the minimum interval
    * between requests. Error suppression on `this.requestQueue` (not on `result`)
    * ensures queue continues processing even when individual requests fail.
+   *
+   * The client sends one request at a time, in order, with one exception. A
+   * reducing request (REDUCING) cuts short the subscription group creates
+   * queued before it: a create not yet sent is never sent, and one already
+   * sent is aborted when the reducing request cuts sent ones too (Stop RAPID,
+   * motors off, deleting a group, /logout). Each fails with CUT_CREATE
+   * ("Request cut short: POST /subscription gave way to ..."). Up to 1.5.2 a
+   * create the controller never answered held a stop behind it for up to
+   * 10 s (the create's timeout, WsSubscriber.createGroup). Now the stop waits
+   * only for the requests queued before it that are not creates, and for the
+   * interval between requests. An aborted create may still be completed by
+   * the controller and leave a group there, as one that timed out may.
+   * Whether RWS 1.0 answers a request on a new connection while it still
+   * works on an aborted one was not probed (VCs down for 1.5.3).
    */
-  private enqueue<T>(method: string, path: string, fn: () => Promise<T>): Promise<T> {
+  private enqueue<T>(
+    method: string,
+    path: string,
+    body: string | Uint8Array | undefined,
+    fn: (cut: AbortSignal | undefined) => Promise<T>,
+  ): Promise<T> {
     // Checked when the request is QUEUED, not when it runs: whatever was queued
     // before close() (the /logout among it) must still go out.
     if (this.closed) {
@@ -479,14 +553,35 @@ export class HttpSession {
         'NOT_CONNECTED',
       ));
     }
+    const cuts = HttpSession.cutsOf(method, path, body);
+    if (cuts !== null) {
+      for (const [create, state] of this.cuttable) {
+        if (state.sent && cuts === 'queued') { continue; }
+        Logger.trace?.('http.err', `RWS1 POST /subscription cut short${state.sent ? ' in flight' : ' before it was sent'} by ${method} ${path}`, {
+          protocol: 'rws1', method: 'POST', path: '/subscription',
+        });
+        create.abort(new RwsError(`${CUT_CREATE}${method} ${path}`, 'NETWORK_ERROR'));
+        this.cuttable.delete(create);
+      }
+    }
+    const cut = method === 'POST' && HttpSession.CUTTABLE.test(path) ? new AbortController() : undefined;
+    if (cut) { this.cuttable.set(cut, { sent: false }); }
     const result = this.requestQueue.then(async () => {
       const elapsed = Date.now() - this.lastRequestTime;
       if (this.requestIntervalMs > 0 && elapsed < this.requestIntervalMs) {
-        await sleep(this.requestIntervalMs - elapsed);
+        await pause(this.requestIntervalMs - elapsed, cut?.signal);
       }
+      // Cut short before its turn: nothing is sent.
+      if (cut?.signal.aborted) { throw cut.signal.reason as RwsError; }
+      const state = cut ? this.cuttable.get(cut) : undefined;
+      if (state) { state.sent = true; }
       this.lastRequestTime = Date.now();
-      return fn();
+      return fn(cut?.signal);
     });
+    if (cut) {
+      const settled = (): void => { this.cuttable.delete(cut); };
+      void result.then(settled, settled);
+    }
 
     // Detach error from the shared queue chain so a failed request does not block
     // subsequent ones. Callers still receive the rejection via `result`.
@@ -505,6 +600,7 @@ export class HttpSession {
     path: string,
     body?: string | Uint8Array,
     holdMs = 0,
+    cut?: AbortSignal,
   ): Promise<HttpResponse> {
     const startedAt = Date.now();
     const bodyPreview = body
@@ -526,7 +622,7 @@ export class HttpSession {
     // here. See the dead-cookie retry below.
     this.challengeCookies.clear();
     const heldCookie = this.cookies.size > 0;
-    let response = await this.rawFetch(method, path, body, holdMs);
+    let response = await this.rawFetch(method, path, body, holdMs, cut);
 
     // 401 → perform digest handshake then retry once
     if (response.status === 401) {
@@ -539,7 +635,7 @@ export class HttpSession {
       this.digestChallenge = this.parseDigestChallenge(wwwAuth);
       this.nonceCount = 0;
 
-      response = await this.rawFetch(method, path, body, holdMs);
+      response = await this.rawFetch(method, path, body, holdMs, cut);
 
       // A session cookie the controller no longer knows keeps it answering 401
       // even to correct digest credentials. Live 2026-09-25 (IRC5 VC, RW6.16):
@@ -561,7 +657,7 @@ export class HttpSession {
         this.sessionReplaced('the controller no longer accepted the session cookie, so the request was sent again on a new session');
         this.digestChallenge = this.parseDigestChallenge(retryAuth);
         this.nonceCount = 0;
-        response = await this.rawFetch(method, path, body, holdMs);
+        response = await this.rawFetch(method, path, body, holdMs, cut);
       }
 
       if (response.status === 401) {
@@ -606,9 +702,9 @@ export class HttpSession {
         protocol: 'rws1', method, path, status: 503,
         bodyPreview: response.body.slice(0, 300), ...cookieNames(response.headers),
       });
-      await sleep(200);
+      await pause(200, cut);
       this.dropIdleConnections();
-      response = await this.rawFetch(method, path, body, holdMs);
+      response = await this.rawFetch(method, path, body, holdMs, cut);
       if (response.status === 503) {
         Logger.trace?.('http.err', `RWS1 ${method} ${path} → 503 busy`, {
           protocol: 'rws1', method, path,
@@ -706,17 +802,21 @@ export class HttpSession {
    * attempt (see the end of this method and storeCookies).
    *
    * `holdMs` (see the public methods) is added to the timeout of this one
-   * request.
+   * request. `cut` (a subscription group create only, see enqueue) aborts
+   * it and fails it with the signal's reason; once aborted, nothing more is
+   * sent, a retry after a 401 or a 503 included.
    */
   private async rawFetch(
     method: string,
     path: string,
     body?: string | Uint8Array,
     holdMs = 0,
+    cut?: AbortSignal,
   ): Promise<RawResponse> {
+    if (cut?.aborted) { throw cut.reason as RwsError; }
     const response = this.transport === 'fetch'
-      ? await this.viaFetch(method, path, body, holdMs)
-      : await this.viaNodeHttp(method, path, body, holdMs);
+      ? await this.viaFetch(method, path, body, holdMs, cut)
+      : await this.viaNodeHttp(method, path, body, holdMs, cut);
     // The cookies of every answer but a 401 are kept, whatever its status,
     // before anything can throw. Until 2026-10-22 only a 2xx answer's were. On RW
     // 6.16.03 a request carrying an ABBCX the controller has let go of is
@@ -788,11 +888,14 @@ export class HttpSession {
     path: string,
     body: string | Uint8Array | undefined,
     holdMs: number,
+    cut: AbortSignal | undefined,
   ): Promise<RawResponse> {
     const headers = this.requestHeaders(method, path, body);
     const limitMs = this.timeoutFor(holdMs);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), limitMs);
+    const onCut = (): void => { controller.abort(); };
+    cut?.addEventListener('abort', onCut, { once: true });
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method,
@@ -805,12 +908,14 @@ export class HttpSession {
       const text = await res.text();
       return { status: res.status, headers: res.headers, body: text };
     } catch (e) {
+      if (cut?.aborted) { throw cut.reason as RwsError; }
       if (controller.signal.aborted || (e as Error | undefined)?.name === 'AbortError') {
         throw new RwsError(`Request timed out after ${limitMs}ms: ${method} ${path}`, 'NETWORK_ERROR');
       }
       throw fetchError(e, this.baseUrl);
     } finally {
       clearTimeout(timer);
+      cut?.removeEventListener('abort', onCut);
     }
   }
 
@@ -879,10 +984,11 @@ export class HttpSession {
     path: string,
     body: string | Uint8Array | undefined,
     holdMs: number,
+    cut: AbortSignal | undefined,
   ): Promise<RawResponse> {
     const limitMs = this.timeoutFor(holdMs);
     const deadline = Date.now() + limitMs;
-    let attempt = await this.sendOnce(method, path, body, limitMs, limitMs);
+    let attempt = await this.sendOnce(method, path, body, limitMs, limitMs, cut);
     if ('error' in attempt && attempt.staleSocket && HttpSession.mayResend(method, path, holdMs)) {
       // Paced like any request; the queue slot is still this request's.
       const wait = this.requestIntervalMs - (Date.now() - this.lastRequestTime);
@@ -893,7 +999,7 @@ export class HttpSession {
         Logger.trace?.('http.req', `RWS1 ${method} ${path} - retrying once on a fresh connection`, {
           protocol: 'rws1', method, path,
         });
-        attempt = await this.sendOnce(method, path, body, left, limitMs);
+        attempt = await this.sendOnce(method, path, body, left, limitMs, cut);
       }
     }
     if ('error' in attempt) { throw attempt.error; }
@@ -936,7 +1042,10 @@ export class HttpSession {
     body: string | Uint8Array | undefined,
     budgetMs: number,
     limitMs: number,
+    cut?: AbortSignal,
   ): Promise<Attempt> {
+    // Cut short (see enqueue): nothing is sent.
+    if (cut?.aborted) { return Promise.resolve({ error: cut.reason as RwsError, staleSocket: false }); }
     // requestHeaders throws for a digest challenge it cannot answer; nothing
     // is sent then.
     const headers: Record<string, string> = {
@@ -963,10 +1072,12 @@ export class HttpSession {
       // the end (the socket destroyed by the timer, say) is never unhandled.
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let onCut: (() => void) | undefined;
       const settle = (attempt: Attempt): void => {
         if (settled) { return; }
         settled = true;
         clearTimeout(timer);
+        if (onCut) { cut?.removeEventListener('abort', onCut); }
         resolve(attempt);
       };
       const fail = (error: RwsError, staleSocket = false): void => settle({ error, staleSocket });
@@ -1003,6 +1114,10 @@ export class HttpSession {
         fail(new RwsError(`Request timed out after ${limitMs}ms: ${method} ${path}`, 'NETWORK_ERROR'));
         req.destroy();
       }, budgetMs);
+      if (cut) {
+        onCut = (): void => { fail(cut.reason as RwsError); req.destroy(); };
+        cut.addEventListener('abort', onCut, { once: true });
+      }
 
       // Stale only before any answer (a connection cut after the controller
       // began to answer is a failure of that answer, not of the pool), and

@@ -600,6 +600,7 @@ export interface CfgElogDipcMethods {
   listDipcQueues(): Promise<Array<{ name: string; size?: number }>>;
   createDipcQueue(name: string, options?: { maxsize?: number; maxmessages?: number }): Promise<void>;
   sendDipcMessage(queue: string, payload: string, type?: 'string' | 'num' | 'dnum' | 'bool'): Promise<void>;
+  /** A write despite its name: the controller removes the message from the queue when it is read. See IRWSAdapter.readDipcMessage. */
   readDipcMessage(queue: string, timeoutMs?: number): Promise<{ payload: string; type: string } | null>;
   removeDipcQueue(name: string): Promise<void>;
   getDipcQueueInfo(queue: string): Promise<DipcQueueInfo | null>;

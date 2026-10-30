@@ -14,6 +14,7 @@ import type {
   MechunitMotorCalib, LeadThroughState, WriteAccessStatus, RobotWareCompatibility,
 } from './types.js';
 import { RwsError } from './types.js';
+import { CUT_CREATE } from './HttpSession.js';
 import {
   explainRefusal, holderFromMastership, holderFromWriteAccess, holderSentence, refusalError, withReport, builtRefusal,
   MOTION_CONTROL_DECLARE, MOTION_CONTROL_MISSING, MOTION_CONTROL_OFF_CODE, MOTION_CONTROL_RULE, motionControlRemedies, remedy,
@@ -123,7 +124,8 @@ export interface RobotState {
    * only ever described the first of them.
    */
   modulesByTask: Record<string, string[]>;
-  mechunits: string[];           // list of mechanical unit names (e.g. ['ROB_1'])
+  /** The controller's mechanical units (e.g. ['ROB_1']). [] until a read of the list succeeded on this connection; a failed read never puts a guessed unit here. */
+  mechunits: string[];
   joints: JointTarget | null;
   cartesian: RobTarget | null;
   cartesianFull: CartesianFull | null;
@@ -4803,16 +4805,27 @@ export class RobotManager {
    * time (isUnansweredCreate; the one at connect counts), the retries are
    * SUBSCRIBE_RETRY_SLOW_MS (10 minutes) apart until a create is answered,
    * refused or not: each unanswered create may leave a group on the
-   * controller, and on RWS 1.0 it holds every request of the session behind
-   * it for up to 10 s (WsSubscriber.createGroup).
+   * controller, and on RWS 1.0 it holds the session's requests behind it for
+   * up to 10 s, all but a stop, motors off, deleting a group or the logout
+   * (WsSubscriber.createGroup).
    */
   private subscribeAttemptFailed(e: unknown): number | undefined {
     if (e instanceof RwsError && e.code === 'UNSUPPORTED_OPERATION') {
       this.subscribeRetryDueAt = null;
       return undefined;
     }
-    this.subscribeUnanswered = RobotManager.isUnansweredCreate(e) ? this.subscribeUnanswered + 1 : 0;
+    // A create this client cut short for a stop, a release or the logout
+    // (RWS 1.0, HttpSession.enqueue) was neither answered nor timed out: the
+    // count of unanswered creates in a row stays as it was.
+    if (!RobotManager.isCutCreate(e)) {
+      this.subscribeUnanswered = RobotManager.isUnansweredCreate(e) ? this.subscribeUnanswered + 1 : 0;
+    }
     return this.scheduleSubscribeRetry();
+  }
+
+  /** A group create the RWS 1.0 session cut short so a reducing request could go out (HttpSession.enqueue). */
+  private static isCutCreate(e: unknown): boolean {
+    return e instanceof RwsError && e.code === 'NETWORK_ERROR' && e.message.startsWith(CUT_CREATE);
   }
 
   /**
@@ -5453,7 +5466,8 @@ export class RobotManager {
           this.adapter.getControllerIdentity().catch(e => { Logger.warn(`getControllerIdentity failed: ${e instanceof Error ? e.message : String(e)}`); return null; }),
           this.adapter.getSystemInfo().catch(e => { Logger.warn(`getSystemInfo failed: ${e instanceof Error ? e.message : String(e)}`); return null; }),
           this.readWholeEventLog(adapter, generation).catch(e => { Logger.warn(`getEventLog failed: ${e instanceof Error ? e.message : String(e)}`); return null; }),
-          this.adapter.listMechunits().catch(e => { Logger.warn(`listMechunits failed: ${e instanceof Error ? e.message : String(e)}`); return ['ROB_1']; }),
+          // A failed read leaves the list as it was: [] on a new connection, never a guessed unit.
+          this.adapter.listMechunits().catch(e => { Logger.warn(`listMechunits failed: ${e instanceof Error ? e.message : String(e)}`); return null; }),
         ]);
         if (stale()) { return; }
         if (identity)   { this._state.identity   = identity; }
@@ -5467,7 +5481,7 @@ export class RobotManager {
         // read lands again.
         this.writeEventLog(eventLog ? this.landWholeEventLog(adapter, eventLog, elogWrites) : []);
         if (generation !== undefined) { this.elogFullReadGen = eventLog ? generation : null; }
-        this._state.mechunits = mechunits;
+        if (mechunits) { this._state.mechunits = mechunits; }
       } else if (this.subscriptionActive && this.unboundNames().includes('elog') && this.fetchCount % this.unboundElogEvery() === 0) {
         // The controller did not bind the event log to the group, so no elog
         // event will ever say it changed: the poll stands in for them, on

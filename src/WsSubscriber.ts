@@ -520,11 +520,14 @@ export class WsSubscriber {
    * default too.
    *
    * The cost: requests go one at a time per session, so a create that is
-   * never answered holds the requests behind it (the poll, a write, the
-   * disconnect's /logout) for up to 10 s, each time it is sent (a 401 or a
-   * 503 sends it once more). RobotManager subscribes again while it has no
-   * event stream, so this can recur on a connection: after three unanswered
-   * creates in a row it waits 10 minutes between tries.
+   * never answered holds the requests behind it (the poll, a write) for up to
+   * 10 s, each time it is sent (a 401 or a 503 sends it once more). RobotManager
+   * subscribes again while it has no event stream, so this can recur on a
+   * connection: after three unanswered creates in a row it waits 10 minutes
+   * between tries. Since 1.5.3 Stop RAPID, motors off, deleting a group and
+   * the disconnect's /logout do not wait: they cut the create short, and it
+   * fails with "Request cut short". A release cuts it only before it is sent
+   * (HttpSession.enqueue).
    */
   private async createGroup(body: string, what: string): Promise<{ location: string; responseBody: string }> {
     const response = await this.session.post(subscriptions(), body, CREATE_GROUP_EXTRA_MS);

@@ -96,6 +96,13 @@ describe.skipIf(!HOST)('RWS 2.0 subscriber resilience (RW7 VC via chaos proxy)',
     await proxy.close();
   });
 
+  /**
+   * Speed ratio alone. RW 8.2.1 refused this one-resource create in the
+   * client's spelling (`/rw/panel/speedratio;speedratio`, 400 -1073445866,
+   * 2026-10-25); the subscriber then creates it once more as
+   * `/rw/panel/speedratio`, the spelling ABB documents (1.5.3). Not yet run
+   * on RW8 since.
+   */
   async function subscribeSpeed(opts: Record<string, unknown> = {}): Promise<void> {
     unsubscribe = await client.subscribe(
       ['speedratio'],

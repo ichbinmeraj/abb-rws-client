@@ -27,7 +27,9 @@ import { CFG_ELOG_DIPC, FILES_VISION, SYSTEM_MASTERSHIP, USERS_UAS } from '../pa
 import { redactBody } from '../redact.js';
 import { assertSignalName } from '../signalName.js';
 import { asSubscriptionUpdateError } from '../subscriptionUpdateError.js';
-import { otherPanelSpelling, subscriptionBodyResources, swapSubscriptionResources, unboundPanelResources } from './subscriptionBind.js';
+import {
+  otherPanelSpelling, respellableRefusal, subscriptionBodyResources, swapSubscriptionResources, unboundPanelResources, UNRESOLVED_URL,
+} from './subscriptionBind.js';
 import { addedResourcePaths, distinctPaths, dropFromGroup, subscriptionFrameEntries } from '../subscriptionKinds.js';
 import type {
 AnySubscriptionResource,
@@ -2793,6 +2795,12 @@ export class Rws2Core {
    * body that bound, for the reconnects, and the other resources the kept
    * group's create answer names as refused (`unbound`, see
    * unboundAfterCreate).
+   *
+   * A create of one panel resource that the controller refuses whole (400
+   * -1073445866, RW 8.2.1 for `/rw/panel/speedratio;speedratio` alone; see
+   * respellableRefusal) is sent once more with the resource in its other
+   * spelling. If that is refused the same way, or binds nothing, this throws
+   * and names both spellings. Not yet run against RW 8.2.1 in this form.
    */
   private async createBoundSubscription(bodyStr: string): Promise<{
     wsUrl: string; deleteUrl: string; cookieStr: string; bodyStr: string; unbound: string[];
@@ -2809,10 +2817,37 @@ export class Rws2Core {
       if (await this.waitForLogin() && (this.closed || this.closing)) { throw this.closedError('POST', '/subscription'); }
       return this.createSubscription(body);
     };
-    const first = await this.withLogin(() => create(bodyStr), false, 'POST /subscription');
-    const { panel: unbound, other } = await this.unboundAfterCreate(bodyStr, first.answer, first.deleteUrl);
+    let body = bodyStr;
+    let first: Awaited<ReturnType<Rws2Core['createSubscription']>>;
+    try {
+      first = await this.withLogin(() => create(body), false, 'POST /subscription');
+    } catch (e) {
+      const refused = e instanceof RwsError ? respellableRefusal(body, e.httpStatus, e.controllerCode) : null;
+      if (refused === null) { throw e; }
+      const respelled = otherPanelSpelling(refused) as string;
+      Logger.info(`RWS2 subscription: the controller refused a create of ${refused} alone (400 ${UNRESOLVED_URL}) - creating it with ${respelled}`);
+      body = swapSubscriptionResources(body, [[refused, respelled]]);
+      try {
+        first = await this.withLogin(() => create(body), false, 'POST /subscription');
+      } catch (e2) {
+        if (!(e2 instanceof RwsError) || respellableRefusal(body, e2.httpStatus, e2.controllerCode) === null) { throw e2; }
+        throw new RwsError(
+          `RWS2 subscription: the controller refused ${refused} and ${respelled} alike (${e2.message})`,
+          'UNKNOWN', e2.httpStatus, e2.rwsDetail, e2.controllerCode, e2.controllerMsg,
+        );
+      }
+    }
+    const { panel: unbound, other } = await this.unboundAfterCreate(body, first.answer, first.deleteUrl);
     if (unbound.length === 0 || !first.deleteUrl) {
-      return { wsUrl: first.wsUrl, deleteUrl: first.deleteUrl, cookieStr: first.cookieStr, bodyStr, unbound: other };
+      return { wsUrl: first.wsUrl, deleteUrl: first.deleteUrl, cookieStr: first.cookieStr, bodyStr: body, unbound: other };
+    }
+    if (body !== bodyStr) {
+      // Already the other spelling: swapping back would send the refused one.
+      await this.req('DELETE', first.deleteUrl).catch(() => undefined);
+      throw new RwsError(
+        `RWS2 subscription: the controller did not bind ${unbound.map(u => u.split(';')[0]).join(', ')} in either spelling`,
+        'UNKNOWN',
+      );
     }
     const swaps = unbound.map(u => [u, otherPanelSpelling(u) as string] as const);
     Logger.info(`RWS2 subscription: the controller did not bind ${unbound.join(', ')} - re-creating with ${swaps.map(s => s[1]).join(', ')}`);

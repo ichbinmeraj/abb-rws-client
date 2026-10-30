@@ -470,7 +470,7 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **`setActiveTool(mechunit, name)`**, **`setActiveWobj(mechunit, name)`** - switch active persistent tooldata / wobjdata.
 - **`getJointTargetFull(mechunit?)`**, **`getCartesianFull(mechunit?)`**, **`getMechunitDetails(mechunit?)`** - one-request motion reads for a sampler of your own (joint positions cannot be subscribed to on any generation, so they must be polled): every axis slot incl. external axes, the TCP pose, and the unit's typed description (type, axis count, driving task, mode, active tool/wobj). They throw `NOT_CONNECTED` instead of returning an empty value, and ride the manager's own session, whose request spacing keeps you under the controller's 20 req/s limit.
 - **CFG write** - `setCfgInstance` / `createCfgInstance` / `removeCfgInstance` / `loadCfgFile` / `saveCfgFile`, on **both** protocols (RWS 2.0 uses `instances/create-default` + the bracket value representation; RWS 1.0 uses the `?action=` forms - handled by the adapters). Each holds the configuration lock for the duration: CFG mastership on RobotWare 6, `edit` on RobotWare 7, write access on RobotWare 8 (see [Access each write takes](#access-each-write-takes)).
-- **DIPC** - `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients. `readDipcMessage(queue, timeoutMs)` lets the controller wait up to `timeoutMs` for a message (ABB's `timeout`, default 0); the client's own timeout for that read is extended by the wait. On RWS 1.0 the wait occupies the client's serial request queue, so every later request on that client waits until the read answers.
+- **DIPC** - `listDipcQueues` / `createDipcQueue` / `sendDipcMessage` / `readDipcMessage` / `removeDipcQueue`. Bidirectional messaging between RAPID and external clients. `readDipcMessage(queue, timeoutMs)` lets the controller wait up to `timeoutMs` for a message (ABB's `timeout`, default 0); the client's own timeout for that read is extended by the wait. On RWS 1.0 the wait occupies the client's serial request queue, so every later request on that client waits until the read answers. `readDipcMessage` is a write despite its name: ABB's DIPC queue removes a message when it is read, so a message one client read is gone for every other reader. RWS has no read that leaves the message in the queue. `getDipcQueueInfo` reads the queue's counts without taking anything.
 - **`listFileVolumes()`** - every controller volume (HOME, BACKUP, DATA, ADDINDATA, PRODUCTS, RAMDISK, TEMP).
 - **`getModuleSource(task, name)`** - pull a module's RAPID text in one call. Works even when the module has no backing file in `HOME` (loaded from `.pgf`/RobotStudio/pendant): the client saves it to the controller's TEMP volume, reads it, and deletes it.
 - **`compressPath(source, dest)`** / **`decompressPath(source, dest)`** - controller-side archive compression, both generations (RWS 1.0 uses the `?action=comp`/`dcomp` query-actions internally). The controller answers 202 and runs the job after that; both methods resolve at the 202 and return nothing. **`startJob(name, source, dest)`** sends the same request (`name` is `'compressPath'` or `'decompressPath'`, `CONTROLLER_JOB_NAMES`) and returns the job's progress id (`undefined` when the answer names none). To wait, poll **`getProgress(id)`** until `state` is no longer `pending` (ABB's finished state is `ready`); `details.code` is then the controller's return code, negative when the job failed. Decompress an archive only after its compress job is done.
@@ -844,7 +844,7 @@ on that generation.
 | `RobotManager.setMotorsOn` | rapid | edit | write access |
 | `stopRapid`, `RobotManager.setMotorsOff` | none: sent first; access is taken once, only if the controller refuses as not held | | |
 | `RobotManager.jog` (sent in any mode; the controller decides) | motion (ABB: local client) | motion (ABB: local client) | write access (ABB: motion control declared) |
-| `saveModule`, `getModuleSource`, file service, I/O writes (values, `setSignalSimulated`, `unblockSignals`, `setIoDeviceLState`), backup create, event log, clock | none | none | none |
+| `saveModule`, `getModuleSource`, file service, I/O writes (values, `setSignalSimulated`, `unblockSignals`, `setIoDeviceLState`), backup create, event log, clock, DIPC (`createDipcQueue`, `sendDipcMessage`, `readDipcMessage`, `removeDipcQueue`) | none | none | none |
 
 Some of these writes carry conditions no hold satisfies, and the controller
 refuses them when they are missing: ABB documents `modifyPosition` and
@@ -1141,6 +1141,14 @@ that got no answer in time; once a retry lands the quality is `live` again
 ("WebSocket events streaming after a retry"), or `polling` at the fast rate while
 the controller leaves a status resource out of the group. An adapter that answers
 `UNSUPPORTED_OPERATION` is not tried again.
+
+On RWS 1.0 a session sends one request at a time, and a group create waits up to
+10 s for its answer. Stop RAPID, motors off, deleting a group and the disconnect's
+logout do not wait for it: they cut the create short (it fails with "Request cut
+short") and go out next. A mastership or RMMP release cuts a create that has not
+been sent yet and waits for one already sent. A retry follows on the usual
+backoff, and a create cut short does not count as one that got no answer. Other
+requests still wait for the create.
 
 A create can bind less than it asked for and still answer 201. On both
 generations the subscriber checks the answer for the four panel resources

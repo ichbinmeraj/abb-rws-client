@@ -6,6 +6,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-10-30
+
+### Fixed
+
+- **RWS 1.0: Stop RAPID no longer waits behind a subscription create.** A
+  session sends one request at a time, and a group create (`POST
+  /subscription`) waits up to 10 s for its answer. Up to 1.5.2 a create the
+  controller never answered held every request behind it for that long,
+  Stop RAPID and the disconnect's `/logout` among them, and the retries could
+  repeat that up to three times in a row. Now Stop RAPID, motors off,
+  deleting a subscription group and `/logout` cut short every create queued
+  before them. A create in flight is aborted, one not yet sent is never
+  sent, and the stop goes out next. A mastership release (one domain or all)
+  and the RMMP cancel cut a create not yet sent and wait for one already
+  sent, so a write's release does not abort the create the subscriber sent
+  a moment before. With a stub controller that never answers the create,
+  the stop went out within 1 s of the call in the unit tests, on both
+  transports. Up to 1.5.2 it went out
+  after 10 s. The create fails with `NETWORK_ERROR` "Request cut short: POST
+  /subscription gave way to ...", and `RobotManager` tries it again on the
+  usual backoff without counting it as a create that got no answer. A create
+  the controller completes after the client let go may still leave a group
+  there, as one that timed out may. The client still sends one request at a
+  time. Other requests still wait for the create, and every request still
+  waits behind a DIPC read that is asked to wait. Not yet run against a
+  controller: whether RobotWare 6 keeps the session and leaves no group when
+  a create is aborted is still to be checked.
+- **RWS 2.0: `subscribe(['speedratio'])` alone on RobotWare 8.2.1.** A
+  RobotWare 8.2.1 virtual controller refused a group of speed ratio alone in
+  the client's spelling (`/rw/panel/speedratio;speedratio`) with 400
+  -1073445866, and the subscribe failed. A group the controller created
+  without one of its panel resources was already created once more with
+  that resource in its other spelling, but a group refused whole was not.
+  Now a group of one panel resource refused that way is created once more in
+  its other spelling. For speed ratio that is the bare
+  `/rw/panel/speedratio`, the spelling ABB documents, which that controller
+  bound in each of 25 groups. If the other spelling is refused too, or left
+  out, the error names both. A group of several resources refused whole is
+  passed on as before, because the answer does not say which resource it
+  was. Tested against the recorded answer. The check on a RobotWare 8.2.1
+  controller is still to run.
+- **`RobotManager` no longer guesses a mechanical unit.** When the read of
+  the controller's mechanical units failed, `state.mechunits` was set to
+  `['ROB_1']`, and a consumer could target a unit the controller never
+  named. A failed read now leaves the list as it was: empty on a new
+  connection, or the list the controller last gave on this connection. The
+  failure is still logged as a warning.
+
+### Documentation
+
+- The README's subscription section says which requests do not wait for a
+  pending RWS 1.0 create.
+- `readDipcMessage` is documented as a write, in the README's DIPC entry,
+  its access row and its doc comment. ABB's DIPC queue removes a message
+  when it is read, so a message one client read is gone for every other
+  reader. RWS has no read that leaves the message in the queue.
+  `getDipcQueueInfo` reads the counts without taking anything. The name
+  stays as it is.
+- A unit test replays the module name clash recorded on a RobotWare 7.21.4
+  virtual controller (a module listed as `<NAME>#2`, then refused when
+  unloaded by its own name). `loadProgram` and `unloadModule` have reported
+  that case since 1.5.1.
+
 ## [1.5.2] - 2026-10-29
 
 ### Fixed

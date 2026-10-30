@@ -629,6 +629,8 @@ describe('RWS 2.0 subscriptions over TLS', () => {
 
 describe('RWS 2.0 subscribe refusal', () => {
   it('carries the controller\'s code and message from the refusal body', async () => {
+    // A resource with one spelling: a lone panel resource refused this way is
+    // created once more in its other spelling (rws2SubscriptionPartialBind).
     const body = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body>'
       + '<div class="status"><span class="code">-1073445866</span>'
       + '<span class="msg">rws_subscription.cpp[1] Invalid resource URI in Create Subscription request</span></div></body></html>';
@@ -641,7 +643,7 @@ describe('RWS 2.0 subscribe refusal', () => {
     await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
     try {
       const client = new RwsClient2(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'u', 'p');
-      const e = await client.subscribe(['speedratio'], () => {}).then(() => null, (x: unknown) => x);
+      const e = await client.subscribe(['execution'], () => {}).then(() => null, (x: unknown) => x);
       expect(e).toMatchObject({
         name: 'RwsError', code: 'UNKNOWN', httpStatus: 400, controllerCode: -1073445866,
       });

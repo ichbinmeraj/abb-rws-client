@@ -30,6 +30,30 @@ export function otherPanelSpelling(uri: string): string | null {
   return m[2] === suffix ? `/rw/panel/${m[1]}` : null;
 }
 
+/**
+ * -1073445866 SYS_CTRL_E_UNRESOLVED_URL (Retcode Service Rev L), answered
+ * with 400 "Invalid resource URI in Create Subscription request".
+ */
+export const UNRESOLVED_URL = -1073445866;
+
+/**
+ * The resource to create once more in its other spelling after the
+ * controller refused the whole create: a body naming one panel resource,
+ * answered 400 -1073445866. A RobotWare 8.2.1 virtual controller answered a
+ * one-resource create of `/rw/panel/speedratio;speedratio` that way
+ * (2026-10-01, and twice on 2026-10-25, once 0.1 s before the same session
+ * bound a one-resource create of `/rw/panel/opmode;opmode`), while each group
+ * created with the bare `/rw/panel/speedratio`, the only spelling ABB
+ * documents, bound it (25 of 25 in the 2026-10-25 run; none of them a
+ * one-resource create). Null for anything else: a group's 400 does not say
+ * which resource it refused.
+ */
+export function respellableRefusal(body: string, httpStatus: number | undefined, controllerCode: number | undefined): string | null {
+  if (httpStatus !== 400 || controllerCode !== UNRESOLVED_URL) { return null; }
+  const resources = subscriptionBodyResources(body);
+  return resources.length === 1 && otherPanelSpelling(resources[0]) !== null ? resources[0] : null;
+}
+
 /** The resource URIs a subscription body names (`N=<uri>`), in order. */
 export function subscriptionBodyResources(body: string): string[] {
   return [...body.matchAll(/(?:^|&)\d+=([^&]+)/g)].map(m => m[1]);

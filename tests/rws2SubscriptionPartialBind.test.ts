@@ -3,9 +3,10 @@ import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { RwsClient2 } from '../src/RwsClient2.js';
+import { RwsError } from '../src/types.js';
 import { Rws2Core } from '../src/rws2/core.js';
 import {
-  otherPanelSpelling, subscriptionBodyResources, swapSubscriptionResources, unboundPanelResources,
+  otherPanelSpelling, respellableRefusal, subscriptionBodyResources, swapSubscriptionResources, unboundPanelResources,
 } from '../src/rws2/subscriptionBind.js';
 
 /**
@@ -66,6 +67,8 @@ interface Scripted {
   members?: (id: number) => string[] | null;
   /** Holds the answer to the nth POST until it settles. */
   hold?: (n: number) => Promise<void>;
+  /** The nth POST is refused whole: its 400 answer, or null to answer 201. */
+  refuse?: (n: number, body: string) => string | null;
 }
 
 async function startServer(script: Scripted) {
@@ -81,6 +84,12 @@ async function startServer(script: Scripted) {
       if (req.method === 'POST' && req.url === '/subscription') {
         posts.push(body);
         const n = posts.length;
+        const refusal = script.refuse?.(n, body) ?? null;
+        if (refusal !== null) {
+          res.writeHead(400, { 'Content-Type': 'application/xhtml+xml;v=2.0' });
+          res.end(refusal);
+          return;
+        }
         void Promise.resolve(script.hold?.(n)).then(() => {
           res.writeHead(201, { Location: `ws://127.0.0.1:${port}/poll/${n}`, 'Content-Type': 'application/xhtml+xml;v=2.0' });
           res.end(script.answer(n, body, port));
@@ -335,6 +344,100 @@ describe('RWS 2.0 subscribe: a panel resource the controller left out', () => {
       expect(s.deletes).toEqual([]);
       await unsubscribe();
       expect(s.deletes).toEqual(['/subscription/1']);
+    } finally { s.close(); }
+  });
+});
+
+/**
+ * A RobotWare 8.2.1 virtual controller refused a one-resource create of
+ * `/rw/panel/speedratio;speedratio` whole: 400 -1073445866 (2026-10-01, and
+ * twice on 2026-10-25). Its answer at 21:12:51.635Z, as the trace kept it
+ * (`bodyPreview`, the first 300 characters; the end completed from the same
+ * entry's `errMsg`).
+ */
+function refusedWhole(uri: string): string {
+  return '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"> <head><base href="https://127.0.0.1:80/"/> </head> <body> '
+    + `<div class="status"> <a href="${uri}" rel="self"> </a> <span class="code">-1073445866</span> `
+    + '<span class="msg">Invalid resource URI in Create Subscription request</span> </div> </body></html>';
+}
+const SUFFIXED = '/rw/panel/speedratio;speedratio';
+const BARE = '/rw/panel/speedratio';
+const ONE_SUFFIXED = `resources=1&1=${SUFFIXED}&1-p=1`;
+const ONE_BARE = `resources=1&1=${BARE}&1-p=1`;
+
+describe('RWS 2.0 subscribe: one panel resource refused whole', () => {
+  it('names the one panel resource of a body refused 400 -1073445866, and nothing else', () => {
+    expect(respellableRefusal(ONE_SUFFIXED, 400, -1073445866)).toBe(SUFFIXED);
+    expect(respellableRefusal(ONE_BARE, 400, -1073445866)).toBe(BARE);
+    // A group's 400 does not say which member it was.
+    expect(respellableRefusal(MANAGER_BODY, 400, -1073445866)).toBeNull();
+    // Not a resource with two spellings, another status, another code.
+    expect(respellableRefusal('resources=1&1=/rw/rapid/execution;ctrlexecstate&1-p=1', 400, -1073445866)).toBeNull();
+    expect(respellableRefusal(ONE_SUFFIXED, 500, -1073445866)).toBeNull();
+    expect(respellableRefusal(ONE_SUFFIXED, 400, -1073445865)).toBeNull();
+    expect(respellableRefusal(ONE_SUFFIXED, 400, undefined)).toBeNull();
+  });
+
+  it('creates it once more in its other spelling; reconnects send the body that bound', async () => {
+    const s = await startServer({
+      refuse: (n, body) => (body === ONE_SUFFIXED ? refusedWhole(SUFFIXED) : null),
+      answer: (n, _body, port) => created(n, port, [BARE]),
+    });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      const unsubscribe = await client.subscribe(['speedratio'], () => {});
+      expect(s.posts).toEqual([ONE_SUFFIXED, ONE_BARE]);
+      // Nothing was created by the refused POST: nothing to delete.
+      expect(s.deletes).toEqual([]);
+      await until(() => s.sockets.length >= 1);
+      s.sockets[0].terminate();
+      await until(() => s.posts.length >= 3);
+      expect(s.posts[2]).toBe(ONE_BARE);
+      await unsubscribe();
+    } finally { s.close(); }
+  });
+
+  it('throws naming both spellings when the other one is refused the same way', async () => {
+    const s = await startServer({
+      refuse: (_n, body) => refusedWhole(subscriptionBodyResources(body)[0]),
+      answer: (n, _body, port) => created(n, port, [BARE]),
+    });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      const err = await client.subscribe(['speedratio'], () => {}).then(() => null, (e: unknown) => e as RwsError);
+      expect(err?.message).toBe(`RWS2 subscription: the controller refused ${SUFFIXED} and ${BARE} alike `
+        + '(RWS2 subscribe POST returned 400: Invalid resource URI in Create Subscription request)');
+      expect(err?.code).toBe('UNKNOWN');
+      expect(err?.httpStatus).toBe(400);
+      expect(err?.controllerCode).toBe(-1073445866);
+      expect(s.posts).toEqual([ONE_SUFFIXED, ONE_BARE]);
+    } finally { s.close(); }
+  });
+
+  it('throws when the other spelling is created but left out, without swapping back', async () => {
+    const s = await startServer({
+      refuse: (_n, body) => (body === ONE_SUFFIXED ? refusedWhole(SUFFIXED) : null),
+      answer: (n, _body, port) => created(n, port, [], [BARE]),
+    });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      await expect(client.subscribe(['speedratio'], () => {}))
+        .rejects.toThrow(`RWS2 subscription: the controller did not bind ${BARE} in either spelling`);
+      expect(s.posts).toEqual([ONE_SUFFIXED, ONE_BARE]);
+      expect(s.deletes).toEqual(['/subscription/2']);
+    } finally { s.close(); }
+  });
+
+  it('sends a group refused whole once, and passes the refusal on', async () => {
+    const s = await startServer({
+      refuse: () => refusedWhole(SUFFIXED),
+      answer: (n, _body, port) => created(n, port, ALL),
+    });
+    try {
+      const client = new RwsClient2(`http://127.0.0.1:${s.port}`, 'u', 'p');
+      await expect(client.subscribe(['controllerstate', 'speedratio'], () => {}))
+        .rejects.toThrow('RWS2 subscribe POST returned 400: Invalid resource URI in Create Subscription request');
+      expect(s.posts).toHaveLength(1);
     } finally { s.close(); }
   });
 });
