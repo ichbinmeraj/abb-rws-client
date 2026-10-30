@@ -80,6 +80,43 @@ export interface Signal {
   lvalue: string;
 }
 
+/**
+ * What a signal is in the controller's configuration (1.6.0). A system input
+ * makes the controller act when the signal changes (motors on, start, stop,
+ * reset of an emergency stop and more); a system output is driven by the
+ * controller from its own state; any other signal is `plain`.
+ */
+export type SignalCategory = 'system-input' | 'system-output' | 'plain';
+
+/** One signal bound to a system input or output (`RobotManager.listSystemSignals`). */
+export interface SystemSignalBinding {
+  /** The signal's name, as the configuration names it. */
+  readonly signal: string;
+  readonly category: 'system-input' | 'system-output';
+  /** A system input's `Action` (e.g. `MotorOn`, `Start`), a system output's `Status` (e.g. `MotorOn`, `AutoOn`). */
+  readonly action: string;
+  /** Where it is configured: `SYS` from RobotWare 7.7, `EIO` before (and on RobotWare 6). */
+  readonly domain: 'SYS' | 'EIO';
+}
+
+/** What `RobotManager.getSignalCategory` answers for one signal. */
+export interface SignalCategoryInfo {
+  /** `system-input` when any binding of the signal is a system input. */
+  readonly category: SignalCategory;
+  /** The action or status of each of the signal's bindings, `[]` for a plain signal. */
+  readonly actions: readonly string[];
+}
+
+/**
+ * One configuration instance with its attributes (`listCfgInstancesDetailed`).
+ * `name` is `''` for an instance the controller lists without one, as RobotWare
+ * 6.16.03 lists System Output.
+ */
+export interface CfgInstanceDetail {
+  readonly name: string;
+  readonly attributes: Readonly<Record<string, string>>;
+}
+
 export interface RapidTask {
   name: string;
   type: string;

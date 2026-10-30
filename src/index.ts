@@ -119,6 +119,35 @@ export type {
 // Joint-value helpers (the 9E9 "no axis in this slot" marker)
 export { JOINT_NOT_PRESENT, isJointValuePresent } from './mechunit.js';
 
+// The path tables (1.6.0): every RWS operation the client knows, per
+// generation, with its effect and evidence. Frozen.
+export { ALL_TABLES, flatten, evidenceOf } from './paths/index.js';
+export type {
+  DomainTable,
+  Operation,
+  PathSpec,
+  HttpVerb,
+  Tier,
+  Evidence,
+  OperationEvidence,
+  Effect,
+  AccessKind,
+} from './paths/index.js';
+
+// The operation catalogue (1.6.0): every operation by one key, with its route,
+// parameters and read-back; RobotManager.call(key, args) reaches each one.
+export { OPERATIONS, OPERATION_KEYS, isOperationKey, operationArgs } from './operations/index.js';
+export type {
+  OperationKey,
+  OperationInfo,
+  OperationParam,
+  OperationReadBack,
+  OperationRoute,
+  OperationGeneration,
+  OperationArgs,
+  OperationAnswer,
+} from './operations/index.js';
+
 // Type exports (preserved from v0.6.0 + new additions)
 export type {
   RwsClientOptions,
@@ -192,4 +221,9 @@ export type {
   WriteAccessStatus,
   // A task's build errors (getBuildErrors, 1.5.0)
   RapidBuildError,
+  // System-signal bindings and categories (RobotManager.listSystemSignals, getSignalCategory, 1.6.0)
+  SignalCategory,
+  SignalCategoryInfo,
+  SystemSignalBinding,
+  CfgInstanceDetail,
 } from './types.js';

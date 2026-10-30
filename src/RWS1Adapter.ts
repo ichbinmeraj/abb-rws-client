@@ -6,7 +6,7 @@ import type {
   JogParams, RmmpLevel, RefusalContext,
   CfgTypeInfo, DipcQueueInfo, FileMetadata, RapidRoutineInfo,
   SubscriptionGroupInfo, SubscriptionGroupMember, MotionSupervisionState, PathSupervisionState,
-  MechunitMotorCalib, LeadThroughState, RobotWareCompatibility, RapidBuildError,
+  MechunitMotorCalib, LeadThroughState, RobotWareCompatibility, RapidBuildError, CfgInstanceDetail,
 } from './types.js';
 import { decodeElogArgs, RwsError, type TaskRobTarget } from './types.js';
 import { JOINT_NOT_PRESENT } from './mechunit.js';
@@ -279,6 +279,8 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── I/O ────────────────────────────────────────────────────────────────
   listAllSignals(s?: number, l?: number)             { return this.client.listAllSignals(s, l); }
   readSignal(n: string, d: string, name: string)     { return this.client.readSignal(n, d, name); }
+  /** One signal by its bare name: readSignal with no network or device sends `GET /rw/iosystem/signals/{name}` (1.6.0). */
+  readSignalByName(name: string): Promise<Signal>    { return this.client.readSignal('', '', name); }
   writeSignal(n: string, d: string, name: string, v: string) { return this.client.writeSignal(n, d, name, v); }
   searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }) { return this.client.searchSignals(criteria); }
   listNetworks()                                     { return this.client.listNetworks(); }
@@ -1388,6 +1390,43 @@ export class RWS1Adapter implements IRWSAdapter {
     } catch { return []; }
   }
 
+  /**
+   * Every instance of a type with its inline `attrib` list, every page.
+   * RobotWare 6.16.03 lists some instances with an empty title (EIO
+   * SYSSIG_OUT, recorded 2026-09-29), so `name` can be ''. A refusal is the
+   * controller's typed error, and an answer that is not JSON is PARSE_ERROR,
+   * not an empty list, and so is JSON with no listing in it. `next` links are
+   * followed, and a listing of more than 50 pages is PARSE_ERROR. Parity
+   * with RwsClient2.listCfgInstancesDetailed (1.6.0).
+   */
+  async listCfgInstancesDetailed(domain: string, type: string): Promise<CfgInstanceDetail[]> {
+    const out: CfgInstanceDetail[] = [];
+    let path = buildPath(CFG_ELOG_DIPC.listCfgInstances.rws1 as PathSpec, { domain, type });
+    for (let page = 0; path && page < 50; page++) {
+      const body = await this.rws1Text(`${path}${path.includes('?') ? '&' : '?'}json=1`);
+      let parsed: { _embedded?: { _state?: Array<{ _title?: string; attrib?: Array<{ _title?: string; value?: string }> }> } };
+      try { parsed = body ? JSON.parse(body) : {}; } catch {
+        throw new RwsError(`RWS1 listCfgInstancesDetailed: the ${domain}/${type} answer is not JSON`, 'PARSE_ERROR');
+      }
+      // An empty type answers `_embedded._state: []` (RW 6.16.03); JSON without the array is not a listing.
+      if (!Array.isArray(parsed._embedded?._state)) {
+        throw new RwsError(`RWS1 listCfgInstancesDetailed: the ${domain}/${type} answer is not a configuration listing`, 'PARSE_ERROR');
+      }
+      for (const s of parsed._embedded._state) {
+        const attributes: Record<string, string> = {};
+        for (const a of Array.isArray(s.attrib) ? s.attrib : []) {
+          if (a._title) { attributes[a._title] = String(a.value ?? ''); }
+        }
+        out.push({ name: String(s._title ?? ''), attributes });
+      }
+      path = rws1NextPath(body, '/rw/cfg/');
+    }
+    if (path) {
+      throw new RwsError(`RWS1 listCfgInstancesDetailed: the ${domain}/${type} listing has more than 50 pages; nothing is answered rather than a part of it`, 'PARSE_ERROR');
+    }
+    return out;
+  }
+
   async getCfgInstance(domain: string, type: string, instance: string): Promise<Record<string, string>> {
     // RWS 1.0 inlines all attribute data in the instance-list response. The single-instance
     // GET also works at `/instances/{name}`. Use the list call (one HTTP request) and find
@@ -2201,7 +2240,7 @@ export class RWS1Adapter implements IRWSAdapter {
       `filepath=${encodeURIComponent(filepath)}&action-type=${actionType}`);
   }
 
-  /** Check whether a configuration instance can be safely deleted (a delete
+  /** Check whether a configuration instance can be deleted, without deleting it (a delete
    *  dry-run). Throws if it cannot. RWS 1.0 only; unsupported in bootserver mode.
    *  Live-verified on the RobotWare 6.16 virtual controller (2026-08-11). */
   async validateInstanceBeforeDelete(name: string): Promise<void> {

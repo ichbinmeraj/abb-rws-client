@@ -657,22 +657,6 @@
       "functional trace"
     ]
   },
-  "ctrl.restartController.rws1": {
-    "successes": 3,
-    "example": "POST /rw/panel?action=restart -> 204",
-    "sources": [
-      "probe log",
-      "functional trace"
-    ]
-  },
-  "ctrl.restartController.rws2": {
-    "successes": 9,
-    "example": "POST /ctrl/restart -> 204",
-    "sources": [
-      "probe log",
-      "functional trace"
-    ]
-  },
   "ctrl.restoreBackup.rws1": {
     "successes": 2,
     "example": "POST /ctrl/backup?action=restore -> 204",

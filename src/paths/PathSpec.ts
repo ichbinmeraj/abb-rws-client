@@ -122,12 +122,50 @@ export type Evidence = 'live' | 'built';
  */
 export type OperationEvidence = Evidence | { readonly rws1: Evidence; readonly rws2: Evidence };
 
+/**
+ * What an operation does to the controller, whatever HTTP verb carries it.
+ *
+ * - `read`: changes nothing on the controller. Some reads are POSTs: the
+ *   RAPID symbol, signal and device searches, IK and FK, the validations, and
+ *   the RWS 2.0 restore check.
+ * - `write`: changes the controller's state, program, configuration, files or
+ *   a queue. One write is a GET: reading a DIPC message removes it from the
+ *   queue (ABB's DIPC Service, Rev L).
+ * - `session`: changes only this client's own session on the controller (its
+ *   subscription group), nothing the controller does or shows a person.
+ */
+export type Effect = 'read' | 'write' | 'session';
+
+/**
+ * The client's own access handling, which an operation belongs to. The client
+ * sends these itself: it takes mastership or RobotWare 8 write access inside
+ * each write that needs it, registers the control station at connect, and
+ * leaves RMMP and the motion-control declaration to a person.
+ *
+ * - `mastership`: mastership domains, with or without an id, and the
+ *   mastership watchdog.
+ * - `control-station`: RobotWare 8 control-station registration, write
+ *   access, the release appeal, the motion-control declaration and external
+ *   control.
+ * - `rmmp`: requesting and cancelling RMMP (RobotWare 6 and 7, manual mode).
+ * - `user`: the session's own user (its registration, impersonation).
+ */
+export type AccessKind = 'mastership' | 'control-station' | 'rmmp' | 'user';
+
 /** An operation across both generations. Either side may be absent. */
 export interface Operation {
   /** Which tier of the RWS surface the operation belongs to. */
   readonly tier: Tier;
   /** Whether the request has run against a controller, per generation where they differ. */
   readonly evidence: OperationEvidence;
+  /** What the operation does to the controller (see `Effect`); the verb alone misleads for some rows. */
+  readonly effect: Effect;
+  /**
+   * Set when the row is part of the client's own access handling (see
+   * `AccessKind`). `RobotManager.call` refuses these, and a tool that offers
+   * the operations to a person should not offer them.
+   */
+  readonly access?: AccessKind;
   /** One-line human description - what the operation does. */
   readonly summary: string;
   /** RWS 1.0 (IRC5 / RobotWare 6) spec, or undefined if 1.0 lacks it. */

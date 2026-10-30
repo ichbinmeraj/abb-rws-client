@@ -6,6 +6,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-31
+
+### Added
+
+- **Every operation by one key: `OPERATIONS`.** The 317 rows of the
+  client's path tables and 13 operations made of several requests each have
+  a key, `<domain>.<id>`, such as `rapid.setRapidVariable`. `OPERATIONS`
+  describes each one: what it does (`effect`: `read`, `write` or `session`),
+  the generations that have it, its parameters with the names and types of
+  the method it runs, that method (`route`), how RobotWare 8 write access is
+  taken for it (`rw8Access`), and for a write the read that shows what it did
+  (`readBack`). `OPERATION_KEYS` lists the keys in table order,
+  `isOperationKey` checks one, and `operationArgs(key, named)` turns
+  arguments given by name into the list `call` takes.
+- **`RobotManager.call(key, args)`** runs one operation on the manager's
+  session. It goes through the `RobotManager` method of that name when there
+  is one, so that method's access handling, checks and error messages apply,
+  and through the adapter otherwise. It is typed from `OPERATIONS`, so a
+  wrong argument or a misspelt key does not compile. At run time it counts
+  the arguments and leaves their types to the caller. It refuses before
+  anything is sent: a key not in the list, a row that takes or gives up
+  access, a subscription row, the operating-mode confirmation (the person's
+  at the FlexPendant) or the wrong number of arguments with
+  `INVALID_ARGUMENT`, no session with `NOT_CONNECTED`, and an operation the
+  controller's generation or the adapter does not have with
+  `UNSUPPORTED_OPERATION`. On RobotWare 8 it takes write access around the 42
+  writes whose method does not take it itself. A stop, motors off and the
+  simulated stops are sent at once, as their methods send them.
+- **The path tables on the package entry.** `ALL_TABLES` (frozen), `flatten`
+  and `evidenceOf`, with the types `DomainTable`, `Operation`, `PathSpec`,
+  `HttpVerb`, `Tier`, `Evidence`, `OperationEvidence`, `Effect` and
+  `AccessKind`. Every row now has an `effect`. It differs from the HTTP verb
+  on 17 rows: 12 reads sent as a POST, `readDipcMessage`, a write because the
+  queue removes the message it answers, and the four subscription changes,
+  which are `session`. The 18 rows that take or give up mastership, write
+  access, RMMP or a user registration carry `access`.
+- **System signals.** `RobotManager.listSystemSignals({ refresh? })` reads
+  which signals are bound to the controller's system inputs and outputs, and
+  to which actions, once per session. It reads the `EIO` configuration on
+  RobotWare 6.16.03 and `SYS` on 7.21.4 and 8.2.1, where the reads of
+  2026-09-29 found them. `getSignalCategory(name)` answers `system-input`,
+  `system-output` or `plain` for one signal, with its actions. The read is
+  kept until the next connect or a configuration write, a restart or a
+  restore through the same manager. A read that fails throws and is not
+  kept, so the next call reads again, and when neither domain serves the
+  inputs or the outputs it throws `UNSUPPORTED_OPERATION` rather than call
+  every signal plain. Both adapters gained
+  `listCfgInstancesDetailed(domain, type)`, every instance of a configuration
+  type with its attributes, which throws `PARSE_ERROR` on an answer with no
+  listing in it and on a listing of more than 50 pages.
+- **`readSignalByName(name)`** on both adapters and in `IRWSAdapterCore`. It
+  sends `GET /rw/iosystem/signals/{name}`, the read RWS 2.0 `writeSignal`
+  already made to learn where a signal lives. RWS 2.0
+  `readSignal('', '', name)` sends `/signals///{name}` instead.
+
+### Changed
+
+- **One `restartController` row.** The path tables carried the restart
+  twice, under `ctrl` and under `panel`, and the README's operation tables
+  listed both. The `ctrl` copy is gone, and `panel.restartController` is its
+  key. The code of both generations already sent the `panel` row.
+
 ## [1.5.4] - 2026-10-30
 
 ### Fixed

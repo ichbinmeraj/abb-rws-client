@@ -138,6 +138,52 @@ export function cfgInstanceAttributes(body: string): Record<string, string> {
   return result;
 }
 
+/**
+ * Every instance of one page of a CFG instance list
+ * (`/rw/cfg/{domain}/{type}/instances`) with its attributes, in the
+ * controller's order. The list carries each instance's attributes inline:
+ * in HAL JSON a `cfg-dt-instance-li` with an `attrib` array of `cfg-ia-t`
+ * entries (recorded on RW 7.21.4 and 8.2.1, SYS/SYSSIG_OUT, 2026-09-29),
+ * which the parser lists in document order, each instance before its
+ * attributes. In XHTML each instance item holds its attribute items, which
+ * the shared item pattern would cut at the first nested `</li>`, so the body
+ * is split at the instance items and each part read as one instance.
+ * Null for a body that is neither JSON nor an XHTML state block, so a caller
+ * can tell an empty list from an answer it could not read.
+ */
+export function cfgInstanceList(body: string): Array<{ name: string; attributes: Record<string, string> }> | null {
+  const out: Array<{ name: string; attributes: Record<string, string> }> = [];
+  if (HalJsonParser.looksLikeJson(body)) {
+    const parser = new HalJsonParser(body);
+    // A listing, empty or not, carries its entries as an array (RW 8.2.1:
+    // `_embedded.resources: []` for an empty type); JSON without one is not a listing.
+    if (!parser.parsed || !isJsonListing(body)) { return null; }
+    let current: { name: string; attributes: Record<string, string> } | null = null;
+    for (const entry of parser.getAllEntries()) {
+      if (entry['_type'] === 'cfg-dt-instance-li') {
+        current = { name: entry['_title'] ?? '', attributes: {} };
+        out.push(current);
+      } else if ((entry['_type'] === 'cfg-ia-t' || entry['_type'] === 'cfg-ia-t-li') && current && entry['_title']) {
+        current.attributes[entry['_title']] = entry['value'] ?? '';
+      }
+    }
+    return out;
+  }
+  if (!/<div class="state"/.test(body)) { return null; }
+  for (const part of body.split('<li class="cfg-dt-instance-li"').slice(1)) {
+    const title = /^[^>]*\btitle="([^"]*)"/.exec(part)?.[1] ?? '';
+    out.push({ name: title, attributes: cfgInstanceAttributes(part) });
+  }
+  return out;
+}
+
+function isJsonListing(body: string): boolean {
+  try {
+    const embedded = (JSON.parse(body) as { _embedded?: Record<string, unknown> })._embedded;
+    return !!embedded && (Array.isArray(embedded['resources']) || Array.isArray(embedded['_state']));
+  } catch { return false; }
+}
+
 // The next-page link of a paged listing: shared with the RWS 1.0 side, so it
 // lives in commonReads.ts; re-exported here for the RWS 2.0 modules and tests
 // that import it from this file.

@@ -40,6 +40,11 @@ export class HalJsonParser {
     this.root = parsed;
   }
 
+  /** False when the body did not parse as JSON, even with trailing commas dropped. */
+  get parsed(): boolean {
+    return this.root !== null;
+  }
+
   /**
    * `text` without the commas that stand right before a `}` or `]` (white
    * space between allowed), outside string literals: a value such as

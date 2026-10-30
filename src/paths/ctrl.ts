@@ -60,45 +60,38 @@ import type { DomainTable } from './PathSpec.js';
 export const CTRL: DomainTable = {
   // ── Identity / clock ──────────────────────────────────────────────────────
   getControllerIdentity: {
-    tier: 'common', evidence: 'live',
+    tier: 'common', evidence: 'live', effect: 'read',
     summary: 'Read controller name, id, type, MAC.',
     rws2: { method: 'GET', path: '/ctrl/identity' },
     rws1: { method: 'GET', path: '/ctrl/identity' },
   },
   getControllerClock: {
-    tier: 'common', evidence: 'live',
+    tier: 'common', evidence: 'live', effect: 'read',
     summary: 'Read the controller date/time (UTC).',
     rws2: { method: 'GET', path: '/ctrl/clock' },
     rws1: { method: 'GET', path: '/ctrl/clock' },
   },
   setControllerClock: {
-    tier: 'common', evidence: 'built',
+    tier: 'common', evidence: 'built', effect: 'write',
     summary: 'Set the controller date/time (UTC).',
     rws2: { method: 'PUT', path: '/ctrl/clock', fields: ['sys-clock-year', 'sys-clock-month', 'sys-clock-day', 'sys-clock-hour', 'sys-clock-min', 'sys-clock-sec'] },
     rws1: { method: 'PUT', path: '/ctrl/clock', fields: ['sys-clock-year', 'sys-clock-month', 'sys-clock-day', 'sys-clock-hour', 'sys-clock-min', 'sys-clock-sec'] },
     note: 'one of very few PUTs in either generation. ABB documents PUT /ctrl/clock for real controllers only (RWS 2.0 Rev L "Supported only in RC"; RWS 1.0 Rev M "Available only for RC"): a virtual controller answers 405 -1073414146 (RW 7.21.4 and 8.2.1, 2026-10-11, OPTIONS 204 with no form; RW 6.16.03, 2026-10-13). The method is the documented one; the refusal is the VC\'s.',
   },
   getTimezone: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Read the controller timezone.',
     rws1: { method: 'GET', path: '/ctrl/clock/timezone' },
     note: 'RWS 1.0 only.',
   },
 
-  // ── Restart / restart count ───────────────────────────────────────────────
-  restartController: {
-    tier: 'common', evidence: 'live',
-    summary: 'Restart the controller (canonical /ctrl form on 2.0).',
-    // The biggest cross-generation split in this domain: 2.0 /ctrl/restart
-    // (needs edit mastership), 1.0 /rw/panel?action=restart. Same body field.
-    // Mirrors panel.restartController - kept in both tables intentionally, as
-    // the operation legitimately belongs to both trees by generation.
-    rws2: { method: 'POST', path: '/ctrl/restart', fields: ['restart-mode'] },
-    rws1: { method: 'POST', path: '/rw/panel', action: 'restart', fields: ['restart-mode'] },
-    note: '2.0 /ctrl/restart (6 modes, edit mastership) vs 1.0 /rw/panel?action=restart (4 modes).',
-  },
+  // ── Restart count ─────────────────────────────────────────────────────────
+  // The restart itself is one row, panel.restartController (2.0 /ctrl/restart,
+  // 1.0 /rw/panel?action=restart), the row both generations' code reads. Up to
+  // 1.5.4 this table carried a mirror of it, so the id restartController named
+  // two rows; since 1.6.0 every operation has one key across the surface.
   getRestartCount: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read how many times the controller has restarted.',
     rws2: { method: 'GET', path: '/ctrl/restart/restartcount' },
     note: 'RWS 2.0 only.',
@@ -106,19 +99,19 @@ export const CTRL: DomainTable = {
 
   // ── Network (RWS 1.0 only) ────────────────────────────────────────────────
   getNetworkConfig: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read network configuration.',
     rws1: { method: 'GET', path: '/ctrl/network' },
     note: 'RWS 1.0 only; same URL backs listNetworkInterfaces.',
   },
   getDnsConfig: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Read DNS configuration.',
     rws1: { method: 'GET', path: '/ctrl/network/dns' },
     note: 'RWS 1.0 only. One ctrl-netw-dns entry per setting, named by its title (name, primaryns, secondaryns, tertiaryns, quaternaryns, port); the method returns every entry. ABB: not supported by a virtual controller.',
   },
   getRoutingTable: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Read the routing table (a path ABB does not document).',
     // ABB's RWS 1.0 (Rev M) documents only adding and removing a route
     // (/ctrl/network/route/add and /remove, "Not supported by VC"), and RWS
@@ -129,13 +122,13 @@ export const CTRL: DomainTable = {
 
   // ── Diagnostics / language / system info ──────────────────────────────────
   getDiagnostics: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Read saved controller diagnostics.',
     rws2: { method: 'GET', path: '/ctrl/diagnostics' },
     note: 'RWS 2.0 only. Empty controller answers 400 "No Diagnostics Saved" - an empty state, not an error.',
   },
   saveDiagnostics: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'write',
     summary: 'Ask the controller to save a diagnostics bundle.',
     // ABB Controller_Service.yaml Rev L: the one body field is `dstpath`, a
     // required fileservice path ("Fully qualified file name to save the
@@ -147,7 +140,7 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 only; run live on RW 7.21.4 (2026-10-11: 204, the file was not listed 3 s later). Field dstpath (Rev L, required), value a /fileservice/ URI. ABB marks the operation not supported on a VC; the OPTIONS form on RW 7.21.4 and 8.2.1 lists no inputs.',
   },
   setControllerLanguage: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'write',
     summary: 'Set the controller language.',
     // Field is `lang`, NOT the panel's `lang-code` - easy to confuse.
     rws2: { method: 'POST', path: '/ctrl/lang', fields: ['lang'] },
@@ -157,7 +150,7 @@ export const CTRL: DomainTable = {
     note: 'Write-only (GET 405). Field lang, not the panel lang-code. RWS 2.0 path /ctrl/lang; RWS 1.0 query-action /ctrl?action=set-lang.',
   },
   saveSystemInfo: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Copy the system\'s installation files (RMF, RSF, RLF) into a controller directory (real controllers only).',
     rws2: { method: 'POST', path: '/ctrl/system/info', fields: ['path', 'file-type'] },
     note: 'RWS 2.0 only. NOT a getter (GET 405). ABB (Rev L): the controller copies its installation files to `path`, the caller removes them; "Supported only in RC". The RobotWare 7 and 8 VCs answered 403 "not supported on platform". Rev L makes file-type optional (default FileType_ALL); the client sends it only when given. The 200 answer lists the copied files (ctrl-system-info-li, file name in the title, /fileservice/ link); the method returns nothing, as in 1.4.0, and the caller lists the directory.',
@@ -165,7 +158,7 @@ export const CTRL: DomainTable = {
 
   // ── Compatibility ─────────────────────────────────────────────────────────
   getCompatibility: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Check whether the controller hardware can run a RobotWare version (real controllers only).',
     // ABB documents GET /ctrl/compatibility/{robotware version} on both
     // generations (RWS 1.0 Rev M, RWS 2.0 Rev L), "Supported only in RC", with
@@ -181,7 +174,7 @@ export const CTRL: DomainTable = {
 
   // ── Excluded /ctrl endpoints (recorded, not implemented) ──────────────────
   getSyslog: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Read the controller system log.',
     // ABB (Rev L): the security syslog, RFC 3164, at most 2500 messages, RW 7.1
     // and later, answered as text/plain;v=2.0.
@@ -189,7 +182,7 @@ export const CTRL: DomainTable = {
     note: 'excluded - recorded refusal; the Accept value ABB names was not tried.',
   },
   getEnv: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read one controller environment variable ($HOME, $TEMP, $SYSTEM, ...).',
     // ABB's "Get Controller environment variable" (RWS 1.0 Rev M ctrl_env page;
     // RWS 2.0 Rev L Controller service, /ctrl/${ENVNAME}): the variable is the
@@ -203,7 +196,7 @@ export const CTRL: DomainTable = {
     note: 'the name is sent without its leading `$` after the literal %24 (getEnv accepts either spelling). The value is read from `value`, else `_value` (RW 6.16.03, ?json=1). An unknown name is the controller\'s 404. TEMP, HOME and BACKUP answered 200 on RW 6.16.03, 7.21.4 and 8.2.1 virtual controllers (2026-10-18).',
   },
   getSystems: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'Read the installed system (RC only).',
     // Rev L names the RWS 2.0 resource /ctrl/system ("Supported only in RC");
     // /ctrl/systems is the RWS 1.0 manual's name. The row used to carry the
@@ -212,19 +205,19 @@ export const CTRL: DomainTable = {
     note: 'excluded. RWS 1.0 manual names it /ctrl/systems.',
   },
   tpuScreendump: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Capture a FlexPendant screenshot.',
     rws2: { method: 'POST', path: '/ctrl/tpu/screendump', gap: 'real controllers only (ABB Rev L: RC only, RW 7.3 and later); the VCs answer 404 -1073445866; no client method. RWS 1.0 has no such resource' },
     note: 'excluded.',
   },
   tpuDetach: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Detach the FlexPendant for hot-swap.',
     rws2: { method: 'POST', path: '/ctrl/tpu/detach', gap: 'real controllers with the Hot Swappable FlexPendant option only (ABB Rev L documents the detach, its status read and a cancel, RC only); the RobotWare 7 and 8 VCs answer 404; no client method. RWS 1.0 has no such resource' },
     note: 'excluded.',
   },
   systemUpdate: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Software update (barred by the destructive ceiling).',
     rws2: { method: 'POST', path: '/ctrl/system/update', fields: ['path'], gap: 'beyond the destructive ceiling - never executed; form recorded only' },
     note: 'barred - form recorded for the record.',
@@ -232,25 +225,25 @@ export const CTRL: DomainTable = {
 
   // ── Safety ────────────────────────────────────────────────────────────────
   getSafetyMode: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the safety mode.',
     rws2: { method: 'GET', path: '/ctrl/safety/mode' },
     note: 'RWS 2.0 only.',
   },
   getSafetyViolationInfo: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read safety violation info.',
     rws2: { method: 'GET', path: '/ctrl/safety/violation' },
     note: 'RWS 2.0 only.',
   },
   getSafetyLoadStatus: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the safety load status.',
     rws2: { method: 'GET', path: '/ctrl/safety/load' },
     note: 'RWS 2.0 only. RW 7.21.4 and 8.2.1 virtual controllers answered "OK" to Admin; RW 7.21.4 answered "SCORCH_ERR_USER_GRANT_IS_MISSING" to the Default User, as a 200 (2026-10-18).',
   },
   getSafetyStartupStatus: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the safety startup status.',
     rws2: { method: 'GET', path: '/ctrl/safety/config/startupstatus' },
     // New in RobotWare 7.20 together with /ctrl/safety/config/changecount (the
@@ -262,7 +255,7 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 only, RW 7.20+ (new in 7.20 with /ctrl/safety/config/changecount, see getSafetyConfigChangeCount); controller misspells the response class (…-load-satus), code reads both.',
   },
   getSafetyConfigChangeCount: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the safety-configuration change count.',
     // New in RobotWare 7.20 (release notes 7.20.0 §1.2, see above). Answered 200
     // on RW 7.21.4+417 and 8.2.1+1023 (2026-09-29): class
@@ -271,7 +264,7 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 only, RW 7.20+. Poll it to notice a safety-configuration change.',
   },
   getSafetyConfig: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the safety configuration (status, versions, creator, checksum).',
     // ABB Controller_Service.yaml Rev L "Get Safety Configurations": classes
     // safety-ctrl-configuration-status (config-status) and
@@ -282,13 +275,13 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 only. GET reads; POST (load a safety configuration) is not wrapped.',
   },
   getSafetyStatus: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the aggregate controller safety status.',
     rws1: { method: 'GET', path: '/ctrl/safety' },
     note: '1.0 reads /ctrl/safety directly; 2.0 has no single URL - it composes getSafetyMode + getSafetyViolationInfo + getSafetyLoadStatus, so no rws2 entry here.',
   },
   listSafetyZones: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'List safety zones (no such RWS resource).',
     // In no ABB document (Rev L lists mode, violation, load, config, cbc under
     // /ctrl/safety). RW 7.21.4 and 8.2.1 answer 404 "Resource is not supported
@@ -301,7 +294,7 @@ export const CTRL: DomainTable = {
     note: 'no ABB resource; deprecated, kept until the next major version. Both generations answer [] without a request (no Rev M or Rev L page; RW 6.16.03, 7.21.4 and 8.2.1 answer 404).',
   },
   runCyclicBrakeCheck: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Run a cyclic brake check (no such RWS operation).',
     // In no ABB document: Rev L documents only the status read, GET
     // /ctrl/safety/cbc?drivenum=. OPTIONS on this path gives the VC's generic
@@ -314,7 +307,7 @@ export const CTRL: DomainTable = {
     note: 'no ABB resource; kept until the next major version. On RWS 2.0 read the status with getCyclicBrakeCheckStatus; the client has no RWS 1.0 status read (Rev M documents /ctrl/safety?resource=cbc-status). RW 6.16.03 answers 404 and /ctrl/safety links no such resource (no Rev M page; spec check 2026-10-09).',
   },
   getCyclicBrakeCheckStatus: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read cyclic-brake-check status.',
     // drivenum query param is REQUIRED; documented in note (queries not in path).
     rws2: { method: 'GET', path: '/ctrl/safety/cbc' },
@@ -323,7 +316,7 @@ export const CTRL: DomainTable = {
 
   // ── Backup ────────────────────────────────────────────────────────────────
   createBackup: {
-    tier: 'common', evidence: 'live',
+    tier: 'common', evidence: 'live', effect: 'write',
     summary: 'Create a backup (async, 202).',
     // Both require a /fileservice/... URI value; bare names 400 on both.
     rws2: { method: 'POST', path: '/ctrl/backup/create', fields: ['backup'] },
@@ -331,7 +324,7 @@ export const CTRL: DomainTable = {
     note: '2.0 subresource vs 1.0 ?action=backup; value must be a /fileservice/ URI.',
   },
   restoreBackup: {
-    tier: 'niche', evidence: { rws1: 'live', rws2: 'built' },
+    tier: 'niche', evidence: { rws1: 'live', rws2: 'built' }, effect: 'write',
     summary: 'Restore a backup.',
     // `delete-dir` defaults to true on both generations (RWS 1.0 Rev M, RWS 2.0
     // Rev L): without it a restore deletes the backup it restored, as it did
@@ -342,7 +335,7 @@ export const CTRL: DomainTable = {
     note: 'same subresource-vs-query-action split as create.',
   },
   checkRestore: {
-    tier: 'common', evidence: 'live',
+    tier: 'common', evidence: 'live', effect: 'read',
     summary: 'Validate a backup before restoring.',
     rws2: { method: 'POST', path: '/ctrl/backup/check-restore', fields: ['backup'] },
     // RWS 1.0: a GET with the backup as a query parameter, as ABB's manual
@@ -354,7 +347,7 @@ export const CTRL: DomainTable = {
     note: '2.0 POST subresource vs 1.0 GET ?action=check-restore&backup=; the value is a /fileservice/ URI on both.',
   },
   getBackupStatus: {
-    tier: 'common', evidence: 'live',
+    tier: 'common', evidence: 'live', effect: 'read',
     summary: 'Read whether a backup is running (from the backup state).',
     // /ctrl/backup is a listing of links (backup-info, state, create, restore,
     // check-restore) with no progress fields, so reading it answered
@@ -368,7 +361,7 @@ export const CTRL: DomainTable = {
     note: '2.0 reads the state text at /ctrl/backup/state and maps it to active / failed; 1.0 reads /ctrl/backup.',
   },
   getBackupState: {
-    tier: 'common', evidence: 'live',
+    tier: 'common', evidence: 'live', effect: 'read',
     summary: 'Read the backup state.',
     rws2: { method: 'GET', path: '/ctrl/backup/state' },
     note: 'RWS 2.0 only; overlaps semantically with getBackupStatus.',
@@ -376,7 +369,7 @@ export const CTRL: DomainTable = {
 
   // ── Virtual time ──────────────────────────────────────────────────────────
   setVirtualTimeScale: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'write',
     summary: 'Set the virtual-time speed.',
     // The wire value is a percent of real time: 100 = real time, -1 = as fast
     // as possible (Rev L and the forms; both generations read vtcurrspeed=100
@@ -399,7 +392,7 @@ export const CTRL: DomainTable = {
     note: 'value a percent, -1 = full speed. 2.0 body vtspeed (Rev L; the 2.0 form says vtcurrspeed, which RW 7.21 and 8.2 refuse). RWS 1.0: not sent in this release (a client hold; ABB documents the write).',
   },
   getVirtualTimeClock: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the current virtual time.',
     // Atomic sub-resource of the getVirtualTime composite (vttime + vtstate +
     // vtspeed). Added 2026-08-10 after the conformance check flagged
@@ -410,20 +403,20 @@ export const CTRL: DomainTable = {
     note: 'atomic read; getVirtualTime composes this with vtstate + vtspeed.',
   },
   getVirtualTimeState: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the virtual-time running state.',
     rws2: { method: 'GET', path: '/ctrl/virtualtime/vtstate' },
     rws1: { method: 'GET', path: '/ctrl/virtualtime/vtstate' },
     note: 'read only: the client has no vtstate write; pause and resume from RobotStudio\'s Simulation tab.',
   },
   getVirtualTimeScale: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the virtual-time speed.',
     rws2: { method: 'GET', path: '/ctrl/virtualtime/vtspeed' },
     rws1: { method: 'GET', path: '/ctrl/virtualtime/vtspeed' },
   },
   getVirtualTimeTimeslice: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the virtual-time timeslice.',
     rws2: { method: 'GET', path: '/ctrl/virtualtime/vttimeslice' },
     // The IRC5 also advertises this (conformance check, 2026-08-10), but the
@@ -433,7 +426,7 @@ export const CTRL: DomainTable = {
     note: 'wrapped on RWS 2.0; RW6 advertises it too but the client does not use it there.',
   },
   setVirtualTimeTimeslice: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'write',
     summary: 'Set the virtual-time timeslice.',
     rws2: { method: 'POST', path: '/ctrl/virtualtime/vttimeslice', fields: ['vttimeslice'] },
     note: 'RWS 2.0 only.',
@@ -441,20 +434,20 @@ export const CTRL: DomainTable = {
 
   // ── Certificates (RWS 2.0 only) ───────────────────────────────────────────
   listCertificateStores: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'List certificate stores.',
     rws2: { method: 'GET', path: '/ctrl/certstore' },
     note: 'RWS 2.0 only; same URL as listCertificates, different parse.',
   },
   getCertificates: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read certificates in a store.',
     // {storePath} is multi-segment (e.g. system/rws_store) and slashes are kept.
     rws2: { method: 'GET', path: '/ctrl/certstore/{storePath}' },
     note: 'RWS 2.0 only; {storePath} keeps its slashes (not encoded).',
   },
   uploadCertificate: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Add a certificate to a store from a PEM file on the controller.',
     // Rev L "Add Certificate" and the controller form (ctrl-certstore-add on RW
     // 7.21.4 and 8.2.1, 2026-10-07): POST /ctrl/certstore/{scope}/{store} with
@@ -466,7 +459,7 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 only; built-not-run. Form field filepath (a /fileservice/ URI); the client uploads the PEM to $TEMP first and deletes it after. Rev L answers 204.',
   },
   clearCertificateStore: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Remove every certificate from one store.',
     // The only removal ABB documents and the controller serves (Rev L "Remove
     // Certificate", the form on both builds): POST .../{scope}/{store}/clear
@@ -475,7 +468,7 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 only; built-not-run; empties the whole store.',
   },
   removeCertificate: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Delete one certificate (no such RWS operation).',
     // No Allow header under /ctrl/certstore lists DELETE on RW 7.21.4 or 8.2.1,
     // and Rev L has no per-certificate resource (spec check 2026-10-07). The
@@ -487,19 +480,19 @@ export const CTRL: DomainTable = {
 
   // ── Registry / compress ───────────────────────────────────────────────────
   getRegistry: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read the controller registry index.',
     rws2: { method: 'GET', path: '/ctrl/registry' },
     note: 'RWS 2.0 only.',
   },
   getRegistryFile: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Read a registry file.',
     rws2: { method: 'GET', path: '/ctrl/registry/{name}' },
     note: 'RWS 2.0 only.',
   },
   compressPath: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'write',
     summary: 'Compress a controller path.',
     // Spec field names (source/destination) are WRONG - controller wants srcpath/dstpath.
     rws2: { method: 'POST', path: '/ctrl/compress', fields: ['srcpath', 'dstpath'] },
@@ -511,7 +504,7 @@ export const CTRL: DomainTable = {
     note: 'RWS 2.0 path-action POST /ctrl/compress; RWS 1.0 query-action POST /ctrl/compress?action=comp with /fileservice/ paths; 202 on RW 6.16.03. The 202 carries Location /progress/{id}: startJob(\'compressPath\', ...) returns the id for getProgress, and compressPath itself returns nothing, as in 1.4.0.',
   },
   decompressPath: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'write',
     summary: 'Decompress a controller path.',
     rws2: { method: 'POST', path: '/ctrl/decompress', fields: ['srcpath', 'dstpath'] },
     // RWS 1.0 has NO separate /ctrl/decompress - it is the same /ctrl/compress
@@ -522,7 +515,7 @@ export const CTRL: DomainTable = {
 
   // ── Options (the controller advertises /ctrl/options, but…) ───────────────
   ctrlOptionsVerify: {
-    tier: 'niche', evidence: 'built',
+    tier: 'niche', evidence: 'built', effect: 'read',
     summary: 'The bare /ctrl/options resource, which carries no option list (see listControllerOptions).',
     // The controller advertises /ctrl/options, but the bare resource carries no
     // option list (200 with an empty state on RW7/8, 204 on RW6). The real
@@ -539,13 +532,13 @@ export const CTRL: DomainTable = {
 
   // ── Features ──────────────────────────────────────────────────────────────
   listFeatures: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'List controller features.',
     rws2: { method: 'GET', path: '/ctrl/features' },
     note: 'RWS 2.0 only; verify-style, bare listing is always empty.',
   },
   verifyControllerFeature: {
-    tier: 'niche', evidence: 'live',
+    tier: 'niche', evidence: 'live', effect: 'read',
     summary: 'Check whether one controller feature is present.',
     // ABB Controller_Service.yaml Rev L "Verify Option Resource": 204 when the
     // feature is present for the robot number (query robno, default 1), 404

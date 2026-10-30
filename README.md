@@ -459,6 +459,8 @@ You can also create a `RobotManager` directly if you only have one robot.
 - **`startRapid()`** - starts from where the program pointer is: the start does not move the program pointer. To run a routine from its start, call `setPPToRoutine` first. On RobotWare 6 and 7 a start right after a `jog` first ends the jog's own motion hold (see `jog` above). On RobotWare 8 a virtual controller (8.2.1) refused a start from a station for which motion control was not allowed, also for a program that does not move the robot, and ran it once it was allowed; another station, which registers with its own id, read it as not allowed. That refusal (-1073435864) is `GRANT_DENIED` with `refusal.kind` `motion-control-off` on every call that gets it. The refusal's `remedy` is `declare-motion-control`. It names `setAllowMotionControl(true)` and the confirmation a person gives; the client never calls it.
 - **`setAllowMotionControl(allow)`**, **`getAllowMotionControl()`**, **`getLocalStationStatus()`** - RobotWare 8 only (`UNSUPPORTED_OPERATION` on 6 and 7, nothing sent): allow or withdraw motion control for this control station, read it (null, and nothing sent, before the session is a registered control station), and read whether the FlexPendant is connected (`{ flexPendantConnected, safetyProtocolConnected }`, each null when its read fails or its answer has no such field; ABB's `control-station-local-isconnected` and `is-connected`). See [RobotWare 8 motion control](#robotware-8-motion-control).
 - **`read(name, ...args)`** - one read of the adapter by its name, for the reads with no manager method of their own (`AdapterReads` lists each one's arguments, answer and generation; `ADAPTER_READ_NAMES` the names): `getEventLogMessage(domain, seqnum, lang?)`, `getEventLogMessageBySeqnum(seqnum, lang?)` (RWS 2.0), `listEventLogDomains()`, the RobotWare 8 control-station reads `getControlStationType()`, `getControlStationId()`, `isLocalControlStationConnected()`, `getTpuSafetyProtocolStatus()` and `getWriteAccessAppealChangeCount()`, `listCurrentUserGrants()`, `checkGrantExists(grant)` (RWS 2.0), `describeReturnCode(code)` (the code in words, with its severity), `getBuildErrors(task)` (a program's build errors) and `getExecutionErrorState()` (RobotWare 8.2 and later: whether the last stop was caused by an error). The adapter's own method runs on the manager's session and its answer and errors pass through unchanged. A name that is not one of these reads is `INVALID_ARGUMENT`; a read the adapter does not have (RobotWare 6 has no control stations, for one) is `UNSUPPORTED_OPERATION`; nothing is sent for either. **`appealWriteAccessRelease()`** - RobotWare 8: ask the station that holds write access to release it (ABB's `POST /rw/controlstation/writeaccess/release/appeal`); the holder decides. ABB lists a registered control station as its prerequisite, so the session registers first when it is not yet, as for `setAllowMotionControl`; it takes no write access. `UNSUPPORTED_OPERATION` on RWS 1.0.
+- **`call(key, args)`** - any operation the client knows, by its key, on this manager's session. See [Every operation by its key](#every-operation-by-its-key).
+- **`listSystemSignals({ refresh? })`**, **`getSignalCategory(name)`** - which signals are bound to system inputs and outputs, and what one signal is. See [System signals](#system-signals).
 - **`setPPToRoutine(task, module, routine, { stopIfRunning? })`**, **`unloadModule(task, module, { stopIfRunning? })`**, **`unloadProgram(task, { stopIfRunning? })`**, **`loadProgram(localFile, task, { stopIfRunning?, resetPP? })`** - never stop a running program unasked: each reads the execution state first; `stopIfRunning: true` stops the program before the write. Without it the write is sent anyway (ABB lists no execution-state prerequisite for these) and the controller decides; while the program ran, an execution-state refusal (-1073442809) or a 400 or 403 the controller leaves unexplained is explained as the running program (`WRONG_MODE`, `refusal.kind` `wrong-state`), and a refusal the controller explains more specifically, a mode refusal (-1073445860) among them, keeps its own explanation. `loadProgram` unloads a loaded module of the same name, uploads the file to `$HOME`, loads it and, when it declares `PROC main()`, sets the program pointer to main (`resetPP: false` skips that); any failed step fails the call, and the message says which step failed and what was already done. `loadProgram` reads the local file as UTF-8 and refuses it with `INVALID_ARGUMENT` before anything is sent when it is not valid UTF-8 (the message names the line of the first bad byte sequence) or when it has no text. A file saved as Windows-1252 or Latin-1 with accented letters is refused this way. Up to 1.5.1 those bytes were uploaded as U+FFFD replacement characters. A controller reads a module file one byte per character (Latin-1), as RobotWare 6.16.03, 7.21.4 and 8.2.1 virtual controllers did in a test on 2026-10-30, so since 1.5.4 the text goes that way: an accented letter up to U+00FF is sent as one byte (the test tried ä, ö, é and °). Up to 1.5.3 it went as UTF-8, and the controller loaded it as two wrong letters. A character above U+00FF, or one from U+0080 to U+009F, which has not been checked, is refused before anything is sent, and the message names its line and column. A byte order mark at the start of the file is not sent. Up to 1.5.3 it was, and RobotWare 7.21.4 and 8.2.1 named the module after it. RobotWare 6 saves such a module in the bytes it read, and the client decodes every answer as UTF-8, so on RobotWare 6 `getModuleSource` shows U+FFFD in place of each accented letter. `getModuleText` reads it correctly.
 - **`activateAllRapidTasks()`**, **`deactivateAllRapidTasks()`** - RWS 2.0 sends one request per task: a refused task makes the call throw, naming the tasks that were done and each refused task with the controller's reason. RWS 1.0 sends ABB's one all-tasks action.
 - **`setOperationMode('AUTO' | 'MANR' | 'MANF')`** - RWS 2.0 only: on RobotWare 6 (RWS 1.0, which has no operating-mode change) it throws `UNSUPPORTED_OPERATION` before sending anything, mastership included. Verified on virtual controllers only: ABB's RWS 2.0 pages require Local Client privileges for it, which station virtual controllers do not enforce for a remote session; a real controller may refuse it, and a refusal says so. Switch with auto-routing through MANR for AUTO ↔ MANF (the controller rejects direct transitions). Acquires `edit` mastership for the higher-privilege direction on RobotWare 7; on RobotWare 8 holds control-station write access around every switch, and sends nothing when that access is refused. A switch to Auto then waits in `AUTO_CH` until someone confirms it at the FlexPendant (RobotWare 7.21 and 8.2 virtual controllers): the confirmation is the person's there, and `setOperationMode` does not send it. No controller state is read before a switch: an RW 8.2.1 virtual controller in guard stop accepted it both ways.
@@ -503,6 +505,95 @@ human-readable `state.qualityReason`:
 changed, so a dashboard updates one row instead of diffing every robot's state.
 The zero-arg `onDidChange` keeps working unchanged. `MultiRobotManager.onAccessEvent((id, e) => ...)`
 does the same for access events (see [Lost holds](#lost-holds-and-robotstateaccess)).
+
+---
+
+## Every operation by its key
+
+Since 1.6.0 every RWS operation the client knows has one key, `<domain>.<id>`,
+such as `rapid.setRapidVariable` or `io.writeSignal`. `OPERATIONS` describes
+each one, and `RobotManager.call(key, args)` runs it. A tool that offers the
+whole surface can be built from this list instead of a list of its own.
+
+```ts
+import { RobotManager, OPERATIONS, OPERATION_KEYS } from 'abb-rws-client';
+
+const robot = new RobotManager();
+await robot.connect('127.0.0.1', 'Default User', 'robotics', 80);
+
+const op = OPERATIONS['rapid.setRapidVariable'];
+op.effect;                         // 'write'
+op.params.map(p => p.name);        // ['task', 'module', 'symbol', 'value']
+op.readBack;                       // { key: 'rapid.getRapidVariable', args: ['task', 'module', 'symbol'], ... }
+
+await robot.call('rapid.setRapidVariable', ['T_ROB1', 'MainModule', 'nCount', '5']);
+const value = await robot.call('rapid.getRapidVariable', ['T_ROB1', 'MainModule', 'nCount']);
+
+OPERATION_KEYS.length;             // 330
+```
+
+`call` is typed from the list: the key picks the arguments and the answer, so
+a wrong argument or a misspelt key does not compile. `operationArgs(key, named)`
+turns arguments given by name, as a form or a request has them, into the list
+`call` takes.
+
+Each entry says:
+
+- `effect`: `read`, `write` or `session` (a change to a subscription). It is what the operation does, not its HTTP verb. Some reads are sent as a POST, and `readDipcMessage` is a write, because the queue removes the message it answers.
+- `generations`: `rws1`, `rws2` or both.
+- `params`: the name, the TypeScript type and whether it is optional, taken from the method `call` runs.
+- `route`: the `RobotManager` method of the same name when there is one, so its access handling, its checks and its error messages apply. Otherwise the adapter's method. A few go to the adapter although the manager has the name, where the manager's method answers something other than the controller's answer (`getMastershipStatus` answers `null` for any error, for one).
+- `readBack`: for a write, the read that shows what it did, and which of the write's arguments that read takes. It is `null` when there is nothing to read back, as after a stop, a delete or a jog.
+- `access`: set on the rows that take or give up access (mastership, control-station write access, RMMP, users).
+- `tier`, `summary` and `note`, as in the [Operations by tier](#operations-by-tier) tables.
+
+`call` checks before it sends, in this order. When a check fails it throws an
+`RwsError`, and nothing reaches the controller:
+
+- the key is in the list (`INVALID_ARGUMENT`)
+- there is a session (`NOT_CONNECTED`)
+- the controller's generation has the operation (`UNSUPPORTED_OPERATION`, also for one no generation has)
+- the row is one `call` runs (`INVALID_ARGUMENT`). It does not run a row that takes or gives up access, a subscription row, or the operating-mode confirmation, which is the person's at the FlexPendant. Access and subscriptions have their own methods (`requestMastership`, `requestRmmp`, `updateSubscriptionGroup` with `onSubscriptionEvent`), so a hold is always one you asked for by its name.
+- the arguments are an array of the right length (`INVALID_ARGUMENT`). `call` counts them and leaves their types to TypeScript, so a caller with arguments from JSON checks the types itself.
+- the adapter has the method (`UNSUPPORTED_OPERATION`)
+
+On RobotWare 8 a stop never waits. `stopRapid`, `setMotorsOff` and the
+simulated stops are sent at once, as their methods send them. A write whose
+method takes the control station's write access itself (motors on, a restart,
+a program start among them) takes it as before. For the other writes `call`
+takes write access around the write and gives it back after. That can be
+stricter than calling the method yourself: while another station holds write
+access, such a write is refused before it is sent, also one the controller
+would have taken without write access.
+
+Thirteen keys have no row in the tables, because each is several requests or a
+resource the tables do not list. `rapid.pushModule` is `loadProgram`: the path
+is a file on the PC that runs the client. `rapid.getModuleSource` saves the
+module to the controller's TEMP volume, reads it and deletes the copy, so it
+counts as a write. The rest are the return codes, the device tree, the backup
+list and the controller jobs. Their entries name the table rows they send
+(`sends`) or the request (`wire`).
+
+The tables behind the list are exported as well: `ALL_TABLES` (frozen),
+`flatten` and `evidenceOf`, with their types. The Operations by tier tables
+in this README are made from them.
+
+### System signals
+
+`RobotManager.listSystemSignals()` reads which signals are bound to the
+controller's system inputs and outputs, such as Motors On, Start and Stop, and
+`getSignalCategory(name)` answers `system-input`, `system-output` or `plain`
+for one signal, with the actions it is bound to. A tool can ask a person
+before it writes a signal that starts or stops something.
+
+The bindings are read once per session and read again after a configuration
+write, a restart or a restore through the same manager. RobotWare 6.16.03
+keeps them in the `EIO` configuration, and RobotWare 7.21.4 and 8.2.1 in `SYS`
+(read on 2026-09-29). A read that fails throws, and the next call reads again.
+When neither place serves the inputs or the outputs, the read throws
+`UNSUPPORTED_OPERATION` rather than call every signal plain. After a change
+made at the FlexPendant or by another client, `listSystemSignals({ refresh: true })`
+reads them anew.
 
 ---
 
@@ -709,6 +800,7 @@ include ABB's `text/plain;v=2.0`.
 | `searchSignals(criteria)` | `Signal[]` | Server-side search (name = case-insensitive prefix, type, device, network, category; empty criteria = every signal), both generations |
 | `searchSignalsEx(criteria[])` | `Signal[]` | Two-criteria search, both generations - the second set **narrows** the first |
 | `readSignal(network, device, name)` | `Signal` | Read a specific signal by address |
+| `readSignalByName(name)` | `Signal` | Read a signal by its name alone (`GET /rw/iosystem/signals/{name}`), both generations, for signals bound to a device and for signals with none |
 | `getSignalConfig(network, device, name)` | `Record` | Configuration instance of a signal (type, device, device map, category, access, ...), both generations (RWS 1.0 reads the signal with `?resource=config`) |
 | `getIoNetworkConfig(network)` | `Record` | Configuration instance of a network, both generations |
 | `getIoDeviceConfig(network, device)` | `Record` | Configuration instance of a device, both generations (RWS 1.0 names the device without its network) |
@@ -1480,9 +1572,9 @@ ones marked `@experimental`.
 | Tier | Rows | Live on every generation it has | Built, never run | Live on one generation only |
 |------|-----:|-----:|-----:|-----:|
 | core | 33 | 33 | 0 | 0 |
-| common | 144 | 136 | 5 | 3 |
+| common | 143 | 135 | 5 | 3 |
 | niche | 141 | 94 | 38 | 9 |
-| **all** | **318** | | | |
+| **all** | **317** | | | |
 
 <details><summary>Panel (20)</summary>
 
@@ -1587,7 +1679,7 @@ ones marked `@experimental`.
 | `getSpyStatus` | niche | - | live | Read the RAPID spy status. |
 | `getTaskActivationRecord` | niche | built | built | Read the task activation record (stack frame). |
 | `getTaskExtJointState` | niche | - | live | Read the state of the task's six external joints. |
-| `holdToRun` | niche | live | built | Hold-to-run dead-man gating for stepped/continuous motion. |
+| `holdToRun` | niche | live | built | Hold to run: a program steps or runs while the button is held and stops when it is let go (press, held, release). |
 | `listAliasIO` | niche | live | built | List RAPID alias-I/O signals. |
 | `listInstructionCategories` | niche | - | live | List RAPID instruction categories (pallet head). |
 | `listInstructions` | niche | - | live | List instructions within a category (pallet). |
@@ -1702,11 +1794,11 @@ ones marked `@experimental`.
 | `validateCfgFile` | common | live | live | Validate a configuration file (a load dry-run) without applying it. |
 | `clearAllEventLogs` | niche | live | live | Clear every event-log domain. |
 | `validateCfgInstances` | niche | - | built | Validate existing configuration instances (not a create dry-run). |
-| `validateInstanceBeforeDelete` | niche | live | - | Check whether a configuration instance can be safely deleted (dry-run). |
+| `validateInstanceBeforeDelete` | niche | live | - | Check whether a configuration instance can be deleted, without deleting it. |
 
 </details>
 
-<details><summary>Controller (53)</summary>
+<details><summary>Controller (52)</summary>
 
 | Operation | Tier | RWS 1.0 | RWS 2.0 | What it does |
 |-----------|------|---------|---------|--------------|
@@ -1716,7 +1808,6 @@ ones marked `@experimental`.
 | `getBackupStatus` | common | live | live | Read whether a backup is running (from the backup state). |
 | `getControllerClock` | common | live | live | Read the controller date/time (UTC). |
 | `getControllerIdentity` | common | live | live | Read controller name, id, type, MAC. |
-| `restartController` | common | live | live | Restart the controller (canonical /ctrl form on 2.0). |
 | `setControllerClock` | common | built | built | Set the controller date/time (UTC). |
 | `clearCertificateStore` | niche | - | built | Remove every certificate from one store. |
 | `compressPath` | niche | live | live | Compress a controller path. |
@@ -1878,7 +1969,7 @@ on it. An unlogged record of a past run does not count.
 - Every logged success comes from RobotStudio virtual controllers; a real controller may refuse what a virtual one accepted (the operating-mode switch, for one, which ABB ties to Local Client privileges), so try a write on a virtual controller first and take the controller's refusal as final.
 - Each operation in the lists below has no logged 2xx on the generation it is listed under. Some have one on the other generation: `jog`, `lockOperationMode`, `setIoDeviceLState`, `setNonMotionExecution`, `setSignalSimulated`, `stepRapid`, `unblockSignals` and `unlockOperationMode` are live on RWS 2.0 and built on RWS 1.0; `holdToRun`, `listAliasIO`, `restoreBackup` and `setUiInstructionParam` are live on RWS 1.0 and built on RWS 2.0. A logged run moves an operation to `live` in a later release.
 - `getMotionPointer` stays in both lists although its request answers 2xx: it sends the same `GET /rw/rapid/tasks/{task}/pcp` as `getProgramPointer`, and that answer carries the motionpointer entry with no position when no program has started. The logs keep no answer body, so a logged 2xx does not show that a motion pointer with a position was read, and the evidence index does not credit it. On RobotWare 6.16.03 and 7.21.4 virtual controllers it read row 9 col 16 while a MoveAbsJ ran. On RobotWare 8 no program ran for it: the start was refused without the motion-control declaration.
-- RobotWare 6 (RWS 1.0): ABB's RWS 1.0 has no breakpoint removal (`removeBreakpoint`), no per-task program-pointer reset (`resetTaskProgramPointer`; `resetRapid` resets every task), no write for the whole task selection (`setTaskSelection`; change one task at a time with `activateRapidTask` / `deactivateRapidTask`) and no service-routine call (`callServiceRoutine`; use `setPPToServiceRoutine`, then start). ABB does document Modify Position on RWS 1.0, but the client has no RWS 1.0 form for `modifyPosition` yet; modify positions at the FlexPendant. The operating-mode acknowledge is left out on purpose. The client refuses all of these before sending. The RWS 1.0 forms for `setSignalSimulated`, `unblockSignals` and `setIoDeviceLState` are built from ABB's RWS 1.0 pages and not yet run: the RobotWare 6.16.03 virtual controller at hand has only drive and safety-panel I/O, nothing safe to change. The RWS 1.0 forms for `setKeylessMotorOn` and `setMechunitBaseFrame` ran on that virtual controller: the motors went from off to on, and the unit's own frame was written back unchanged.
+- RobotWare 6 (RWS 1.0): ABB's RWS 1.0 has no breakpoint removal (`removeBreakpoint`), no per-task program-pointer reset (`resetTaskProgramPointer`; `resetRapid` resets every task), no write for the whole task selection (`setTaskSelection`; change one task at a time with `activateRapidTask` / `deactivateRapidTask`) and no service-routine call (`callServiceRoutine`; use `setPPToServiceRoutine`, then start). ABB does document Modify Position on RWS 1.0, but the client has no RWS 1.0 form for `modifyPosition` yet; modify positions at the FlexPendant. The operating-mode acknowledge is left out on purpose. The client refuses all of these before sending. The RWS 1.0 forms for `setSignalSimulated`, `unblockSignals` and `setIoDeviceLState` are built from ABB's RWS 1.0 pages and not yet run: the RobotWare 6.16.03 virtual controller at hand has only drive and safety-panel I/O, which these writes should not change. The RWS 1.0 forms for `setKeylessMotorOn` and `setMechunitBaseFrame` ran on that virtual controller: the motors went from off to on, and the unit's own frame was written back unchanged.
 - RobotWare 6: `registerUser` and `impersonateUser` are built for RWS 2.0 only, although ABB's RWS 1.0 documents both (`POST /users`, `POST /users?action=impersonate`); `changePassword` is RWS 2.0 only because RWS 1.0 has no password operation. On RobotWare 6 the three are refused with `UNSUPPORTED_OPERATION` before sending; manage users from RobotStudio or the FlexPendant. `restoreBackup` is live on RobotWare 6 and keeps the backup unless `deleteBackup` is asked for.
 - RobotWare 6: the client sends no virtual-time write in this release. `setVirtualTimeScale` is refused before sending, although ABB's RWS 1.0 documents the speed write for virtual controllers. The virtual-time reads work on both generations. Change the simulation speed in RobotStudio.
 - Remote jog: ABB's jog pages for RobotWare 6 and 7 ask for a local client with mastership, and this client connects as a remote one. RobotWare 6 refused the jog in Auto, the only mode tried. RobotWare 7.21.4 refused it in manual reduced speed with the motors on; Auto was tried only with the motors off. On a RobotWare 8.2.1 virtual controller, jogs in manual reduced speed were accepted with the motion-control declaration made, and refused in Auto. Elsewhere, jog from the FlexPendant.
@@ -1927,7 +2018,7 @@ on it. An unlogged record of a past run does not count.
 - `getMotionPointer` (common) - Read the per-task motion pointer.
 - `getTaskActivationRecord` (niche) - Read the task activation record (stack frame).
 - `getVisionSystemInfo` (niche) - Read one camera's details.
-- `holdToRun` (niche) - Hold-to-run dead-man gating for stepped/continuous motion.
+- `holdToRun` (niche) - Hold to run: a program steps or runs while the button is held and stops when it is let go (press, held, release).
 - `listAliasIO` (niche) - List RAPID alias-I/O signals.
 - `listVisionJobs` (niche) - Read a camera's job name.
 - `loadCollisionAvoidanceConfig` (niche) - Load the collision-avoidance configuration.

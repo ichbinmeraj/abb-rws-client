@@ -10,7 +10,7 @@ import type {
   DiagnosticsInfo, UserRegistration, JogParams, RmmpLevel,
   CfgTypeInfo, DipcQueueInfo, FileMetadata, RapidRoutineInfo,
   SubscriptionGroupInfo, SubscriptionGroupMember, MotionSupervisionState, PathSupervisionState,
-  MechunitMotorCalib, LeadThroughState, RobotWareCompatibility,
+  MechunitMotorCalib, LeadThroughState, RobotWareCompatibility, CfgInstanceDetail,
 } from './types.js';
 import type { ControllerJobName } from './controllerJobs.js';
 
@@ -351,6 +351,8 @@ export interface IRWSAdapter {
   // ── I/O ──────────────────────────────────────────────────────────────────
   listAllSignals(start?: number, limit?: number): Promise<Signal[]>;
   readSignal(network: string, device: string, name: string): Promise<Signal>;
+  /** One signal by its bare name, `GET /rw/iosystem/signals/{name}`, with no network or device. Both generations (1.6.0). */
+  readSignalByName?(name: string): Promise<Signal>;
   /**
    * Set a signal's value. Pass `''` for `network` and `device` to write by the
    * signal's name alone: RWS 1.0 uses the flat signal path; RWS 2.0 finds the
@@ -408,6 +410,10 @@ export interface IRWSAdapter {
   listCfgTypes?(domain: string): Promise<string[]>;
   /** List instance names of a given type (e.g. ROB_1, ROB_L1 under MOC/ARM). */
   listCfgInstances?(domain: string, type: string): Promise<string[]>;
+  /** Every instance of a type with its attributes, every page, from the same
+   *  request as `listCfgInstances`. A refusal throws the controller's typed
+   *  error instead of answering an empty list. Both generations (1.6.0). */
+  listCfgInstancesDetailed?(domain: string, type: string): Promise<CfgInstanceDetail[]>;
   /** Read a single configuration instance - returns the named attributes for that instance. */
   getCfgInstance?(domain: string, type: string, instance: string): Promise<Record<string, string>>;
   /** Update an existing configuration instance. The adapters in this package
@@ -976,7 +982,7 @@ export interface IRWSAdapter {
    */
   saveCollisionAvoidanceSnapshot?(filePath: string, motionGroup: string): Promise<void>;
   /**
-   * Reload the collision-avoidance configuration. RWS 2.0 only, option-gated.
+   * Reload the collision-avoidance configuration. RWS 2.0 only, and it needs the controller option.
    *
    * @experimental Built from the controller form; never run against a controller.
    */
@@ -1273,6 +1279,7 @@ export interface IRWSAdapterCore extends Pick<IRWSAdapter,
   | 'getEventLog'
   | 'listAllSignals'
   | 'readSignal'
+  | 'readSignalByName'
   | 'listNetworks'
   | 'listDevices'
   | 'listDirectory'

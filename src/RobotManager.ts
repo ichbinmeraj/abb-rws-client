@@ -12,8 +12,11 @@ import type {
   CfgTypeInfo, DipcQueueInfo, FileMetadata, RapidRoutineInfo,
   SubscriptionGroupInfo, SubscriptionGroupMember, MotionSupervisionState, PathSupervisionState,
   MechunitMotorCalib, LeadThroughState, WriteAccessStatus, RobotWareCompatibility,
+  SignalCategoryInfo, SystemSignalBinding,
 } from './types.js';
 import { RwsError } from './types.js';
+import { readSystemSignals, signalCategoryOf } from './systemSignals.js';
+import { OPERATIONS, isOperationKey, type OperationAnswer, type OperationArgs, type OperationKey } from './operations/index.js';
 import { CUT_CREATE } from './HttpSession.js';
 import {
   explainRefusal, holderFromMastership, holderFromWriteAccess, holderSentence, refusalError, withReport, builtRefusal,
@@ -334,6 +337,8 @@ export class RobotManager {
    * `sessionAdapter()`.
    */
   private sessionEpoch: number | null = null;
+  /** The session's system-signal read (listSystemSignals), keyed on the connectEpoch it ran under. */
+  private systemSignals: { epoch: number; read: Promise<readonly SystemSignalBinding[]> } | null = null;
   /**
    * Teardowns (disconnectInternal) between their first step and their last:
    * meanwhile `setAllowMotionControl(true)` is refused before anything is
@@ -2772,7 +2777,9 @@ export class RobotManager {
 
   async restartController(mode: RestartMode): Promise<void> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
-    await this.adapter.restartController(mode);
+    // A restart applies configuration changes, system-signal bindings among them.
+    try { await this.adapter.restartController(mode); }
+    finally { this.systemSignals = null; }
   }
 
   async getControllerClock(): Promise<string> {
@@ -2824,6 +2831,43 @@ export class RobotManager {
   async readIoSignal(network: string, device: string, name: string): Promise<Signal> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
     return this.adapter.readSignal(network, device, name);
+  }
+
+  /**
+   * The signals the controller's configuration binds to a system action
+   * (SYSSIG_IN and SYSSIG_OUT, both domains), read once per session: later
+   * calls answer from that read until the next connect, a configuration
+   * write, a restart or a restore through this manager. A read that fails is
+   * not kept, so the next call reads again. After a change made another way
+   * (the FlexPendant, another client), pass `refresh` to read it anew. Both
+   * generations (1.6.0). Throws NOT_CONNECTED, UNSUPPORTED_OPERATION, or the
+   * read's own RwsError (see `readSystemSignals`): never a partial list.
+   */
+  async listSystemSignals(options: { refresh?: boolean } = {}): Promise<readonly SystemSignalBinding[]> {
+    const adapter = this.sessionAdapter('listSystemSignals');
+    const epoch = this.connectEpoch;
+    if (options.refresh || !this.systemSignals || this.systemSignals.epoch !== epoch) {
+      const read = readSystemSignals(adapter);
+      this.systemSignals = { epoch, read };
+      read.catch(() => { if (this.systemSignals?.read === read) { this.systemSignals = null; } });
+    }
+    return this.systemSignals.read;
+  }
+
+  /**
+   * Whether a signal is a system input, a system output or a plain signal,
+   * from `listSystemSignals` (one read per session), with the actions it is
+   * bound to. Names match without regard to case, and a signal bound as an
+   * input anywhere is a system input. Writing one is operating the robot (a
+   * start, a stop, motors on): a tool asks a person in those words, not as an
+   * I/O value. Throws INVALID_ARGUMENT for an empty name, and what
+   * `listSystemSignals` throws (1.6.0).
+   */
+  async getSignalCategory(name: string): Promise<SignalCategoryInfo> {
+    if (typeof name !== 'string' || name === '') {
+      throw new RwsError('getSignalCategory: the signal name must be a non-empty string', 'INVALID_ARGUMENT');
+    }
+    return signalCategoryOf(await this.listSystemSignals(), name);
   }
 
   async listNetworks(): Promise<IoNetwork[]> {
@@ -3322,7 +3366,10 @@ export class RobotManager {
 
   private async withCfgAccess<T>(fn: () => Promise<T>): Promise<T> {
     if (!this.adapter) { throw new RwsError('Not connected', 'NOT_CONNECTED'); }
-    return this.access(this.adapter).withAccess(['cfg'], fn);
+    // A configuration write can bind a signal to a system action, so the
+    // next listSystemSignals reads the configuration again.
+    try { return await this.access(this.adapter).withAccess(['cfg'], fn); }
+    finally { this.systemSignals = null; }
   }
 
   // Backup / restore
@@ -3333,7 +3380,8 @@ export class RobotManager {
   }
   async restoreBackup(n: string, opts?: { deleteBackup?: boolean }) {
     if (!this.adapter?.restoreBackup) { throw new RwsError('restoreBackup not supported', 'UNSUPPORTED_OPERATION'); }
-    return this.adapter.restoreBackup(n, opts);
+    try { return await this.adapter.restoreBackup(n, opts); }
+    finally { this.systemSignals = null; }
   }
   /**
    * Check that a backup can be restored, without restoring it (RWS 2.0
@@ -3772,6 +3820,88 @@ export class RobotManager {
       throw new RwsError(`read('${name}') is not available on this controller's adapter; nothing was sent`, 'UNSUPPORTED_OPERATION');
     }
     return fn.apply(adapter, args) as Promise<Awaited<ReturnType<AdapterReads[K]>>>;
+  }
+
+  /**
+   * One operation of the catalogue by its key, `<domain>.<id>` (see
+   * `OPERATIONS`), with its arguments in the order of
+   * `OPERATIONS[key].params` (`operationArgs` builds them from names). The
+   * call reaches the operation the way the client's own methods do: through
+   * the RobotManager method where there is one, so its access handling and
+   * refusals apply, else through the adapter's method. On RobotWare 8 a write
+   * whose method does not take control-station write access itself
+   * (`rw8Access: 'call'`) runs under it, taken before and released after.
+   * The answer and the errors are the method's own.
+   *
+   * ```ts
+   * await manager.call('rapid.setRapidVariable', ['T_ROB1', 'MainModule', 'nCount', '5']);
+   * const v = await manager.call('rapid.getRapidVariable', ['T_ROB1', 'MainModule', 'nCount']);
+   * ```
+   *
+   * Refused before anything is sent:
+   * - `INVALID_ARGUMENT`: a key that is not an operation key; arguments that
+   *   are not an array, too many or too few; a motors state other than
+   *   motoron or motoroff; an access, mastership, RMMP, user or subscription
+   *   row (the client takes access around each write itself, and a session's
+   *   subscriptions go through `subscribe`);
+   * - `NOT_CONNECTED`, also once `disconnect()` began;
+   * - `UNSUPPORTED_OPERATION`: the controller's generation has no such
+   *   operation, or the adapter has no method for it (so no empty answer
+   *   stands in for a real one).
+   */
+  async call<K extends OperationKey>(key: K, args: OperationArgs<K>): Promise<OperationAnswer<K>> {
+    if (!isOperationKey(key)) {
+      throw new RwsError(`call: ${JSON.stringify(key)} is not an operation key (OPERATION_KEYS lists them); nothing was sent`, 'INVALID_ARGUMENT');
+    }
+    const op = OPERATIONS[key];
+    const adapter = this.sessionAdapter(`call('${key}')`);
+    const generation = adapter instanceof RWS2Adapter ? 'rws2' : 'rws1';
+    if (!op.generations.includes(generation)) {
+      throw new RwsError(`call('${key}'): RWS ${generation === 'rws2' ? '2.0' : '1.0'} has no such operation; nothing was sent`, 'UNSUPPORTED_OPERATION');
+    }
+    const route = op.route;
+    if (route.via === 'none') {
+      const why = route.reason === 'session'
+        ? 'a subscription row belongs to the session\'s own group (subscribe, unsubscribe)'
+        : route.reason === 'person'
+          ? 'the operating-mode confirmation is the person\'s, at the FlexPendant'
+          : 'the client takes and releases access around each write itself; requestMastership and the access state are on RobotManager';
+      throw new RwsError(`call('${key}'): not callable, ${why}; nothing was sent`, 'INVALID_ARGUMENT');
+    }
+    if (!Array.isArray(args)) {
+      throw new RwsError(`call('${key}'): the arguments must be an array in parameter order; nothing was sent`, 'INVALID_ARGUMENT');
+    }
+    const list = args as readonly unknown[];
+    const required = op.params.filter(p => !p.optional).length;
+    if (list.length < required || (list.length > op.params.length && !op.params.some(p => p.rest))) {
+      throw new RwsError(
+        `call('${key}'): takes ${op.params.map(p => p.name + (p.optional ? '?' : '')).join(', ') || 'no arguments'}, got ${list.length}; nothing was sent`,
+        'INVALID_ARGUMENT',
+      );
+    }
+    const relied = route.via === 'adapter' ? route.method : route.adapterMethod;
+    if (relied && typeof (adapter as unknown as Record<string, unknown>)[relied] !== 'function') {
+      throw new RwsError(`call('${key}'): this controller's adapter has no ${relied}; nothing was sent`, 'UNSUPPORTED_OPERATION');
+    }
+    let send: () => Promise<unknown>;
+    if (route.via === 'manager-by-arg') {
+      const state = String(list[route.arg]);
+      const method = Object.prototype.hasOwnProperty.call(route.methods, state) ? route.methods[state] : undefined;
+      if (!method) {
+        throw new RwsError(`call('${key}'): ${JSON.stringify(list[route.arg])} is not one of ${Object.keys(route.methods).join(', ')}; nothing was sent`, 'INVALID_ARGUMENT');
+      }
+      send = (): Promise<unknown> => (this as unknown as Record<string, () => Promise<unknown>>)[method]();
+    } else if (route.via === 'manager') {
+      const fn = (this as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[route.method];
+      send = (): Promise<unknown> => fn.apply(this, [...list]);
+    } else {
+      const fn = (adapter as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[route.method];
+      send = (): Promise<unknown> => fn.apply(adapter, [...list]);
+    }
+    if (op.rw8Access === 'call' && generation === 'rws2' && this.access(adapter).generation() === 'rw8') {
+      return this.access(adapter).withAccess(['rapid'], send) as Promise<OperationAnswer<K>>;
+    }
+    return send() as Promise<OperationAnswer<K>>;
   }
 
   /**

@@ -4,8 +4,10 @@ import { buildPath, type PathSpec } from '../paths/PathSpec.js';
 import * as R2 from '../ResourceMapper2.js';
 import { decodeEntities, elogMsgtype } from '../ResponseParser.js';
 import { cfgTypeFrom } from '../commonReads.js';
-import { decodeElogArgs, RwsError, type CfgTypeInfo, type CfgValidateRequest, type DipcQueueInfo, type ElogMessage } from '../types.js';
-import { cfgInstanceAttributes, nextPagePath, parse } from './core.js';
+import {
+  decodeElogArgs, RwsError, type CfgInstanceDetail, type CfgTypeInfo, type CfgValidateRequest, type DipcQueueInfo, type ElogMessage,
+} from '../types.js';
+import { cfgInstanceAttributes, cfgInstanceList, nextPagePath, parse } from './core.js';
 import type { GConstructor, Rws2Base } from './mixin.js';
 
 /**
@@ -286,6 +288,35 @@ function cfgElogDipcOps<TBase extends Rws2Base>(Base: TBase) {
         pages++;
       }
       return instances;
+    }
+
+    /**
+     * Every instance of a type with its attributes, from the same list
+     * `listCfgInstances` reads, every page. Unlike `listCfgInstances` a
+     * refusal is not an empty list: the controller's typed error is thrown, so
+     * a caller can tell "none configured" from "could not be read". An answer
+     * with no listing in it, or a listing of more than 50 pages, is
+     * PARSE_ERROR. Added in
+     * 1.6.0 for the system-signal read (`RobotManager.listSystemSignals`).
+     */
+    async listCfgInstancesDetailed(domain: string, type: string): Promise<CfgInstanceDetail[]> {
+      const out: CfgInstanceDetail[] = [];
+      let path = buildPath(CFG_ELOG_DIPC.listCfgInstances.rws2 as PathSpec, { domain, type });
+      let pages = 0;
+      while (path && pages < 50) {
+        const html = await this.req('GET', path);
+        const page = cfgInstanceList(html);
+        if (!page) {
+          throw new RwsError(`listCfgInstancesDetailed: the ${domain}/${type} answer is not a configuration listing`, 'PARSE_ERROR');
+        }
+        out.push(...page);
+        path = nextPagePath(html, path);
+        pages++;
+      }
+      if (path) {
+        throw new RwsError(`listCfgInstancesDetailed: the ${domain}/${type} listing has more than 50 pages; nothing is answered rather than a part of it`, 'PARSE_ERROR');
+      }
+      return out;
     }
 
     async getCfgInstance(domain: string, type: string, instance: string): Promise<Record<string, string>> {
@@ -589,6 +620,7 @@ export interface CfgElogDipcMethods {
   listCfgDomains(): Promise<string[]>;
   listCfgTypes(domain: string): Promise<string[]>;
   listCfgInstances(domain: string, type: string): Promise<string[]>;
+  listCfgInstancesDetailed(domain: string, type: string): Promise<CfgInstanceDetail[]>;
   getCfgInstance(domain: string, type: string, instance: string): Promise<Record<string, string>>;
   setCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void>;
   createCfgInstance(domain: string, type: string, instance: string, attrs: Record<string, string>): Promise<void>;

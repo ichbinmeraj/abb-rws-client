@@ -76,6 +76,24 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
     }
 
     /**
+     * One signal by its bare name, `GET /rw/iosystem/signals/{name}`, the
+     * read `writeSignal` makes to learn where a signal lives. RW 6.16, 7.21
+     * and 8.1.1 answer it for signals bound to a device and for signals with
+     * none (2026-09-27); a device-bound signal's title is
+     * network/device/name. The entry of that name is read, without regard to
+     * case; an answer with none is PARSE_ERROR (1.6.0).
+     */
+    async readSignalByName(name: string): Promise<Signal> {
+      const p = parse(await this.req('GET', R2.signalByName(name)));
+      const d = p.getAllStates('ios-signal-li')
+        .find(s => (s['name'] ?? s['_title']?.split('/').pop() ?? '').toLowerCase() === name.toLowerCase());
+      if (!d) {
+        throw new RwsError(`readSignalByName: the controller's answer for signal "${name}" has no signal of that name`, 'PARSE_ERROR');
+      }
+      return { name: d['name'] ?? name, value: d['lvalue'] ?? '0', type: (d['type'] ?? 'DI') as Signal['type'], lvalue: d['lvalue'] ?? '0' };
+    }
+
+    /**
      * Search IO signals by criteria instead of paging through the full list.
      * Criteria compose as AND. Live-verified 2026-08-04 (RW7.21): type filter
      * alone found every DO, device filter scoped correctly. Hits populate the
@@ -520,6 +538,7 @@ function ioOps<TBase extends Rws2Base>(Base: TBase) {
 export interface IoMethods {
   listAllSignals(start?: number, limit?: number, maxPages?: number): Promise<Signal[]>;
   readSignal(network: string, device: string, name: string): Promise<Signal>;
+  readSignalByName(name: string): Promise<Signal>;
   searchSignals(criteria: { name?: string; device?: string; network?: string; category?: string; type?: string }): Promise<Signal[]>;
   getSignalConfig(network: string, device: string, name: string): Promise<Record<string, string>>;
   setSignalSimulated(network: string, device: string, name: string, simulated: boolean): Promise<void>;
