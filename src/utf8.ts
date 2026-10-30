@@ -11,7 +11,7 @@
  * its first bad sequence starts.
  *
  * The text of a valid file is the one readFileSync gives, a byte order mark
- * included, so it reaches the controller exactly as it did in 1.5.1. Buffer's
+ * included (loadProgram leaves a leading one out since 1.5.4). Buffer's
  * decoder is used rather than TextDecoder's fatal mode, which a Node built
  * without Intl does not have.
  */

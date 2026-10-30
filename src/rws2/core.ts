@@ -653,7 +653,7 @@ export class Rws2Core {
     method: string,
     path: string,
     body?: Record<string, string>,
-    rawBody?: string,
+    rawBody?: string | Uint8Array,
     rawContentType?: string,
     acceptExtra: number[] = [],
     acceptOverride?: string,
@@ -810,7 +810,7 @@ export class Rws2Core {
     method: string,
     path: string,
     body?: Record<string, string>,
-    rawBody?: string,
+    rawBody?: string | Uint8Array,
     rawContentType?: string,
     acceptExtra: number[] = [],
     acceptOverride?: string,
@@ -819,6 +819,8 @@ export class Rws2Core {
   ): Promise<string> {
     const url = new URL(path, this.baseUrl);
     const bodyStr = rawBody ?? (body ? new URLSearchParams(body).toString() : undefined);
+    // A byte body (a file upload) is traced and classified by its size only.
+    const bodyText = typeof bodyStr === 'string' ? bodyStr : undefined;
     // A request the controller holds on purpose (see `req`) gets that hold on
     // top of both limits, capped where a timer can hold them; a deadline
     // turned off (0) stays off. The idle limit is never 0 (see the
@@ -867,7 +869,7 @@ export class Rws2Core {
     const startedAt = Date.now();
     Logger.trace?.('http.req', `RWS2 ${method} ${path}`, {
       protocol: 'rws2', method, path,
-      bodyPreview: bodyStr ? redactBody(bodyStr)!.slice(0, 200) : undefined,
+      bodyPreview: typeof bodyStr === 'object' ? `<${bodyStr.byteLength} bytes>` : bodyText ? redactBody(bodyText)!.slice(0, 200) : undefined,
     });
 
     return new Promise((resolve, reject) => {
@@ -971,7 +973,7 @@ export class Rws2Core {
               // vs wrong mode vs missing resource) - status alone can't tell.
               const info = classifyControllerError({
                 httpStatus: status, body: raw, method, path, fallback,
-                context: this.refusalContext(), requestBody: bodyStr,
+                context: this.refusalContext(), requestBody: bodyText,
               });
               // RobotWare 8: "Session is not part of a Control Station". The
               // controller no longer has this session registered, whatever this

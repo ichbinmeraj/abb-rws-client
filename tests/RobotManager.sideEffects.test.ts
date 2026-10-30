@@ -8,6 +8,7 @@ import { RWS2Adapter } from '../src/RWS2Adapter.js';
 import type { RwsClient } from '../src/RwsClient.js';
 import { RwsError } from '../src/types.js';
 import { classifyControllerError } from '../src/ControllerError.js';
+import { setLogger } from '../src/Logger.js';
 
 /**
  * No hidden side effects:
@@ -382,12 +383,15 @@ describe('loadProgram: no silent stop, and every failed step is reported', () =>
   });
 
   /** The text each upload carried: the body of the RWS 2.0 file PUT. */
-  function uploads(adapter: unknown): string[] {
+  function uploads(adapter: unknown, types: string[] = []): Array<string | Uint8Array> {
     const a = adapter as Record<string, unknown>;
     const req = a.req as (...args: unknown[]) => Promise<unknown>;
-    const sent: string[] = [];
+    const sent: Array<string | Uint8Array> = [];
     a.req = async (...args: unknown[]) => {
-      if (args[0] === 'PUT' && String(args[1]).startsWith('/fileservice/')) { sent.push(args[3] as string); }
+      if (args[0] === 'PUT' && String(args[1]).startsWith('/fileservice/')) {
+        sent.push(args[3] as string | Uint8Array);
+        types.push(args[4] as string);
+      }
       return req(...args);
     };
     return sent;
@@ -400,13 +404,55 @@ describe('loadProgram: no silent stop, and every failed step is reported', () =>
     return p;
   }
 
-  it('a UTF-8 file with non-ASCII text is uploaded as its exact text', async () => {
+  it('a UTF-8 file with accented letters is uploaded as Latin-1 bytes, one per character (1.5.3 sent UTF-8, loaded as two wrong letters each)', async () => {
     const text = 'MODULE ZZ_SIDE\n  ! Größe 20 °C, ½ Hub\n  PROC main()\n  ENDPROC\nENDMODULE\n';
     const { adapter, wire } = rws2('rw7');
-    const sent = uploads(adapter);
+    const types: string[] = [];
+    const sent = uploads(adapter, types);
     await manager(adapter).loadProgram(file('utf8', text), 'T_ROB1');
-    expect(sent).toEqual([text]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBeInstanceOf(Uint8Array);
+    expect(Buffer.from(sent[0] as Uint8Array).equals(Buffer.from(text, 'latin1'))).toBe(true);
+    // ö is the one byte F6, as a controller reads a module file (live 2026-10-30).
+    expect([...(sent[0] as Uint8Array)].filter(b => b > 0x7f)).toEqual([0xf6, 0xdf, 0xb0, 0xbd]);
+    expect(types).toEqual(['text/plain;v=2.0']);
     expect(wire).toEqual([EDIT_REQ, 'READ execstate', 'READ modules', UPLOAD, LOADMOD, 'READ modules', RESETPP, EDIT_REL]);
+  });
+
+  it('an ASCII file is uploaded as the same text as before, as text/plain', async () => {
+    const text = 'MODULE ZZ_SIDE\n  PROC main()\n  ENDPROC\nENDMODULE\n';
+    const { adapter } = rws2('rw7');
+    const types: string[] = [];
+    const sent = uploads(adapter, types);
+    await manager(adapter).loadProgram(file('ascii', text), 'T_ROB1');
+    expect(sent).toEqual([text]);
+    expect(types).toEqual(['text/plain;v=2.0']);
+  });
+
+  it('a character above U+00FF: INVALID_ARGUMENT naming line, column and code point, nothing sent', async () => {
+    const p = file('cjk', 'MODULE ZZ_SIDE\r\n  ! 中\r\n  PROC main()\r\n  ENDPROC\r\nENDMODULE\r\n');
+    const { adapter, wire } = rws2('rw7', { modules: ['ZZ_SIDE'] });
+    const sent = uploads(adapter);
+    const e = await rejection(manager(adapter).loadProgram(p, 'T_ROB1'));
+    expect(e.code).toBe('INVALID_ARGUMENT');
+    expect(e.message).toBe(`loadProgram: the file ${p} has the character U+4E2D at line 2, column 5. `
+      + 'A controller reads a module file one byte per character (Latin-1), so only characters up to U+00FF can be sent. '
+      + 'Replace the character and load the file again. Nothing was sent to the controller.');
+    expect(wire).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('U+0080 to U+009F are refused as not checked; a character outside the BMP counts as one column', async () => {
+    const nel = file('nel', 'MODULE ZZ_SIDE\n  ! a\u0085b\nENDMODULE\n');
+    const { adapter, wire } = rws2('rw7');
+    const e = await rejection(manager(adapter).loadProgram(nel, 'T_ROB1'));
+    expect(e.message).toBe(`loadProgram: the file ${nel} has the character U+0085 at line 2, column 6. `
+      + 'Characters U+0080 to U+009F are not sent, because what a controller does with them has not been checked. '
+      + 'Replace the character and load the file again. Nothing was sent to the controller.');
+    expect(wire).toEqual([]);
+    const emoji = file('emoji', 'MODULE ZZ_SIDE\n  ! \u{1F600}xä\nENDMODULE\n');
+    const e2 = await rejection(manager(rws2('rw7').adapter).loadProgram(emoji, 'T_ROB1'));
+    expect(e2.message).toContain('has the character U+1F600 at line 2, column 5.');
   });
 
   it('a Latin-1 file: INVALID_ARGUMENT naming the file and the line, nothing sent (1.5.1 uploaded U+FFFD in its place)', async () => {
@@ -424,15 +470,21 @@ describe('loadProgram: no silent stop, and every failed step is reported', () =>
     expect(sent).toEqual([]);
   });
 
-  it('a byte order mark is sent as it is, as 1.5.1 sent it, and PROC main is still found', async () => {
+  it('a byte order mark is not sent and the info log says so (1.5.3 sent it, and RobotWare 7 and 8 named the module after it); PROC main is still found', async () => {
     const text = 'MODULE ZZ_SIDE\n  PROC main()\n  ENDPROC\nENDMODULE\n';
     const p = file('bom', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text)]));
-    const { adapter, wire } = rws2('rw7');
-    const sent = uploads(adapter);
-    await manager(adapter).loadProgram(p, 'T_ROB1');
-    expect(sent).toEqual([`﻿${text}`]);
-    expect(sent).toEqual([fs.readFileSync(p, 'utf8')]);
-    expect(wire).toContain(RESETPP);
+    const infos: string[] = [];
+    setLogger({ info(m) { infos.push(m); }, warn() {}, error() {}, show() {} });
+    try {
+      const { adapter, wire } = rws2('rw7');
+      const sent = uploads(adapter);
+      await manager(adapter).loadProgram(p, 'T_ROB1');
+      expect(sent).toEqual([text]);
+      expect(wire).toContain(RESETPP);
+      expect(infos).toContain('loadProgram: ZZ_SIDE.mod starts with a byte order mark, which is not sent (a controller would read it as text)');
+    } finally {
+      setLogger({ info() {}, warn() {}, error() {}, show() {} });
+    }
   });
 
   it('a file with no text (empty, a byte order mark only, or white space only): INVALID_ARGUMENT, nothing sent', async () => {

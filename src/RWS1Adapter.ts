@@ -287,7 +287,7 @@ export class RWS1Adapter implements IRWSAdapter {
   // ── File system ─────────────────────────────────────────────────────────
   listDirectory(path: string)                  { return this.client.listDirectory(path); }
   readFile(path: string)                       { return this.client.readFile(path); }
-  uploadFile(path: string, content: string)    { return this.client.uploadModule(path, content); }
+  uploadFile(path: string, content: string | Uint8Array) { return this.client.uploadModule(path, content); }
   deleteFile(path: string)                     { return this.client.deleteFile(path); }
   createDirectory(parent: string, dir: string) { return this.client.createDirectory(parent, dir); }
   copyFile(src: string, dst: string)           { return this.client.copyFile(src, dst); }

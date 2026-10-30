@@ -35,6 +35,7 @@ import {
 import { checkJog, isJogPostError, rws2JogUnitSegment } from './jog.js';
 import { Logger } from './Logger.js';
 import { decodeUtf8Strict } from './utf8.js';
+import { encodeModuleLatin1 } from './moduleEncoding.js';
 import { discoverControllersMdns } from './MdnsDiscovery.js';
 import type { MdnsController } from './MdnsDiscovery.js';
 import { KNOWN_RWS_PORTS } from './detect.js';
@@ -2869,17 +2870,19 @@ export class RobotManager {
    *
    * Steps, in order, as one operation under one RAPID mastership (RobotWare
    * 6), `edit` (RobotWare 7) or write-access (RobotWare 8) hold:
-   *   1. Read the RAPID execution state. While the program runs the load is
-   *      refused (`WRONG_MODE`, `refusal.kind` `wrong-state`) and nothing is
-   *      changed, unless `options.stopIfRunning` is true: then the program is
-   *      stopped first. Up to 1.3.x the program was always stopped, silently.
+   *   1. Read the RAPID execution state. While the program runs, the unload
+   *      and load are sent anyway and the controller decides, unless
+   *      `options.stopIfRunning` is true: then the program is stopped first.
+   *      A refusal while the program ran is explained as such. Up to 1.3.x the
+   *      program was always stopped, silently.
    *   2. **If a module with the same name (= file basename without ext) is
    *      already loaded, unload it first.** Live-verified gotcha: passing
    *      `replace=true` to loadmod refreshes the *file* but the program's
    *      symbol table still references the OLD module's procedures, so
    *      `resetRapid()` afterwards reports "no main" even though the new
    *      file has one. Explicit unload + load fixes this.
-   *   3. Upload the file to $HOME (or HOME/ on RWS 2.0 - adapter rewrites).
+   *   3. Upload the file to $HOME (or HOME/ on RWS 2.0 - adapter rewrites),
+   *      one byte per character (see below).
    *   4. loadModule the new file, and list the task's modules again.
    *   5. **If the new module declares `PROC main()`, set the program pointer
    *      to main** (detected by a regex over the file content), so the user
@@ -2895,9 +2898,19 @@ export class RobotManager {
    * failed and what was already done - for one, that the module was loaded
    * but the program pointer was not moved, or that the old module was unloaded
    * and the new one did not load. A local file that cannot be read, that is
-   * not valid UTF-8, or that has no text throws `INVALID_ARGUMENT` before
-   * anything is sent; the message of a file that is not UTF-8 names the line
-   * of its first bad byte sequence. A byte order mark is sent as it is.
+   * not valid UTF-8, that has no text, or that has a character a controller
+   * cannot read from a module file throws `INVALID_ARGUMENT` before anything
+   * is sent. The message names the line of the first bad byte sequence, or
+   * the line, column and code point of the character.
+   *
+   * A controller reads a module file one byte per character, the Latin-1
+   * range (RobotWare 6.16.03, 7.21.4 and 8.2.1, 2026-10-30), so since 1.5.4
+   * the text is sent that way: ASCII as before, and U+00A0 to U+00FF as one
+   * byte each. Up to 1.5.3 those went as UTF-8, and the controller loaded
+   * each as two wrong letters. U+0080 to U+009F (not checked against a
+   * controller) and characters above U+00FF are refused. A leading byte order
+   * mark is not sent, and the info log says so; up to 1.5.3 it was sent, and
+   * RobotWare 7.21.4 and 8.2.1 named the module after its first byte.
    *
    * A controller can load a module under another name: RobotWare 7.21.4
    * listed a module whose name clashed with one of its own names as
@@ -2935,14 +2948,34 @@ export class RobotManager {
         + 'Save the file as UTF-8 and load it again. Nothing was sent to the controller.',
         'INVALID_ARGUMENT');
     }
-    const content = decoded.text;
+    // A byte order mark is not text: a controller reads its bytes as letters.
+    const byteOrderMark = decoded.text.startsWith('\uFEFF');
+    const content = byteOrderMark ? decoded.text.slice(1) : decoded.text;
     // A file with no text holds no module, and loading it would first unload
-    // the loaded module of the same name. trim() takes a byte order mark too.
+    // the loaded module of the same name.
     if (content.trim() === '') {
       throw new RwsError(
         `loadProgram: the file ${localFilePath} has no text, so it holds no module. Nothing was sent to the controller.`,
         'INVALID_ARGUMENT');
     }
+    const encoded = encodeModuleLatin1(content);
+    if ('fault' in encoded) {
+      const { line, column, codePoint } = encoded.fault;
+      const cp = `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
+      const why = codePoint <= 0x9f
+        ? 'Characters U+0080 to U+009F are not sent, because what a controller does with them has not been checked.'
+        : 'A controller reads a module file one byte per character (Latin-1), so only characters up to U+00FF can be sent.';
+      throw new RwsError(
+        `loadProgram: the file ${localFilePath} has the character ${cp} at line ${line}, column ${column}. ${why} `
+        + 'Replace the character and load the file again. Nothing was sent to the controller.',
+        'INVALID_ARGUMENT');
+    }
+    if (byteOrderMark) {
+      Logger.info(`loadProgram: ${fileName} starts with a byte order mark, which is not sent (a controller would read it as text)`);
+    }
+    // ASCII goes as the string, exactly as up to 1.5.3. Anything else goes as
+    // the bytes a controller reads.
+    const upload: string | Uint8Array = encoded.ascii ? content : encoded.bytes;
     // Match `PROC main(` allowing whitespace + comments above.
     const setMain = options.resetPP !== false && /\bPROC\s+main\s*\(/i.test(content);
 
@@ -2988,8 +3021,8 @@ export class RobotManager {
         }
 
         step = `upload ${fileName} to ${remotePath}`;
-        await adapter.uploadFile(remotePath, content);
-        done.push(`uploaded ${fileName} to ${remotePath}`);
+        await adapter.uploadFile(remotePath, upload);
+        done.push(`uploaded ${fileName} to ${remotePath}${byteOrderMark ? ' without its byte order mark' : ''}`);
 
         step = `load module ${moduleName} into ${taskName}`;
         changing = true;

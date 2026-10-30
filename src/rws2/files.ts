@@ -52,9 +52,11 @@ function filesOps<TBase extends Rws2Base>(Base: TBase) {
       return fileMetadataFromHeaders(path, status, headers);
     }
 
-    uploadFile(path: string, content: string): Promise<void> {
+    uploadFile(path: string, content: string | Uint8Array): Promise<void> {
       // RWS 2.0 requires the versioned content type: 'text/plain;v=2.0' or
       // 'application/octet-stream;v=2.0'. Plain 'text/plain' returns HTTP 415.
+      // A string goes as UTF-8, bytes as they are (since 1.5.4), both as
+      // text/plain;v=2.0, the type the 2026-10-30 encoding probe uploaded with.
       return this.req('PUT', `/fileservice/${this.rws2Path(path)}`, undefined, content, 'text/plain;v=2.0').then(() => {});
     }
 
@@ -216,7 +218,7 @@ export interface FilesMethods {
   listDirectory(path: string): Promise<FileEntry[]>;
   readFile(path: string): Promise<string>;
   getFileMetadata(path: string): Promise<FileMetadata>;
-  uploadFile(path: string, content: string): Promise<void>;
+  uploadFile(path: string, content: string | Uint8Array): Promise<void>;
   deleteFile(path: string): Promise<void>;
   createDirectory(parentPath: string, dirName: string): Promise<void>;
   copyFile(sourcePath: string, destPath: string, overwrite?: boolean): Promise<void>;

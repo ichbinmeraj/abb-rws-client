@@ -392,7 +392,8 @@ export interface IRWSAdapter {
   // ── File system ──────────────────────────────────────────────────────────
   listDirectory(path: string): Promise<FileEntry[]>;
   readFile(path: string): Promise<string>;
-  uploadFile(path: string, content: string): Promise<void>;
+  /** A string is sent as UTF-8; a Uint8Array is sent as it is (since 1.5.4). */
+  uploadFile(path: string, content: string | Uint8Array): Promise<void>;
   deleteFile(path: string): Promise<void>;
   createDirectory(parentPath: string, dirName: string): Promise<void>;
   copyFile(sourcePath: string, destPath: string): Promise<void>;

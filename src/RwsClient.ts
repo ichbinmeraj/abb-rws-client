@@ -887,17 +887,19 @@ export class RwsClient {
   }
 
   /**
-   * Upload a file to the controller filesystem.
-   * The content is uploaded as UTF-8 bytes via PUT /fileservice/{remotePath}.
-   * Works for any file type - RAPID modules, .cfg files, plain text, etc.
+   * Upload a file to the controller filesystem via PUT /fileservice/{remotePath}.
+   * A string is uploaded as its UTF-8 bytes. A Uint8Array is uploaded as it
+   * is, byte for byte (since 1.5.4: `RobotManager.loadProgram` sends a module
+   * with characters above 0x7F as Latin-1 bytes, the encoding a controller
+   * reads a module file in).
    *
    * @param remotePath - Controller path, e.g. '$HOME/MyMod.mod'
-   * @param content    - File content as a string
+   * @param content    - File content: a string (sent as UTF-8) or the bytes to send
    */
-  async uploadFile(remotePath: string, content: string): Promise<void> {
+  async uploadFile(remotePath: string, content: string | Uint8Array): Promise<void> {
     try {
       const path = pathUploadFile(remotePath);
-      const bytes = new TextEncoder().encode(content);
+      const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
       await this.session.put(path, bytes);
     } catch (e) {
       if (e instanceof RwsError) throw e;
@@ -906,7 +908,7 @@ export class RwsClient {
   }
 
   /** @deprecated use uploadFile() - same behavior, neutral name. Kept for backward compat. */
-  uploadModule(remotePath: string, content: string): Promise<void> {
+  uploadModule(remotePath: string, content: string | Uint8Array): Promise<void> {
     return this.uploadFile(remotePath, content);
   }
 

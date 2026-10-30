@@ -6,6 +6,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-10-30
+
+### Fixed
+
+- **`RobotManager.loadProgram` sends module text the way a controller reads
+  it.** In a test on 2026-10-30, RobotWare 6.16.03, 7.21.4 and 8.2.1 virtual
+  controllers read a module file one byte per character (Latin-1). Up to
+  1.5.3 the text went as UTF-8, so an accented letter such as `ä` loaded as
+  two wrong letters (`Ã¤`), with no error and no event-log message, and
+  RobotWare 7 and 8 saved it back encoded once more. Now a character up to
+  U+00FF is sent as one byte. Sent that way, the test's `ä`, `ö`, `é` and
+  `°` read back correctly through `getModuleText` on all three. A character
+  above U+00FF, which one byte cannot carry, and U+0080 to U+009F, where
+  Latin-1 and Windows-1252 differ and which were not tried, are refused with
+  `INVALID_ARGUMENT` before anything is sent, and the message names the
+  line, column and code point. Up to 1.5.3 they were sent and loaded wrong.
+  A file of ASCII text is sent exactly as before, and a file that is not
+  valid UTF-8 is still refused, as in 1.5.2. One read gets worse: RobotWare
+  6 saves such a module in the bytes it read, and the client decodes every
+  answer as UTF-8, so on RobotWare 6 `getModuleSource` shows U+FFFD in place
+  of each accented letter, and `readFile` of the uploaded file does so on
+  every version. `getModuleText` reads the module correctly. Reading those
+  files in their own encoding is still to come.
+- **`loadProgram` no longer sends a byte order mark.** A controller read it
+  as three letters at the start of the module. All three versions logged a
+  syntax error, RobotWare 7.21.4 and 8.2.1 listed the module under the name
+  `ï`, and `loadProgram` reported success. The mark is now left out, and the info
+  log says so.
+- **`loadProgram`'s doc comment said a running program refuses the load.**
+  The client sends the unload and the load anyway and the controller
+  decides, as the README says. The comment now says so too.
+
+### Changed
+
+- **`uploadFile` also takes bytes.** `RwsClient.uploadFile`, the adapters'
+  `uploadFile` and `IRWSAdapter.uploadFile` take a `Uint8Array` beside a
+  string. A string is sent as UTF-8, as before. Bytes are sent as they are,
+  with the same content type. `loadProgram` sends module text above ASCII
+  this way. An adapter written against `IRWSAdapter` outside this package
+  receives bytes from `loadProgram` for such a file. `RobotManager.uploadFile`
+  still takes a string.
+
 ## [1.5.3] - 2026-10-30
 
 ### Fixed
